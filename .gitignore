@@ -10,6 +10,7 @@ note*.md
 *tmp_[0-9].*
 *tmp_[0-9][0-9].*
 examples
+tmp
 *out_td*.pth
 venv/
 *.pdf
