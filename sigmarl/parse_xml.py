@@ -8,9 +8,6 @@ import torch
 import matplotlib.pyplot as plt
 import numpy as np
 
-import os
-import sys
-
 from sigmarl.parse_map_base import ParseMapBase
 
 from sigmarl.colors import Color
