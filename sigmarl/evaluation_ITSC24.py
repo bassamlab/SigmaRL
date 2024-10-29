@@ -3,16 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import os
-import sys
-
-script_dir = os.path.dirname(__file__)  # Directory of the current script
-project_root = os.path.dirname(script_dir)  # Project root directory
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-from utilities.constants import SCENARIOS
-from utilities.evaluation_base import Evaluation
+from sigmarl.constants import SCENARIOS
+from sigmarl.evaluation_base import Evaluation
 
 fig_for = "paper"  # One of {"paper", "presentation"}
 

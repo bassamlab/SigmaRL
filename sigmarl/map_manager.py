@@ -6,8 +6,8 @@
 import torch
 from torch.nn.functional import pad
 
-from utilities.parse_osm import ParseOSM
-from utilities.parse_xml import ParseXML
+from sigmarl.parse_osm import ParseOSM
+from sigmarl.parse_xml import ParseXML
 
 
 class MapManager:

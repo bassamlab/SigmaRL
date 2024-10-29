@@ -3,16 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import os
-import sys
-
-script_dir = os.path.dirname(__file__)  # Directory of the current script
-project_root = os.path.dirname(script_dir)  # Project root directory
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-from utilities.constants import SCENARIOS
-from utilities.evaluation_base import Evaluation
+from sigmarl.constants import SCENARIOS
+from sigmarl.evaluation_base import Evaluation
 
 model_paths = [
     "checkpoints/icra25/M1 (XP-MARL)/",
@@ -86,7 +78,7 @@ for i_scenario in scenario_types:
         legends=legends,
         render_titles=render_titles,
         num_simulations_per_model=32,
-        is_render=True,
+        is_render=False,
         is_real_time_rendering=True,
         is_save_simulation_video=False,
         video_names=video_names,

@@ -18,19 +18,11 @@ plt.style.use(
 )  # The science + ieee styles for IEEE papers (can also be one of 'ieee' and 'science' )
 # print(plt.style.available) # List all available style
 
-import os
-import sys
+from sigmarl.parse_map_base import ParseMapBase
 
-script_dir = os.path.dirname(__file__)  # Directory of the current script
-project_root = os.path.dirname(script_dir)  # Project root directory
-if project_root not in sys.path:
-    sys.path.append(project_root)
+from sigmarl.colors import Color
 
-from utilities.parse_map_base import ParseMapBase
-
-from utilities.colors import Color
-
-from utilities.constants import SCENARIOS
+from sigmarl.constants import SCENARIOS
 
 
 class ParseOSM(ParseMapBase):

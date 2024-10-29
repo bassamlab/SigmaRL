@@ -6,7 +6,7 @@
 from matplotlib import pyplot as plt
 import torch
 
-from utilities.colors import Color
+from sigmarl.colors import Color
 
 
 ##################################################
@@ -19,8 +19,7 @@ class Normalizers:
         pos_world=None,
         v=None,
         rot=None,
-        action_steering=None,
-        action_vel=None,
+        steering=None,
         distance_lanelet=None,
         distance_agent=None,
         distance_ref=None,
@@ -29,8 +28,7 @@ class Normalizers:
         self.pos_world = pos_world
         self.v = v
         self.rot = rot
-        self.action_steering = action_steering
-        self.action_vel = action_vel
+        self.steering = steering
         self.distance_lanelet = distance_lanelet
         self.distance_agent = distance_agent
         self.distance_ref = distance_ref
@@ -226,8 +224,8 @@ class Distances:
         goal=None,
         obstacles=None,
     ):
-        if (type is not None) & (type not in ["c2c", "MTV"]):
-            raise ValueError("Invalid distance type. Must be 'c2c' or 'MTV'.")
+        if (type is not None) & (type not in ["c2c", "mtv"]):
+            raise ValueError("Invalid distance type. Must be 'c2c' or 'mtv'.")
         self.type = type  # Distances between agents
         self.agents = agents  # Distances between agents
         self.left_boundaries = left_boundaries  # Distances between agents and the left boundaries of their current lanelets (for each vertex of each agent)
@@ -459,6 +457,7 @@ class Observations:
         n_observed_steps=None,
         past_pos: CircularBuffer = None,
         past_rot: CircularBuffer = None,
+        past_steering: CircularBuffer = None,
         past_vertices: CircularBuffer = None,
         past_vel: CircularBuffer = None,
         past_short_term_ref_points: CircularBuffer = None,
@@ -482,6 +481,7 @@ class Observations:
 
         self.past_pos = past_pos  # Past positions
         self.past_rot = past_rot  # Past rotations
+        self.past_steering = past_steering  # Past steering angles
         self.past_vertices = past_vertices  # Past vertices
         self.past_vel = past_vel  # Past velocites
 
@@ -769,24 +769,24 @@ def exponential_decreasing_fcn(x, x0, x1):
     return y
 
 
-def get_distances_between_agents(self, distance_type, is_set_diagonal=False):
+def get_distances_between_agents(
+    data, distance_type, is_set_diagonal=False, x_semidim=None, y_semidim=None
+):
     """This function calculates the mutual distances between agents.
-        Currently, the calculation of two types of distances is supported ('c2c' and 'MTV'):
+        Currently, the calculation of two types of distances is supported ('c2c' and 'mtv'):
             c2c: center-to-center distance
-            MTV: minimum translation vector (MTV)-based distance
+            mtv: minimum translation vector (mtv)-based distance
     Args:
-        distance_type: one of {c2c, MTV}
+        data: positions of the agents with dimension [batch_dim, n_agents, 2] if `distance_type == "c2c"` or their vertices with dimension [batch_dim, n_agents, 4 or 5, 2] if `distance_type == "mtv"`
+        distance_type: one of {c2c, mtv}
         is_set_diagonal: whether to set the diagonal elements (distance from an agent to this agent itself) from zero to a high value
     TODO: Add the posibility to calculate the mutual distances between agents in a single env (`reset_world` sometime only needs to resets a single env)
     """
     if distance_type == "c2c":
         # Collect positions for all agents across all batches, shape [n_agents, batch_size, 2]
-        positions = torch.stack(
-            [self.world.agents[i].state.pos for i in range(self.n_agents)]
-        )
 
         # Reshape from [n_agents, batch_size, 2] to [batch_size, n_agents, 2]
-        positions_reshaped = positions.transpose(0, 1)
+        positions_reshaped = data.transpose(0, 1)
 
         # Reshape for broadcasting: shape becomes [batch_size, n_agents, 1, 2] and [batch_size, 1, n_agents, 2]
         pos1 = positions_reshaped.unsqueeze(2)
@@ -800,31 +800,34 @@ def get_distances_between_agents(self, distance_type, is_set_diagonal=False):
 
         # Take the square root to get actual distances, shape [batch_size, n_agents, n_agents]
         mutual_distances = torch.sqrt(squared_distances)
-    elif distance_type == "MTV":
+    elif distance_type == "mtv":
+        batch_dim, n_agents, _, _ = data.shape
+        device = data.device
+
         # Initialize
         mutual_distances = torch.zeros(
-            (self.world.batch_dim, self.n_agents, self.n_agents),
-            device=self.world.device,
+            (batch_dim, n_agents, n_agents),
+            device=device,
             dtype=torch.float32,
         )
 
         # Calculate the normal axes of the four edges of each rectangle (Note that each rectangle has two normal axes)
-        axes_all = torch.diff(self.vertices[:, :, 0:3, :], dim=2)
+        axes_all = torch.diff(data[:, :, 0:3, :], dim=2)
         axes_norm_all = axes_all / torch.norm(axes_all, dim=-1).unsqueeze(
             -1
         )  # Normalize
 
-        for i in range(self.n_agents):
-            vertices_i = self.vertices[:, i, 0:4, :]
+        for i in range(n_agents):
+            vertices_i = data[:, i, 0:4, :]
             axes_norm_i = axes_norm_all[:, i]
-            for j in range(i + 1, self.n_agents):
-                vertices_j = self.vertices[:, j, 0:4, :]
+            for j in range(i + 1, n_agents):
+                vertices_j = data[:, j, 0:4, :]
                 axes_norm_j = axes_norm_all[:, j]
 
                 # 1. Project each of the four vertices of rectangle i and all the four vertices of rectangle j to each of the two axes of rectangle j.
                 # 2. The distance from a vertex of rectangle i to rectangle j is calculated by taking the Euclidean distance of the "gaps" on the two axes of rectangle j between the projected point of this vertex on the axes and the projected points of rectangle j. If the projected point of this vertex lies inside the projection of rectangle j, the gap is consider zero.
                 # 3. Steps 1 and 2 give us four distances. Repeat these two step for rectangle j, which give us another four distances.
-                # 4. The MTV-based distance between the two rectangles is the smallest distance among the eight distances.
+                # 4. The mtv-based distance between the two rectangles is the smallest distance among the eight distances.
 
                 # Project rectangle j to its own axes
                 projection_jj = (
@@ -888,7 +891,7 @@ def get_distances_between_agents(self, distance_type, is_set_diagonal=False):
 
     if is_set_diagonal:
         mutual_distances.diagonal(dim1=-2, dim2=-1).fill_(
-            torch.sqrt(self.world.x_semidim**2 + self.world.y_semidim**2)
+            torch.sqrt(x_semidim**2 + y_semidim**2)
         )
 
     return mutual_distances

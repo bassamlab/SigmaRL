@@ -5,6 +5,12 @@
 
 import torch
 import torch.nn as nn
+from torch import Tensor
+
+import typing
+
+from vmas.simulator.core import World, AgentState, Agent
+from vmas.simulator.utils import TorchUtils, override
 
 import math
 
@@ -21,7 +27,6 @@ from torchrl.envs.utils import (
     set_exploration_type,
     _terminated_or_truncated,
     step_mdp,
-    _aggregate_end_of_traj,
     _convert_exploration_type,
     ExplorationType,
 )
@@ -31,12 +36,7 @@ from torchrl.envs.libs.vmas import VmasEnv
 
 # TorchRL Utils
 from torchrl._utils import (
-    _check_for_faulty_process,
-    _ProcessNoWarn,
-    accept_remote_rref_udf_invocation,
-    prod,
     RL_WARNINGS,
-    VERBOSE,
 )
 
 # Losses
@@ -60,18 +60,17 @@ from matplotlib import pyplot as plt
 from typing import Callable, Optional, Callable, Optional
 from ctypes import byref
 
-from matplotlib import pyplot as plt
 import json
 import os
 import re
 
-from typing import Any, Callable, Dict, Iterator, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Optional, Sequence, Tuple, Union
 
 DEFAULT_EXPLORATION_TYPE: ExplorationType = ExplorationType.RANDOM
 
 import warnings
 
-from utilities.constants import AGENTS
+from sigmarl.constants import AGENTS
 
 
 def get_model_name(parameters):
@@ -731,6 +730,223 @@ class SyncDataCollectorCustom(SyncDataCollector):
         return self._tensordict_out
 
 
+class VehicleState(AgentState):
+    def __init__(self):
+        """
+        Initialize the VehicleState with all attributes from AgentState
+        and add some new attributes.
+        """
+        super().__init__()
+        self._speed = None  # Speed (magnitude, positive for forward moving, negative for backward moving)
+        self._steering = None
+        self._sideslip_angle = None
+
+    @property
+    def speed(self):
+        return self._speed
+
+    @speed.setter
+    def speed(self, value):
+        assert (
+            self._batch_dim is not None and self._device is not None
+        ), "First add an entity to the world before setting its state"
+        assert (
+            value.shape[0] == self._batch_dim
+        ), f"Internal state must match batch dim, got {value.shape[0]}, expected {self._batch_dim}"
+
+        self._speed = value.to(self._device)
+
+    @property
+    def steering(self):
+        return self._steering
+
+    @steering.setter
+    def steering(self, value):
+        assert (
+            self._batch_dim is not None and self._device is not None
+        ), "First add an entity to the world before setting its state"
+        assert (
+            value.shape[0] == self._batch_dim
+        ), f"Internal state must match batch dim, got {value.shape[0]}, expected {self._batch_dim}"
+
+        self._steering = value.to(self._device)
+
+    @property
+    def sideslip_angle(self):
+        return self._sideslip_angle
+
+    @sideslip_angle.setter
+    def sideslip_angle(self, value):
+        assert (
+            self._batch_dim is not None and self._device is not None
+        ), "First add an entity to the world before setting its state"
+        assert (
+            value.shape[0] == self._batch_dim
+        ), f"Internal state must match batch dim, got {value.shape[0]}, expected {self._batch_dim}"
+
+        self._sideslip_angle = value.to(self._device)
+
+    @override(AgentState)
+    def _reset(self, env_index: typing.Optional[int]):
+        for attr_name in ["speed", "steering", "sideslip_angle"]:
+            attr = self.__getattribute__(attr_name)
+            if attr is not None:
+                if env_index is None:
+                    self.__setattr__(attr_name, torch.zeros_like(attr))
+                else:
+                    self.__setattr__(
+                        attr_name,
+                        TorchUtils.where_from_index(env_index, 0, attr),
+                    )
+        super()._reset(env_index)
+
+    @override(AgentState)
+    def zero_grad(self):
+        for attr_name in ["speed", "steering", "sideslip_angle"]:
+            attr = self.__getattribute__(attr_name)
+            if attr is not None:
+                self.__setattr__(attr_name, attr.detach())
+        super().zero_grad()
+
+    @override(AgentState)
+    def _spawn(self, dim_c: int, dim_p: int):
+        self.speed = torch.zeros(
+            self.batch_dim, 1, device=self.device, dtype=torch.float32
+        )
+        self.steering = torch.zeros(
+            self.batch_dim, 1, device=self.device, dtype=torch.float32
+        )
+        self.sideslip_angle = torch.zeros(
+            self.batch_dim, 1, device=self.device, dtype=torch.float32
+        )
+        super()._spawn(dim_c, dim_p)
+
+
+class Vehicle(Agent):
+    def __init__(self, *args, **kwargs):
+        """
+        Initialize the Vehicle by calling the parent Agent's initializer
+        and setting up the VehicleState.
+
+        Redefine _state attribute to be VehicleState.
+        """
+        super().__init__(*args, **kwargs)
+
+        # Replace the default AgentState with VehicleState
+        self._state = VehicleState()
+
+    def set_speed(self, speed: Tensor, batch_index: int = None):
+        """
+        Set the speed state of the vehicle.
+
+        Args:
+            speed (Tensor): The new speed value.
+            batch_index (int, optional): The index in the batch to set the speed for.
+                                         If None, all batches are updated.
+        """
+        self._set_state_property(VehicleState.speed, self.state, speed, batch_index)
+
+    def set_steering(self, steering: Tensor, batch_index: int = None):
+        """
+        Set the steering state of the vehicle.
+
+        Args:
+            steering (Tensor): The new steering value.
+            batch_index (int, optional): The index in the batch to set the steering for.
+                                         If None, all batches are updated.
+        """
+        self._set_state_property(
+            VehicleState.steering, self.state, steering, batch_index
+        )
+
+    def set_sideslip_angle(self, sideslip_angle: Tensor, batch_index: int = None):
+        """
+        Set the sideslip angle of the vehicle, i.e., the angle between the velocity and the chasis.
+
+        Args:
+            sideslip_angle (Tensor): The new sideslip_angle value.
+            batch_index (int, optional): The index in the batch to set the sideslip_angle for.
+                                         If None, all batches are updated.
+        """
+        self._set_state_property(
+            VehicleState.sideslip_angle, self.state, sideslip_angle, batch_index
+        )
+
+
+class WorldCustom(World):
+    """
+    The default step function update agents' states based on physical forces.
+    Redefine step function to update agents' states based on speed and steering command.
+    """
+
+    def step(self):
+        self
+        for entity in self.entities:
+            # if entity.movable:
+            # Model drag coefficient
+            # if entity.drag is not None:
+            #     entity.action.u[:, 0] = entity.action.u[:, 0] * (1 - entity.drag)
+            # else:
+            #     entity.action.u[:, 0] = entity.action.u[:, 0] * (1 - self._drag)
+            # entity.action.u += torch.rand_like(entity.action.u) * 0.1  # Inject random noise to actions
+            # Clamp the speed and steering angle to be within bounds
+            if hasattr(entity.dynamics, "max_speed"):
+                entity.action.u[:, 0] = torch.clamp(
+                    entity.action.u[:, 0],
+                    -entity.dynamics.max_speed,
+                    entity.dynamics.max_speed,
+                )
+            if hasattr(entity.dynamics, "max_steering"):
+                entity.action.u[:, 1] = torch.clamp(
+                    entity.action.u[:, 1],
+                    -entity.dynamics.max_steering,
+                    entity.dynamics.max_steering,
+                )
+
+            # Assume linear acceleration and steering change
+            u_acc = (entity.action.u[:, 0] - entity.state.speed.squeeze(-1)) / self.dt
+            u_steering_rate = (
+                entity.action.u[:, 1] - entity.state.steering.squeeze(-1)
+            ) / self.dt
+
+            u = torch.cat([u_acc.unsqueeze(-1), u_steering_rate.unsqueeze(-1)], dim=-1)
+
+            # Apply action limits
+            u[:, 0] = torch.clamp(
+                u[:, 0], entity.dynamics.min_acc, entity.dynamics.max_acc
+            )
+            u[:, 1] = torch.clamp(
+                u[:, 1],
+                entity.dynamics.min_steering_rate,
+                entity.dynamics.max_steering_rate,
+            )
+
+            x0 = torch.cat(
+                [
+                    entity.state.pos,
+                    entity.state.rot,
+                    entity.state.speed,
+                    entity.state.steering,
+                ],
+                dim=-1,
+            )
+
+            # Compute new states
+            x1, sideslip_angle, velocity = entity.dynamics.step(
+                x0=x0,  # [x, y, yaw, speed, steering]
+                u=u,  #  [acceleration, steering_rate]
+                dt=self.dt,  # Sample time in [s]
+                tick_per_step=5,  # Ticks per time step controling the fedelity of the ODE
+            )
+            # Update states
+            entity.state.pos = x1[:, 0:2]
+            entity.state.rot = x1[:, 2].unsqueeze(-1)
+            entity.state.speed = x1[:, 3].unsqueeze(-1)
+            entity.state.steering = x1[:, 4].unsqueeze(-1)
+            entity.state.vel = velocity
+            entity.state.sideslip_angle = sideslip_angle.unsqueeze(-1)
+
+
 class Parameters:
     """
     This class stores parameters for training and testing.
@@ -788,7 +1004,7 @@ class Parameters:
         is_observe_vertices: bool = True,  # Whether to observe the vertices of other agents (or center point)
         is_add_noise: bool = True,  # Whether to add noise to observations
         is_observe_ref_path_other_agents: bool = False,  # Whether to observe the reference paths of other agents
-        is_use_mtv_distance: bool = True,  # Whether to use MTV-based (Minimum Translation Vector) distance or c2c-based (center-to-center) distance.
+        is_use_mtv_distance: bool = True,  # Whether to use mtv-based (Minimum Translation Vector) distance or c2c-based (center-to-center) distance.
         # Visu
         is_visualize_short_term_path: bool = True,  # Whether to visualize short-term reference paths
         is_visualize_lane_boundary: bool = False,  # Whether to visualize lane boundary
@@ -811,6 +1027,7 @@ class Parameters:
         prioritization_method: str = "marl",  # Which method to use for generating priority ranks (options: {"marl", "random"}). Applicable only for prioritized MARL scenarios.
         is_communication_noise: str = False,  # Whether to inject communication noise to propagated actions
         noise_level: float = 0.1,  # Noise is modeled by a normal distribution. `noise_level` defines the variance of the normal distribution.
+        is_using_cbf: bool = False,  # Whether to use Control Barrier Function (CBF)
     ):
 
         self.n_agents = n_agents
@@ -894,6 +1111,8 @@ class Parameters:
         self.is_communication_noise = is_communication_noise
         self.noise_level = noise_level
 
+        self.is_using_cbf = is_using_cbf
+
         if (model_name is None) and (scenario_name is not None):
             self.model_name = get_model_name(self)
 
@@ -932,12 +1151,133 @@ class SaveData:
         return cls(parameters, dict_data["episode_reward_mean_list"])
 
 
+class DecisionMakingModule:
+    def __init__(self, env: TransformedEnvCustom = None, mappo: bool = True):
+        """
+        Initializes the DecisionMakingModule, which is responsible for generating decisions using a neural network policy.
+        It also sets up a PPO loss module with an actor-critic architecture and GAE (Generalized Advantage Estimation) for RL optimization.
+
+        Parameters:
+        -----------
+        env : TransformedEnvCustom
+            The environment containing the observation specifications and other scenario parameters.
+        mappo : bool, optional
+            Flag to indicate whether to use centralised learning in the critic (MAPPO). Default is True.
+        """
+        parameters = env.scenario.parameters
+        observation_key = get_observation_key(parameters)
+
+        policy_net = torch.nn.Sequential(
+            MultiAgentMLP(
+                n_agent_inputs=env.observation_spec[observation_key].shape[
+                    -1
+                ],  # n_obs_per_agent
+                n_agent_outputs=(
+                    2 * env.action_spec.shape[-1]
+                ),  # 2 * n_actions_per_agents
+                n_agents=env.n_agents,
+                centralised=False,  # the policies are decentralised (ie each agent will act from its observation)
+                share_params=True,  # sharing parameters means that agents will all share the same policy, which will allow them to benefit from each other’s experiences, resulting in faster training. On the other hand, it will make them behaviorally homogenous, as they will share the same model
+                device=parameters.device,
+                depth=2,
+                num_cells=256,
+                activation_class=torch.nn.Tanh,
+            ),
+            NormalParamExtractor(),  # this will just separate the last dimension into two outputs: a `loc` and a non-negative `scale``, used as parameters for a normal distribution (mean and standard deviation)
+        )
+
+        # print("policy_net:", policy_net, "\n")
+
+        policy_module = TensorDictModule(
+            policy_net,
+            in_keys=[observation_key],
+            out_keys=[
+                ("agents", "loc"),
+                ("agents", "scale"),
+            ],  # represents the parameters of the policy distribution for each agent
+        )
+
+        # Use a probabilistic actor allows for exploration
+        policy = ProbabilisticActor(
+            module=policy_module,
+            spec=env.unbatched_action_spec,
+            in_keys=[("agents", "loc"), ("agents", "scale")],
+            out_keys=[env.action_key],
+            distribution_class=TanhNormal,
+            distribution_kwargs={
+                "min": env.unbatched_action_spec[env.action_key].space.low,
+                "max": env.unbatched_action_spec[env.action_key].space.high,
+            },
+            return_log_prob=True,
+            log_prob_key=(
+                "agents",
+                "sample_log_prob",
+            ),  # log probability favors numerical stability and gradient calculation
+        )  # we'll need the log-prob for the PPO loss
+
+        critic_net = MultiAgentMLP(
+            n_agent_inputs=env.observation_spec[observation_key].shape[
+                -1
+            ],  # Number of observations
+            n_agent_outputs=1,  # 1 value per agent
+            n_agents=env.n_agents,
+            centralised=mappo,  # If `centralised` is True (which may help overcome the non-stationary problem in MARL), each agent will use the inputs of all agents to compute its output (n_agent_inputs * n_agents will be the number of inputs for one agent). Otherwise, each agent will only use its data as input.
+            share_params=True,  # If `share_params` is True, the same MLP will be used to make the forward pass for all agents (homogeneous policies). Otherwise, each agent will use a different MLP to process its input (heterogeneous policies).
+            device=parameters.device,
+            depth=2,
+            num_cells=256,
+            activation_class=torch.nn.Tanh,
+        )
+
+        # print("critic_net:", critic_net, "\n")
+
+        critic = TensorDictModule(
+            module=critic_net,
+            in_keys=[
+                observation_key
+            ],  # Note that the critic in PPO only takes the same inputs (observations) as the actor
+            out_keys=[("agents", "state_value")],
+        )
+
+        loss_module = ClipPPOLoss(
+            actor=policy,
+            critic=critic,
+            clip_epsilon=parameters.clip_epsilon,
+            entropy_coef=parameters.entropy_eps,
+            normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
+        )
+
+        loss_module.set_keys(  # We have to tell the loss where to find the keys
+            reward=env.reward_key,
+            action=env.action_key,
+            sample_log_prob=("agents", "sample_log_prob"),
+            value=("agents", "state_value"),
+            # These last 2 keys will be expanded to match the reward shape
+            done=("agents", "done"),
+            terminated=("agents", "terminated"),
+        )
+
+        loss_module.make_value_estimator(
+            ValueEstimators.GAE, gamma=parameters.gamma, lmbda=parameters.lmbda
+        )  # We build GAE
+        GAE = loss_module.value_estimator  # Generalized Advantage Estimation
+
+        optim = torch.optim.Adam(loss_module.parameters(), parameters.lr)
+
+        self.policy = policy
+        self.critic = critic
+
+        self.loss_module = loss_module
+        self.optim = optim
+        self.GAE = GAE
+
+
 class PriorityModule:
     def __init__(self, env: TransformedEnvCustom = None, mappo: bool = True):
         """
         Initializes the PriorityModule, which is responsible for computing the priority rank of agents
         and their scores using a neural network policy. It also sets up a PPO loss module with an actor-critic
-        architecture and GAE (Generalized Advantage Estimation) for reinforcement learning optimization.
+        architecture and GAE (Generalized Advantage Estimation) for RL optimization.
 
         Parameters:
         -----------
@@ -1144,6 +1484,118 @@ class PriorityModule:
 
         self.optim.step()
         self.optim.zero_grad()
+
+
+class CBFModule:
+    def __init__(self, env: TransformedEnvCustom = None, mappo: bool = True):
+        """
+        Initializes the CBFModule, which is responsible for learning a Control Barrier Function (CBF) with a neural network policy.
+        It also sets up a PPO loss module with an actor-critic architecture and GAE (Generalized Advantage Estimation) for RL optimization.
+
+        Parameters:
+        -----------
+        env : TransformedEnvCustom
+            The environment containing the observation specifications and other scenario parameters.
+        mappo : bool, optional
+            Flag to indicate whether to use centralised learning in the critic (MAPPO). Default is True.
+        """
+
+        self.env = env
+        self.parameters = self.env.scenario.parameters
+
+        # Tuple containing the prefix keys relevant to the control barrier values
+        self.prefix_key = ("agents", "info", "cbf")
+
+        observation_key = get_cbf_observation_key()
+
+        policy_net = torch.nn.Sequential(
+            MultiAgentMLP(
+                n_agent_inputs=env.observation_spec[observation_key].shape[-1],
+                n_agent_outputs=2 * 1,  # 2 * n_actions_per_agents
+                n_agents=self.parameters.n_agents,
+                centralised=False,  # the policies are decentralised (ie each agent will act from its observation)
+                share_params=True,
+                device=self.parameters.device,
+                depth=2,
+                num_cells=256,
+                activation_class=torch.nn.Tanh,
+            ),
+            NormalParamExtractor(),  # this will just separate the last dimension into two outputs: a loc and a non-negative scale
+        )
+
+        policy_module = TensorDictModule(
+            policy_net,
+            in_keys=[observation_key],
+            out_keys=[self.prefix_key + ("loc",), self.prefix_key + ("scale",)],
+        )
+
+        policy = ProbabilisticActor(
+            module=policy_module,
+            spec=UnboundedContinuousTensorSpec(),
+            in_keys=[self.prefix_key + ("loc",), self.prefix_key + ("scale",)],
+            out_keys=[self.prefix_key + ("scores",)],
+            distribution_class=TanhNormal,
+            distribution_kwargs={},
+            return_log_prob=True,
+            log_prob_key=self.prefix_key + ("sample_log_prob",),
+        )  # we'll need the log-prob for the PPO loss
+
+        critic_net = MultiAgentMLP(
+            n_agent_inputs=env.observation_spec[observation_key].shape[
+                -1
+            ],  # Number of observations
+            n_agent_outputs=1,  # 1 value per agent
+            n_agents=self.parameters.n_agents,
+            centralised=mappo,  # If `centralised` is True (which may help overcome the non-stationary problem in MARL), each agent will use the inputs of all agents to compute its output (n_agent_inputs * n_agents will be the number of inputs for one agent). Otherwise, each agent will only use its data as input.
+            share_params=True,  # If `share_params` is True, the same MLP will be used to make the forward pass for all agents (homogeneous policies). Otherwise, each agent will use a different MLP to process its input (heterogeneous policies).
+            device=self.parameters.device,
+            depth=2,
+            num_cells=256,
+            activation_class=torch.nn.Tanh,
+        )
+
+        critic = TensorDictModule(
+            module=critic_net,
+            in_keys=[
+                observation_key
+            ],  # Note that the critic in PPO only takes the same inputs (observations) as the actor
+            out_keys=[self.prefix_key + ("state_value",)],
+        )
+
+        self.policy = policy
+        self.critic = critic
+
+        loss_module = ClipPPOLoss(
+            actor=policy,
+            critic=critic,
+            clip_epsilon=self.parameters.clip_epsilon,
+            entropy_coef=self.parameters.entropy_eps,
+            normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
+        )
+
+        loss_module.set_keys(  # We have to tell the loss where to find the keys
+            reward=env.reward_key,
+            action=self.prefix_key + ("scores",),
+            sample_log_prob=self.prefix_key + ("sample_log_prob",),
+            value=self.prefix_key + ("state_value",),
+            done=("agents", "done"),
+            terminated=("agents", "terminated"),
+            advantage=self.prefix_key + ("advantage",),
+            value_target=self.prefix_key + ("value_target",),
+        )
+
+        loss_module.make_value_estimator(
+            ValueEstimators.GAE,
+            gamma=self.parameters.gamma,
+            lmbda=self.parameters.lmbda,
+        )  # We build GAE
+        GAE = loss_module.value_estimator  # Generalized Advantage Estimation
+
+        optim = torch.optim.Adam(loss_module.parameters(), self.parameters.lr)
+
+        self.GAE = GAE
+        self.loss_module = loss_module
+        self.optim = optim
 
 
 ##################################################
@@ -1359,7 +1811,7 @@ def opponent_modeling(
 
         # A certain percentage of the maximum value as the noise standard diviation
         noise_std_speed = AGENTS["max_speed"] * noise_percentage
-        noise_std_steering = math.radians(AGENTS["max_steering"]) * noise_percentage
+        noise_std_steering = AGENTS["max_steering"] * noise_percentage
 
         noise_actions = torch.cat(
             [
@@ -1406,6 +1858,11 @@ def get_observation_key(parameters):
 
 def get_priority_observation_key():
     return ("agents", "info", "priority_observation")
+
+
+def get_cbf_observation_key():
+    """The observation key of CBF"""
+    return ("agents", "info", "cbf_observation")
 
 
 def prioritized_ap_policy(
@@ -1518,7 +1975,7 @@ def prioritized_ap_policy(
             # Propagate the collected actions into the current agent's observation
             if is_communication_noise:
                 std_noise_speed = AGENTS["max_speed"] * noise_level
-                std_noise_steering = math.radians(AGENTS["max_steering"]) * noise_level
+                std_noise_steering = AGENTS["max_steering"] * noise_level
                 noise = torch.cat(
                     [
                         std_noise_speed * torch.randn(action_dim, device=device),

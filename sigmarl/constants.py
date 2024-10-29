@@ -7,7 +7,7 @@ import math
 
 SCENARIOS = {
     "CPM_entire": {
-        "map_path": "assets/maps/cpm.xml",
+        "map_path": "sigmarl/assets/maps/cpm.xml",
         "n_agents": 15,
         "name": "CPM Map",
         "x_dim_min": 0,  # Min x-coordinate
@@ -22,7 +22,7 @@ SCENARIOS = {
         "scale": 1.0,  # Scale the map
     },
     "CPM_mixed": {
-        "map_path": "assets/maps/cpm.xml",
+        "map_path": "sigmarl/assets/maps/cpm.xml",
         "n_agents": 4,
         "name": "CPM Map",
         "x_dim_min": 0,  # Min x-coordinate
@@ -37,7 +37,7 @@ SCENARIOS = {
         "scale": 1.0,  # Scale the map
     },
     "intersection_1": {
-        "map_path": "assets/maps/intersection_1.osm",
+        "map_path": "sigmarl/assets/maps/intersection_1.osm",
         "n_agents": 6,
         "name": "Intersection 1",
         "x_dim_min": 0.180,
@@ -65,7 +65,7 @@ SCENARIOS = {
         "scale": 1e5,  # A scale converts data from geographic coordinate system (used in JOSM) to Cartesian coordinate system
     },
     "intersection_2": {
-        "map_path": "assets/maps/intersection_2.osm",
+        "map_path": "sigmarl/assets/maps/intersection_2.osm",
         "n_agents": 6,
         "name": "Intersection 2",
         "x_dim_min": 0.180,
@@ -101,7 +101,7 @@ SCENARIOS = {
         "scale": 1e5,  # Scale the map
     },
     "intersection_3": {
-        "map_path": "assets/maps/intersection_3.osm",
+        "map_path": "sigmarl/assets/maps/intersection_3.osm",
         "n_agents": 8,
         "name": "Intersection 3",
         "x_dim_min": 0.178,
@@ -134,7 +134,7 @@ SCENARIOS = {
         "scale": 1e5,  # Scale the map
     },
     "on_ramp_1": {
-        "map_path": "assets/maps/on_ramp_1.osm",
+        "map_path": "sigmarl/assets/maps/on_ramp_1.osm",
         "n_agents": 8,
         "name": "Intersection 3",
         "x_dim_min": 0.152,
@@ -164,7 +164,7 @@ SCENARIOS = {
         "scale": 1e5,  # Scale the map
     },
     "roundabout_1": {
-        "map_path": "assets/maps/roundabout_1.osm",
+        "map_path": "sigmarl/assets/maps/roundabout_1.osm",
         "n_agents": 8,
         "name": "Intersection 3",
         "x_dim_min": 0.180,
@@ -196,6 +196,23 @@ SCENARIOS = {
         "lane_width": 0.20,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
+    "goal_reaching_1": {
+        "n_agents": 1,
+        "name": "",
+        "x_dim_min": 0.0,
+        "x_dim_max": 20.0,
+        "y_dim_min": 0.0,
+        "y_dim_max": 20.0,
+        "world_x_dim": 20.0,
+        "world_y_dim": 20.0,
+        "reference_paths_ids": [],
+        "neighboring_lanelet_ids": {},
+        "figsize_x": 3.0,
+        "viewer_zoom": 3.5,  # For VMAS render
+        "resolution_factor": 50,
+        "lane_width": 0.20,  # [m] Lane width
+        "scale": 0.0,  # Scale the map
+    },
 }
 
 AGENTS = {
@@ -203,12 +220,22 @@ AGENTS = {
     "length": 0.16,  # [m]
     "l_f": 0.08,  # [m] Front wheelbase
     "l_r": 0.08,  # [m] Rear wheelbase
+    "l_wb": 0.16,  # [m] Wheelbase
     "max_speed": 1.0,  # [m/s]
-    "max_speed_achievable": 0.82,  # [m/s]
-    "max_steering": 35,  # [°]
+    "min_speed": -0.5,  # [m/s]
+    "max_speed_achievable": 1.0,  # [m/s]
+    "max_steering": math.pi / 4,  # [radian]
+    "min_steering": -math.pi / 4,  # [radian]
+    "max_acc": 4.0,  # [m/s^2]
+    "min_acc": -4.0,  # [m/s^2]
+    "max_steering_rate": 2 * math.pi,  # [radian/s]
+    "min_steering_rate": -2 * math.pi,  # [radian/s]
     "n_actions": 2,
 }
 
 THRESHOLD = {
     "initial_distance": 1.2 * math.sqrt(AGENTS["width"] ** 2 + AGENTS["length"] ** 2),
+    "reach_goal": AGENTS[
+        "width"
+    ],  # An agent is considered having reached its goal if its distance to the goal is less than its width
 }

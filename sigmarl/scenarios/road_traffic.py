@@ -3,16 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import os
-import sys
 import time
 from termcolor import colored, cprint
-
-# Add project root to system path if you want to run this file directly
-script_dir = os.path.dirname(__file__)  # Directory of the current script
-project_root = os.path.dirname(script_dir)  # Project root directory
-if project_root not in sys.path:
-    sys.path.append(project_root)
 
 import torch
 from torch import Tensor
@@ -30,14 +22,13 @@ from vmas import render_interactively
 from vmas.simulator.core import Agent, Box, World
 from vmas.simulator.scenario import BaseScenario
 
-# from vmas.simulator.dynamics.kinematic_bicycle import KinematicBicycle
+from sigmarl.dynamics import KinematicBicycleModel
 
-from utilities.kinematic_bicycle import KinematicBicycle
-from utilities.colors import Color, colors
+from sigmarl.colors import Color, colors
 
-from utilities.helper_training import Parameters
+from sigmarl.helper_training import Parameters, WorldCustom, Vehicle
 
-from utilities.helper_scenario import (
+from sigmarl.helper_scenario import (
     Distances,
     Normalizers,
     Observations,
@@ -62,9 +53,9 @@ from utilities.helper_scenario import (
     transform_from_global_to_local_coordinate,
 )
 
-from utilities.map_manager import MapManager
+from sigmarl.map_manager import MapManager
 
-from utilities.constants import SCENARIOS, AGENTS
+from sigmarl.constants import SCENARIOS, AGENTS
 
 
 class ScenarioRoadTraffic(BaseScenario):
@@ -103,6 +94,7 @@ class ScenarioRoadTraffic(BaseScenario):
         self._init_params(batch_dim, device, **kwargs)
         world = self._init_world(batch_dim, device)
         self._init_agents(world)
+        self.is_obs_steering = False
         return world
 
     def _init_params(self, batch_dim, device, **kwargs):
@@ -110,7 +102,7 @@ class ScenarioRoadTraffic(BaseScenario):
         Initialize parameters.
         """
         scenario_type = kwargs.pop(
-            "scenario_type", "CPM_mixed"
+            "scenario_type", "CPM_entire"
         )  # Scenario type. See all scenario types in SCENARIOS in utilities/constants
         self.agent_width = AGENTS["width"]  # The width of the agent in [m]
         self.agent_length = AGENTS["length"]  # The length of the agent in [m]
@@ -241,11 +233,9 @@ class ScenarioRoadTraffic(BaseScenario):
         )
         self.viewer_zoom = SCENARIOS[scenario_type]["viewer_zoom"]
 
-        self.max_steering_angle = kwargs.pop(
-            "max_steering_angle",
-            torch.deg2rad(
-                torch.tensor(AGENTS["max_steering"], device=device, dtype=torch.float32)
-            ),
+        self.max_steering = kwargs.pop(
+            "max_steering",
+            torch.tensor(AGENTS["max_steering"], device=device, dtype=torch.float32),
         )  # Maximum allowed steering angle in degree
         self.max_speed = kwargs.pop(
             "max_speed", AGENTS["max_speed"]
@@ -826,7 +816,13 @@ class ScenarioRoadTraffic(BaseScenario):
                 dtype=torch.float32,
             )
         )
-
+        self.observations.past_steering = CircularBuffer(
+            torch.zeros(
+                (n_stored_steps, batch_dim, self.n_agents),
+                device=device,
+                dtype=torch.float32,
+            )
+        )
         self.normalizers = Normalizers(
             pos=torch.tensor(
                 [self.agent_length * 10, self.agent_length * 10],
@@ -838,8 +834,7 @@ class ScenarioRoadTraffic(BaseScenario):
             ),
             v=torch.tensor(self.max_speed, device=device, dtype=torch.float32),
             rot=torch.tensor(2 * torch.pi, device=device, dtype=torch.float32),
-            action_steering=self.max_steering_angle,
-            action_vel=torch.tensor(self.max_speed, device=device, dtype=torch.float32),
+            steering=self.max_steering,
             distance_lanelet=torch.tensor(
                 lane_width * 3, device=device, dtype=torch.float32
             ),
@@ -853,9 +848,9 @@ class ScenarioRoadTraffic(BaseScenario):
 
         # Distances to boundaries and reference path, and also the closest point on the reference paths of agents
         if self.parameters.is_use_mtv_distance:
-            distance_type = "MTV"  # One of {"c2c", "MTV"}
+            distance_type = "mtv"  # One of {"c2c", "mtv"}
         else:
-            distance_type = "c2c"  # One of {"c2c", "MTV"}
+            distance_type = "c2c"  # One of {"c2c", "mtv"}
         # print(colored("[INFO] Distance type: ", "black"), colored(distance_type, "blue"))
 
         self.distances = Distances(
@@ -1001,7 +996,7 @@ class ScenarioRoadTraffic(BaseScenario):
 
     def _init_world(self, batch_dim: int, device: torch.device):
         # Make world
-        world = World(
+        world = WorldCustom(
             batch_dim,
             device,
             x_semidim=torch.tensor(
@@ -1014,10 +1009,10 @@ class ScenarioRoadTraffic(BaseScenario):
         )
         return world
 
-    def _init_agents(self, world):
+    def _init_agents(self, world: World):
         # Create agents
         for i in range(self.n_agents):
-            agent = Agent(
+            agent = Vehicle(
                 name=f"agent_{i}",
                 shape=Box(length=AGENTS["length"], width=AGENTS["width"]),
                 color=tuple(self.colors[i]),
@@ -1025,17 +1020,20 @@ class ScenarioRoadTraffic(BaseScenario):
                 render_action=False,
                 u_range=[
                     self.max_speed,
-                    self.max_steering_angle,
+                    self.max_steering,
                 ],  # Control command serves as velocity command
                 u_multiplier=[1, 1],
                 max_speed=self.max_speed,
-                dynamics=KinematicBicycle(  # Use the kinematic bicycle model for each agent
-                    world,
-                    width=AGENTS["width"],
+                dynamics=KinematicBicycleModel(  # Use the kinematic bicycle model for each agent
                     l_f=AGENTS["l_f"],
                     l_r=AGENTS["l_r"],
-                    max_steering_angle=self.max_steering_angle,
-                    integration="rk4",  # one of {"euler", "rk4"}
+                    max_speed=AGENTS["max_speed"],
+                    max_steering=AGENTS["max_steering"],
+                    max_acc=AGENTS["max_acc"],
+                    min_acc=AGENTS["min_acc"],
+                    max_steering_rate=AGENTS["max_steering_rate"],
+                    min_steering_rate=AGENTS["min_steering_rate"],
+                    device=world.device,
                 ),
             )
             world.add_agent(agent)
@@ -1141,7 +1139,15 @@ class ScenarioRoadTraffic(BaseScenario):
             # Compute mutual distances between agents
             # TODO Enable the possibility of computing the mutual distances of agents in a single env
             mutual_distances = get_distances_between_agents(
-                self=self, distance_type=self.distances.type, is_set_diagonal=True
+                data=torch.stack(
+                    [self.world.agents[i].state.pos for i in range(self.n_agents)]
+                )
+                if self.distances.type == "c2c"
+                else self.vertices,
+                distance_type=self.distances.type,
+                is_set_diagonal=True,
+                x_semidim=self.world.x_semidim,
+                y_semidim=self.world.y_semidim,
             )
             # Reset mutual distances of all envs
             self.distances.agents[env_j, :, :] = mutual_distances[env_j, :, :]
@@ -1232,6 +1238,7 @@ class ScenarioRoadTraffic(BaseScenario):
             agents[i_agent].set_pos(initial_state[i_agent, 0:2], batch_index=env_i)
             agents[i_agent].set_rot(initial_state[i_agent, 2], batch_index=env_i)
             agents[i_agent].set_vel(initial_state[i_agent, 3:5], batch_index=env_i)
+            # TODO Add steering to state buffer
 
         else:
             is_feasible_initial_position_found = False
@@ -1307,18 +1314,26 @@ class ScenarioRoadTraffic(BaseScenario):
                 )
 
             rot_start = ref_path["center_line_yaw"][random_point_id]
+            steering_start = torch.zeros_like(rot_start, device=self.world.device)
+            sideslip_start = torch.zeros_like(
+                steering_start, device=self.world.device
+            )  # Sideslip angle is zero since the steering is zero
+
             vel_start_abs = (
                 torch.rand(1, dtype=torch.float32, device=self.world.device)
                 * agents[i_agent].max_speed
             )  # Random initial velocity
             vel_start = torch.hstack(
                 [
-                    vel_start_abs * torch.cos(rot_start),
-                    vel_start_abs * torch.sin(rot_start),
+                    vel_start_abs * torch.cos(sideslip_start + rot_start),
+                    vel_start_abs * torch.sin(sideslip_start + rot_start),
                 ]
             )
 
             agents[i_agent].set_rot(rot_start, batch_index=env_i)
+            agents[i_agent].set_steering(steering_start, batch_index=env_i)
+            agents[i_agent].set_sideslip_angle(sideslip_start, batch_index=env_i)
+            agents[i_agent].set_speed(vel_start_abs, batch_index=env_i)
             agents[i_agent].set_vel(vel_start, batch_index=env_i)
 
         return ref_path, path_id
@@ -1680,7 +1695,7 @@ class ScenarioRoadTraffic(BaseScenario):
         ]
 
         steering_change = torch.clamp(
-            (steering_current - steering_past).abs() * self.normalizers.action_steering
+            (steering_current - steering_past).abs() * self.normalizers.steering
             - self.thresholds.change_steering,  # Not forget to denormalize
             min=0,
         )
@@ -1725,79 +1740,6 @@ class ScenarioRoadTraffic(BaseScenario):
         # [update] previous positions and short-term reference paths
         self._update_state_after_rewarding(agent_index)
 
-        # [update] previous positions and short-term reference paths
-        if agent_index == (self.n_agents - 1):  # Avoid repeated updating
-            state_add = torch.cat(
-                (
-                    torch.stack([a.state.pos for a in self.world.agents], dim=1),
-                    torch.stack([a.state.rot for a in self.world.agents], dim=1),
-                    torch.stack([a.state.vel for a in self.world.agents], dim=1),
-                    self.ref_paths_agent_related.scenario_id[:].unsqueeze(-1),
-                    self.ref_paths_agent_related.path_id[:].unsqueeze(-1),
-                    self.ref_paths_agent_related.point_id[:].unsqueeze(-1),
-                ),
-                dim=-1,
-            )
-            self.state_buffer.add(state_add)
-
-        (
-            self.ref_paths_agent_related.short_term[:, agent_index],
-            _,
-        ) = get_short_term_reference_path(
-            polyline=self.ref_paths_agent_related.long_term[:, agent_index],
-            index_closest_point=self.distances.closest_point_on_ref_path[
-                :, agent_index
-            ],
-            n_points_to_return=self.parameters.n_points_short_term,
-            device=self.world.device,
-            is_polyline_a_loop=self.ref_paths_agent_related.is_loop[:, agent_index],
-            n_points_long_term=self.ref_paths_agent_related.n_points_long_term[
-                :, agent_index
-            ],
-            sample_interval=self.ref_paths_map_related.sample_interval,
-        )
-
-        if not self.parameters.is_observe_distance_to_boundaries:
-            # Get nearing points on boundaries
-            (
-                self.ref_paths_agent_related.nearing_points_left_boundary[
-                    :, agent_index
-                ],
-                _,
-            ) = get_short_term_reference_path(
-                polyline=self.ref_paths_agent_related.left_boundary[:, agent_index],
-                index_closest_point=self.distances.closest_point_on_left_b[
-                    :, agent_index
-                ],
-                n_points_to_return=self.ref_paths_agent_related.n_points_nearing_boundary,
-                device=self.world.device,
-                is_polyline_a_loop=self.ref_paths_agent_related.is_loop[:, agent_index],
-                n_points_long_term=self.ref_paths_agent_related.n_points_long_term[
-                    :, agent_index
-                ],
-                sample_interval=1,
-                n_points_shift=-2,
-            )
-            (
-                self.ref_paths_agent_related.nearing_points_right_boundary[
-                    :, agent_index
-                ],
-                _,
-            ) = get_short_term_reference_path(
-                polyline=self.ref_paths_agent_related.right_boundary[:, agent_index],
-                index_closest_point=self.distances.closest_point_on_right_b[
-                    :, agent_index
-                ],
-                n_points_to_return=self.ref_paths_agent_related.n_points_nearing_boundary,
-                device=self.world.device,
-                is_polyline_a_loop=self.ref_paths_agent_related.is_loop[:, agent_index],
-                n_points_long_term=self.ref_paths_agent_related.n_points_long_term[
-                    :, agent_index
-                ],
-                sample_interval=1,
-                n_points_shift=-2,
-            )
-
         assert not self.rew.isnan().any(), "Rewards contain nan."
         assert not self.rew.isinf().any(), "Rewards contain inf."
 
@@ -1824,7 +1766,15 @@ class ScenarioRoadTraffic(BaseScenario):
 
             # Update distances between agents
             self.distances.agents = get_distances_between_agents(
-                self=self, distance_type=self.distances.type, is_set_diagonal=True
+                data=torch.stack(
+                    [self.world.agents[i].state.pos for i in range(self.n_agents)]
+                )
+                if self.distances.type == "c2c"
+                else self.vertices,
+                distance_type=self.distances.type,
+                is_set_diagonal=True,
+                x_semidim=self.world.x_semidim,
+                y_semidim=self.world.y_semidim,
             )
             self.collisions.with_agents[:] = False  # Reset
             self.collisions.with_lanelets[:] = False  # Reset
@@ -1852,8 +1802,8 @@ class ScenarioRoadTraffic(BaseScenario):
                         self.collisions.with_agents[
                             torch.nonzero(collision_batch_index), a_j, a_i
                         ] = True
-                elif self.distances.type == "MTV":
-                    # Two agents collide if their MTV-based distance is zero
+                elif self.distances.type == "mtv":
+                    # Two agents collide if their mtv-based distance is zero
                     self.collisions.with_agents[:] = self.distances.agents == 0
 
                 # Check for collisions between agents and lanelet boundaries
@@ -2099,6 +2049,11 @@ class ScenarioRoadTraffic(BaseScenario):
             .transpose(0, 1)
             .squeeze(-1)
         )
+        steering_global = angle_eliminate_two_pi(
+            torch.stack([a.state.steering for a in self.world.agents], dim=0)
+            .transpose(0, 1)
+            .squeeze(-1)
+        )
 
         lengths_global = torch.tensor(
             [a.shape.length for a in self.world.agents],
@@ -2136,6 +2091,7 @@ class ScenarioRoadTraffic(BaseScenario):
         self.observations.past_widths.add(
             widths_global / self.normalizers.distance_agent
         )
+        self.observations.past_steering.add(steering_global / self.normalizers.rot)
 
         if self.parameters.is_ego_view:
             pos_i_others = torch.zeros(
@@ -2178,7 +2134,7 @@ class ScenarioRoadTraffic(BaseScenario):
                 )
 
                 # Store new observation - rotation
-                rot_i_others[:, a_i] = rotations_global - rot_i
+                rot_i_others[:, a_i] = angle_eliminate_two_pi(rotations_global - rot_i)
 
                 for a_j in range(self.n_agents):
                     # Store new observation - velocities
@@ -2290,7 +2246,9 @@ class ScenarioRoadTraffic(BaseScenario):
                 torch.stack([a.state.vel for a in self.world.agents], dim=1)
                 / self.normalizers.v
             )
-            self.observations.past_rot.add(rotations_global[:] / self.normalizers.rot)
+            self.observations.past_rot.add(
+                angle_eliminate_two_pi(rotations_global[:]) / self.normalizers.rot
+            )
             self.observations.past_vertices.add(
                 self.vertices[:, :, 0:4, :]
                 / (
@@ -2333,11 +2291,11 @@ class ScenarioRoadTraffic(BaseScenario):
         else:
             self.observations.past_action_vel.add(
                 torch.stack([a.action.u[:, 0] for a in self.world.agents], dim=1)
-                / self.normalizers.action_vel
+                / self.normalizers.v
             )
             self.observations.past_action_steering.add(
                 torch.stack([a.action.u[:, 1] for a in self.world.agents], dim=1)
-                / self.normalizers.action_steering
+                / self.normalizers.steering
             )
 
             if self.parameters.is_apply_mask:
@@ -2427,6 +2385,13 @@ class ScenarioRoadTraffic(BaseScenario):
                 self.constants.env_idx_broadcasting,
                 self.observations.nearing_agents_indices[:, agent_index],
             ]
+            obs_steering_other_agents = self.observations.past_steering.get_latest()[
+                self.constants.env_idx_broadcasting,
+                self.observations.nearing_agents_indices[:, agent_index],
+            ]
+            obs_steering_other_agents[
+                masked_agents
+            ] = self.constants.mask_zero  # Steering mask
 
             # Velocities of nearing agents
             obs_vel_other_agents = self.observations.past_vel.get_latest()[
@@ -2500,6 +2465,9 @@ class ScenarioRoadTraffic(BaseScenario):
             obs_widths_other_agents = self.observations.past_widths.get_latest()[
                 indexing_tuple_2
             ]
+            obs_steering_other_agents = self.observations.past_steering.get_latest()[
+                indexing_tuple_2
+            ]
 
         # Flatten the last dimensions to combine all features into a single dimension
         obs_pos_other_agents_flat = obs_pos_other_agents.reshape(
@@ -2526,6 +2494,9 @@ class ScenarioRoadTraffic(BaseScenario):
         obs_widths_other_agents_flat = obs_widths_other_agents.reshape(
             self.world.batch_dim, self.observations.n_nearing_agents, -1
         )
+        obs_steering_other_agents_flat = obs_steering_other_agents.reshape(
+            self.world.batch_dim, self.observations.n_nearing_agents, -1
+        )
 
         # Observation of other agents
         obs_others_list = [
@@ -2543,6 +2514,9 @@ class ScenarioRoadTraffic(BaseScenario):
                 )
             ),
             obs_vel_other_agents_flat,  # [others] velocities
+            obs_steering_other_agents_flat
+            if self.is_obs_steering
+            else None,  # [others] steering angles
             (
                 obs_distance_other_agents_flat
                 if self.parameters.is_observe_distance_to_agents
@@ -2594,6 +2568,11 @@ class ScenarioRoadTraffic(BaseScenario):
             self.observations.past_vel.get_latest()[indexing_tuple_vel].reshape(
                 self.world.batch_dim, -1
             ),  # [own] velocity
+            self.observations.past_steering.get_latest()[:, agent_index].reshape(
+                self.world.batch_dim, -1
+            )
+            if self.is_obs_steering
+            else None,  # [own] steering angle
             self.observations.past_short_term_ref_points.get_latest()[
                 indexing_tuple_3
             ].reshape(
@@ -2754,19 +2733,31 @@ class ScenarioRoadTraffic(BaseScenario):
             (0, self.parameters.n_nearing_agents_observed * AGENTS["n_actions"]),
         )
 
+        # Observation of the policy in the priority-assignment module
         prio_obs = self.stored_observations[agent_index].clone()
+
+        # Observation of the policy in the CBF module, which includes:
+        # self-observation: speed
+        # self-observation: distance to left lane boundary
+        # self-observation: distance to right lane boundary
+        # others-observation: vertices of surrounding, observable agents
+        # others-observation: velocities of surrounding, observable agents
+        # others-observation: jaw angles of surrounding, observable agents
+        # others-observation: short-term reference path of surrounding, observable agents
+        cbf_obs = None
+        # self.observations.
 
         info = {
             "pos": agent.state.pos / self.normalizers.pos_world,
             "rot": angle_eliminate_two_pi(agent.state.rot) / self.normalizers.rot,
             "vel": agent.state.vel / self.normalizers.v,
             "act_vel": (
-                (agent.action.u[:, 0] / self.normalizers.action_vel)
+                (agent.action.u[:, 0] / self.normalizers.v)
                 if not is_action_empty
                 else self.constants.empty_action_vel[:, agent_index]
             ),
             "act_steer": (
-                (agent.action.u[:, 1] / self.normalizers.action_steering)
+                (agent.action.u[:, 1] / self.normalizers.steering)
                 if not is_action_empty
                 else self.constants.empty_action_steering[:, agent_index]
             ),
@@ -2796,11 +2787,13 @@ class ScenarioRoadTraffic(BaseScenario):
                 if self.parameters.is_using_prioritized_marl
                 else {}
             ),
+            **({"cbf_observation": cbf_obs} if self.parameters.is_using_cbf else {}),
         }
 
         return info
 
     def extra_render(self, env_index: int = 0):
+        time.sleep(0.1)
         if self.parameters.is_real_time_rendering:
             if self.timer.step[0] == 0:
                 pause_duration = 0  # Not sure how long should the simulation be paused at time step 0, so rather 0

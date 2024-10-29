@@ -13,23 +13,15 @@ from abc import ABC, abstractmethod
 # plt.rcParams.update({'figure.dpi': '100'}) # Avoid DPI problem (https://github.com/garrettj403/SciencePlots/issues/60)
 # plt.style.use(['science','ieee']) # The science + ieee styles for IEEE papers (can also be one of 'ieee' and 'science' )
 
-import os
-import sys
-
-script_dir = os.path.dirname(__file__)  # Directory of the current script
-project_root = os.path.dirname(script_dir)  # Project root directory
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-from utilities.colors import (
+from sigmarl.colors import (
     Color,
 )  # Do not remove (https://github.com/garrettj403/SciencePlots)
 
 # print(plt.style.available) # List all available style
 
-from utilities.constants import SCENARIOS, AGENTS, THRESHOLD
+from sigmarl.constants import SCENARIOS, AGENTS, THRESHOLD
 
-from utilities.helper_scenario import get_rectangle_vertices
+from sigmarl.helper_scenario import get_rectangle_vertices
 
 
 class ParseMapBase(ABC):

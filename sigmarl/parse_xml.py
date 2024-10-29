@@ -11,16 +11,11 @@ import numpy as np
 import os
 import sys
 
-script_dir = os.path.dirname(__file__)  # Directory of the current script
-project_root = os.path.dirname(script_dir)  # Project root directory
-if project_root not in sys.path:
-    sys.path.append(project_root)
+from sigmarl.parse_map_base import ParseMapBase
 
-from utilities.parse_map_base import ParseMapBase
+from sigmarl.colors import Color
 
-from utilities.colors import Color
-
-from utilities.constants import SCENARIOS, AGENTS, THRESHOLD
+from sigmarl.constants import SCENARIOS, AGENTS, THRESHOLD
 
 
 class ParseXML(ParseMapBase):

@@ -3,18 +3,18 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from utilities.helper_training import Parameters, SaveData
+from sigmarl.helper_training import Parameters, SaveData
 import os
 
 from vmas.simulator.utils import save_video
 import json
 
-from utilities.mappo_cavs import mappo_cavs
-from utilities.ppo_goal_reaching import ppo_goal_reaching
+from sigmarl.mappo_cavs import mappo_cavs
+from sigmarl.ppo_goal_reaching import ppo_goal_reaching
 
-from utilities.constants import SCENARIOS
+from sigmarl.constants import SCENARIOS
 
-path = "outputs/goal_reaching_v13/"
+path = "outputs/test_tmp/"
 # path = "checkpoints/itsc24/M0 (our)"
 
 try:
@@ -41,7 +41,7 @@ try:
             parameters.num_vmas_envs = 1
 
         parameters.scenario_type = (
-            "goal_reaching_1"  # on_ramp_1, roundabout_1, intersection_1/2/3, CPM_mixed
+            "CPM_mixed"  # on_ramp_1, roundabout_1, intersection_1/2/3, CPM_mixed
         )
         parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
 
@@ -51,9 +51,7 @@ try:
         parameters.is_visualize_extra_info = True
 
         # env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
-        env, policy, priority_module, parameters = ppo_goal_reaching(
-            parameters=parameters
-        )
+        env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
 
         out_td, frame_list = env.rollout(
             max_steps=parameters.max_steps - 1,

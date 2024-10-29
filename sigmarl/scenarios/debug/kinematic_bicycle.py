@@ -15,22 +15,13 @@ from vmas.simulator.dynamics.holonomic_with_rot import HolonomicWithRotation
 from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.utils import Color, ScenarioUtils
 
+from sigmarl.constants import AGENTS
+
 if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
-import os
-import sys
-
-# from vmas.simulator.dynamics.kinematic_bicycle import KinematicBicycle
-# Add project root to system path if you want to run this file directly
-script_dir = os.path.dirname(__file__)  # Directory of the current script
-project_root = os.path.abspath(
-    os.path.join(script_dir, "..", "..")
-)  # Project root directory
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-from utilities.kinematic_bicycle import KinematicBicycle
+from sigmarl.dynamics import KinematicBicycleModel
+from sigmarl.helper_training import Vehicle, WorldCustom
 
 
 class Scenario(BaseScenario):
@@ -46,47 +37,35 @@ class Scenario(BaseScenario):
         l_r = kwargs.get(
             "l_r", 0.1
         )  # Distance between the rear axle and the center of gravity
-        max_steering_angle = kwargs.get(
-            "max_steering_angle",
+        max_steering = kwargs.get(
+            "max_steering",
             torch.tensor(35.0, device=device, dtype=torch.float32).deg2rad(),
         )
         max_speed = kwargs.get(
-            "max_speed", torch.tensor(0.5, device=device, dtype=torch.float32)
+            "max_speed", torch.tensor(1.0, device=device, dtype=torch.float32)
         )
 
         # Make world
-        world = World(batch_dim, device, substeps=10, collision_force=500)
+        world = WorldCustom(batch_dim, device, substeps=10, collision_force=500)
 
         for i in range(self.n_agents):
-            if i == 0:
-                # Use the kinematic bicycle model for the first agent
-                agent = Agent(
-                    name=f"bicycle_{i}",
-                    shape=Box(length=l_f + l_r, width=width),
-                    collide=True,
-                    render_action=True,
+            # Use the kinematic bicycle model for the first agent
+            agent = Vehicle(
+                name=f"bicycle_{i}",
+                shape=Box(length=l_f + l_r, width=width),
+                collide=True,
+                render_action=True,
+                max_speed=max_speed,
+                u_range=[1, max_steering],
+                u_multiplier=[1, 1],
+                dynamics=KinematicBicycleModel(  # Use the kinematic bicycle model for each agent
+                    l_f=AGENTS["l_f"],
+                    l_r=AGENTS["l_r"],
                     max_speed=max_speed,
-                    u_range=[1, max_steering_angle],
-                    u_multiplier=[1, 1],
-                    dynamics=KinematicBicycle(
-                        world,
-                        width=width,
-                        l_f=l_f,
-                        l_r=l_r,
-                        max_steering_angle=max_steering_angle,
-                        integration="euler",  # one of "euler", "rk4"
-                    ),
-                )
-            else:
-                agent = Agent(
-                    name=f"holo_rot_{i}",
-                    shape=Box(length=l_f + l_r, width=width),
-                    collide=True,
-                    render_action=True,
-                    u_range=[1, 1, 1],
-                    u_multiplier=[1, 1, 0.001],
-                    dynamics=HolonomicWithRotation(),
-                )
+                    max_steering=max_steering,
+                    device=world.device,
+                ),
+            )
 
             world.add_agent(agent)
 
@@ -143,7 +122,7 @@ if __name__ == "__main__":
     scenario = Scenario()
     render_interactively(
         scenario,
-        control_two_agents=True,
+        control_two_agents=False,
         width=0.1,
         l_f=0.1,
         l_r=0.1,

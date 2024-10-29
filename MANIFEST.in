@@ -1,0 +1,9 @@
+# MANIFEST.in
+
+include README.md
+include LICENSE
+include CITATION.cff
+include sigmarl/config.json
+
+recursive-include sigmarl/assets *
+recursive-include sigmarl/scenarios *

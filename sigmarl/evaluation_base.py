@@ -3,14 +3,6 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-# Add project root to system path
-import os
-import sys
-
-current_dir = os.path.dirname(os.path.realpath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, ".."))
-sys.path.append(project_root)
-
 from datetime import datetime
 import torch
 import numpy as np
@@ -43,16 +35,16 @@ plt.style.use(
 import time
 import json
 
-from utilities.mappo_cavs import mappo_cavs
-from utilities.helper_training import (
+from sigmarl.mappo_cavs import mappo_cavs
+from sigmarl.helper_training import (
     SaveData,
     find_the_highest_reward_among_all_models,
     get_model_name,
 )
 
-from utilities.constants import SCENARIOS, AGENTS
+from sigmarl.constants import SCENARIOS, AGENTS
 
-from utilities.colors import Color, colors
+from sigmarl.colors import Color, colors
 
 
 class Evaluation:
