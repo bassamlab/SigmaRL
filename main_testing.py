@@ -10,10 +10,12 @@ from vmas.simulator.utils import save_video
 import json
 
 from utilities.mappo_cavs import mappo_cavs
+from utilities.ppo_goal_reaching import ppo_goal_reaching
 
 from utilities.constants import SCENARIOS
 
-path = "outputs/M2 (Baseline)/"
+path = "outputs/goal_reaching_v13/"
+# path = "checkpoints/itsc24/M0 (our)"
 
 try:
     path_to_json_file = next(
@@ -27,7 +29,7 @@ try:
 
         # Adjust parameters
         parameters.is_testing_mode = True
-        parameters.is_real_time_rendering = True
+        parameters.is_real_time_rendering = False
         parameters.is_save_eval_results = False
         parameters.is_load_model = True
         parameters.is_load_final_model = False
@@ -39,16 +41,19 @@ try:
             parameters.num_vmas_envs = 1
 
         parameters.scenario_type = (
-            "CPM_entire"  # on_ramp_1, roundabout_1, intersection_1/2/3, CPM_mixed
+            "goal_reaching_1"  # on_ramp_1, roundabout_1, intersection_1/2/3, CPM_mixed
         )
         parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
 
         parameters.is_save_simulation_video = False
-        parameters.is_visualize_short_term_path = False
+        parameters.is_visualize_short_term_path = True
         parameters.is_visualize_lane_boundary = False
         parameters.is_visualize_extra_info = True
 
-        env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
+        # env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
+        env, policy, priority_module, parameters = ppo_goal_reaching(
+            parameters=parameters
+        )
 
         out_td, frame_list = env.rollout(
             max_steps=parameters.max_steps - 1,
