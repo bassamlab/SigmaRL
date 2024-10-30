@@ -13,11 +13,13 @@ class KinematicBicycleModel(Dynamics):
         l_f=0.08,
         l_r=0.08,
         max_speed=1.0,
+        min_speed=-0.5,
         max_steering=torch.pi / 4,
+        min_steering=-torch.pi / 4,
         max_acc=4.0,
         min_acc=-4.0,
-        max_steering_rate=torch.pi,
-        min_steering_rate=-torch.pi,
+        max_steering_rate=2 * torch.pi,
+        min_steering_rate=-2 * torch.pi,
         device="cpu",
     ):
         """
@@ -37,7 +39,9 @@ class KinematicBicycleModel(Dynamics):
         self.l_wb = l_f + l_r  # Wheelbase
 
         self.max_speed = max_speed
+        self.min_speed = min_speed
         self.max_steering = max_steering
+        self.min_steering = min_steering
 
         self.max_acc = max_acc
         self.min_acc = min_acc
@@ -83,8 +87,8 @@ class KinematicBicycleModel(Dynamics):
             is_batch_size_none = False
 
         # Apply state limits
-        x[:, 3] = torch.clamp(x[:, 3], -self.max_speed, self.max_speed)
-        x[:, 4] = torch.clamp(x[:, 4], -self.max_steering, self.max_steering)
+        x[:, 3] = torch.clamp(x[:, 3], self.min_speed, self.max_speed)
+        x[:, 4] = torch.clamp(x[:, 4], self.min_steering, self.max_steering)
 
         # Apply action limits
         u[:, 0] = torch.clamp(u[:, 0], self.min_acc, self.max_acc)
@@ -144,6 +148,8 @@ class KinematicBicycleModel(Dynamics):
 
         # Integrate the ODE
         x = odeint(model, x0, t, rtol=1e-8, atol=1e-8)
+
+        x[..., 4] = (x[..., 4] + torch.pi) % (2 * torch.pi) - torch.pi  # [-pi, pi]
 
         # Calculate beta (also called sideslip angle) for the final state
         beta = torch.atan(self.l_r / self.l_wb * torch.tan(x[-1][:, 4]))
