@@ -7,7 +7,7 @@ import math
 
 SCENARIOS = {
     "CPM_entire": {
-        "map_path": "sigmarl/assets/maps/cpm.xml",
+        "map_path": "cpm.xml",
         "n_agents": 15,
         "name": "CPM Map",
         "x_dim_min": 0,  # Min x-coordinate
@@ -22,7 +22,7 @@ SCENARIOS = {
         "scale": 1.0,  # Scale the map
     },
     "CPM_mixed": {
-        "map_path": "sigmarl/assets/maps/cpm.xml",
+        "map_path": "cpm.xml",
         "n_agents": 4,
         "name": "CPM Map",
         "x_dim_min": 0,  # Min x-coordinate
@@ -37,7 +37,7 @@ SCENARIOS = {
         "scale": 1.0,  # Scale the map
     },
     "intersection_1": {
-        "map_path": "sigmarl/assets/maps/intersection_1.osm",
+        "map_path": "intersection_1.osm",
         "n_agents": 6,
         "name": "Intersection 1",
         "x_dim_min": 0.180,
@@ -65,7 +65,7 @@ SCENARIOS = {
         "scale": 1e5,  # A scale converts data from geographic coordinate system (used in JOSM) to Cartesian coordinate system
     },
     "intersection_2": {
-        "map_path": "sigmarl/assets/maps/intersection_2.osm",
+        "map_path": "intersection_2.osm",
         "n_agents": 6,
         "name": "Intersection 2",
         "x_dim_min": 0.180,
@@ -101,7 +101,7 @@ SCENARIOS = {
         "scale": 1e5,  # Scale the map
     },
     "intersection_3": {
-        "map_path": "sigmarl/assets/maps/intersection_3.osm",
+        "map_path": "intersection_3.osm",
         "n_agents": 8,
         "name": "Intersection 3",
         "x_dim_min": 0.178,
@@ -134,7 +134,7 @@ SCENARIOS = {
         "scale": 1e5,  # Scale the map
     },
     "on_ramp_1": {
-        "map_path": "sigmarl/assets/maps/on_ramp_1.osm",
+        "map_path": "on_ramp_1.osm",
         "n_agents": 8,
         "name": "Intersection 3",
         "x_dim_min": 0.152,
@@ -164,7 +164,7 @@ SCENARIOS = {
         "scale": 1e5,  # Scale the map
     },
     "roundabout_1": {
-        "map_path": "sigmarl/assets/maps/roundabout_1.osm",
+        "map_path": "roundabout_1.osm",
         "n_agents": 8,
         "name": "Intersection 3",
         "x_dim_min": 0.180,

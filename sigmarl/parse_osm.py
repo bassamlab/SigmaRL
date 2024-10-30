@@ -4,6 +4,8 @@
 # LICENSE file in the root directory of this source tree.
 
 import xml.etree.ElementTree as ET
+from importlib import resources
+
 import torch
 import matplotlib.pyplot as plt
 
@@ -64,7 +66,8 @@ class ParseOSM(ParseMapBase):
 
     def _parse_map_file(self):
         """Parse the OSM file and extract bounds, nodes, and ways."""
-        tree = ET.parse(self._map_path)
+        with resources.open_binary("sigmarl.assets.maps", self._map_path) as map_file:
+            tree = ET.parse(map_file)
         root = tree.getroot()
 
         # Extract nodes
