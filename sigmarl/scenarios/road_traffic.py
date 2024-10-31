@@ -93,8 +93,8 @@ class ScenarioRoadTraffic(BaseScenario):
     def make_world(self, batch_dim: int, device: torch.device, **kwargs):
         self._init_params(batch_dim, device, **kwargs)
         world = self._init_world(batch_dim, device)
+        world.parameters = self.parameters
         self._init_agents(world)
-        self.is_obs_steering = False
         return world
 
     def _init_params(self, batch_dim, device, **kwargs):
@@ -293,9 +293,9 @@ class ScenarioRoadTraffic(BaseScenario):
                 is_using_opponent_modeling=kwargs.pop(
                     "is_using_opponent_modeling", False
                 ),
-                is_using_prioritized_marl=kwargs.pop(
-                    "is_using_prioritized_marl", False
-                ),
+                is_using_cbf=kwargs.pop("is_using_cbf", False),
+                experiment_type=kwargs.pop("experiment_type", "simulation"),
+                is_obs_steering=kwargs.pop("is_obs_steering", False),
             )
 
         self.n_agents = self.parameters.n_agents
@@ -1231,110 +1231,131 @@ class ScenarioRoadTraffic(BaseScenario):
         initial state buffer if it is used. Otherwise, it randomly generates initial states ensuring they
         are feasible and do not collide with other agents.
         """
-        if is_use_state_buffer:
-            path_id = initial_state[i_agent, self.initial_state_buffer.idx_path].int()
-            ref_path = ref_paths_scenario[path_id]
-
-            agents[i_agent].set_pos(initial_state[i_agent, 0:2], batch_index=env_i)
-            agents[i_agent].set_rot(initial_state[i_agent, 2], batch_index=env_i)
-            agents[i_agent].set_vel(initial_state[i_agent, 3:5], batch_index=env_i)
-            # TODO Add steering to state buffer
-
-        else:
-            is_feasible_initial_position_found = False
-            random_count = 0
-
-            # Ramdomly generate initial states for each agent
-            while not is_feasible_initial_position_found:
-                if random_count >= 20:
-                    cprint(
-                        f"Reset agent(s): random_count = {random_count}.",
-                        "grey",
-                    )
-                random_count += 1
-                path_id = torch.randint(
-                    0, len(ref_paths_scenario), (1,)
-                ).item()  # Select randomly a path
-                self.ref_paths_agent_related.path_id[env_i, i_agent] = path_id  # Update
+        if self.parameters.experiment_type.lower() == "simulation":
+            print("[Simulation] Reset initial states")
+            if is_use_state_buffer:
+                path_id = initial_state[
+                    i_agent, self.initial_state_buffer.idx_path
+                ].int()
                 ref_path = ref_paths_scenario[path_id]
 
-                num_points = ref_path["center_line"].shape[0]
+                agents[i_agent].set_pos(initial_state[i_agent, 0:2], batch_index=env_i)
+                agents[i_agent].set_rot(initial_state[i_agent, 2], batch_index=env_i)
+                agents[i_agent].set_vel(initial_state[i_agent, 3:5], batch_index=env_i)
+                # TODO Add steering to state buffer
 
-                if self.parameters.scenario_type == "CPM_mixed":
-                    # In the mixed scenarios of the CPM case, we aovid using the beginning part of a path, making agents encounter each other more frequently. Additionally, We avoid initializing agents to be at a very end of a path.
-                    start_point_idx = 6
-                    end_point_idx = int(num_points / 2)
-                else:
-                    start_point_idx = 3  # Do not set to an overly small value to make sure agents are fully inside its lane
-                    end_point_idx = num_points - 3
+            else:
+                is_feasible_initial_position_found = False
+                random_count = 0
 
-                random_point_id = torch.randint(
-                    start_point_idx, end_point_idx, (1,)
-                ).item()
+                # Ramdomly generate initial states for each agent
+                while not is_feasible_initial_position_found:
+                    if random_count >= 20:
+                        cprint(
+                            f"Reset agent(s): random_count = {random_count}.",
+                            "grey",
+                        )
+                    random_count += 1
+                    path_id = torch.randint(
+                        0, len(ref_paths_scenario), (1,)
+                    ).item()  # Select randomly a path
+                    self.ref_paths_agent_related.path_id[
+                        env_i, i_agent
+                    ] = path_id  # Update
+                    ref_path = ref_paths_scenario[path_id]
 
-                self.ref_paths_agent_related.point_id[
-                    env_i, i_agent
-                ] = random_point_id  # Update
-                position_start = ref_path["center_line"][random_point_id]
-                agents[i_agent].set_pos(position_start, batch_index=env_i)
+                    num_points = ref_path["center_line"].shape[0]
 
-                # Check if the initial position is feasible
-                if not is_reset_single_agent:
-                    if i_agent == 0:
-                        # The initial position of the first agent is always feasible
-                        is_feasible_initial_position_found = True
-                        continue
+                    if self.parameters.scenario_type == "CPM_mixed":
+                        # In the mixed scenarios of the CPM case, we aovid using the beginning part of a path, making agents encounter each other more frequently. Additionally, We avoid initializing agents to be at a very end of a path.
+                        start_point_idx = 6
+                        end_point_idx = int(num_points / 2)
                     else:
+                        start_point_idx = 3  # Do not set to an overly small value to make sure agents are fully inside its lane
+                        end_point_idx = num_points - 3
+
+                    random_point_id = torch.randint(
+                        start_point_idx, end_point_idx, (1,)
+                    ).item()
+
+                    self.ref_paths_agent_related.point_id[
+                        env_i, i_agent
+                    ] = random_point_id  # Update
+                    position_start = ref_path["center_line"][random_point_id]
+                    agents[i_agent].set_pos(position_start, batch_index=env_i)
+
+                    # Check if the initial position is feasible
+                    if not is_reset_single_agent:
+                        if i_agent == 0:
+                            # The initial position of the first agent is always feasible
+                            is_feasible_initial_position_found = True
+                            continue
+                        else:
+                            positions = torch.stack(
+                                [
+                                    self.world.agents[i].state.pos[env_i]
+                                    for i in range(i_agent + 1)
+                                ]
+                            )
+                    else:
+                        # Check if the initial position of the agent to be reset is collision-free with other agents
                         positions = torch.stack(
                             [
                                 self.world.agents[i].state.pos[env_i]
-                                for i in range(i_agent + 1)
+                                for i in range(self.n_agents)
                             ]
                         )
-                else:
-                    # Check if the initial position of the agent to be reset is collision-free with other agents
-                    positions = torch.stack(
-                        [
-                            self.world.agents[i].state.pos[env_i]
-                            for i in range(self.n_agents)
-                        ]
+
+                    diff_sq = (
+                        positions[i_agent, :] - positions
+                    ) ** 2  # Calculate pairwise squared differences in positions
+                    initial_mutual_distances_sq = torch.sum(diff_sq, dim=-1)
+                    initial_mutual_distances_sq[i_agent] = (
+                        torch.max(initial_mutual_distances_sq) + 1
+                    )  # Set self-to-self distance to a sufficiently high value
+                    min_distance_sq = torch.min(initial_mutual_distances_sq)
+
+                    is_feasible_initial_position_found = min_distance_sq >= (
+                        self.constants.reset_agent_min_distance**2
                     )
 
-                diff_sq = (
-                    positions[i_agent, :] - positions
-                ) ** 2  # Calculate pairwise squared differences in positions
-                initial_mutual_distances_sq = torch.sum(diff_sq, dim=-1)
-                initial_mutual_distances_sq[i_agent] = (
-                    torch.max(initial_mutual_distances_sq) + 1
-                )  # Set self-to-self distance to a sufficiently high value
-                min_distance_sq = torch.min(initial_mutual_distances_sq)
+                rot_start = ref_path["center_line_yaw"][random_point_id]
+                steering_start = torch.zeros_like(rot_start, device=self.world.device)
+                sideslip_start = torch.zeros_like(
+                    steering_start, device=self.world.device
+                )  # Sideslip angle is zero since the steering is zero
 
-                is_feasible_initial_position_found = min_distance_sq >= (
-                    self.constants.reset_agent_min_distance**2
+                speed_start = (
+                    torch.rand(1, dtype=torch.float32, device=self.world.device)
+                    * agents[i_agent].max_speed
+                )  # Random initial velocity
+                vel_start = torch.hstack(
+                    [
+                        speed_start * torch.cos(sideslip_start + rot_start),
+                        speed_start * torch.sin(sideslip_start + rot_start),
+                    ]
                 )
 
-            rot_start = ref_path["center_line_yaw"][random_point_id]
-            steering_start = torch.zeros_like(rot_start, device=self.world.device)
-            sideslip_start = torch.zeros_like(
-                steering_start, device=self.world.device
-            )  # Sideslip angle is zero since the steering is zero
-
-            vel_start_abs = (
-                torch.rand(1, dtype=torch.float32, device=self.world.device)
-                * agents[i_agent].max_speed
-            )  # Random initial velocity
-            vel_start = torch.hstack(
-                [
-                    vel_start_abs * torch.cos(sideslip_start + rot_start),
-                    vel_start_abs * torch.sin(sideslip_start + rot_start),
-                ]
+                agents[i_agent].set_rot(rot_start, batch_index=env_i)
+                agents[i_agent].set_steering(steering_start, batch_index=env_i)
+                agents[i_agent].set_sideslip_angle(sideslip_start, batch_index=env_i)
+                agents[i_agent].set_speed(speed_start, batch_index=env_i)
+                agents[i_agent].set_vel(vel_start, batch_index=env_i)
+        elif self.parameters.experiment_type.lower() == "lab":
+            print("[Lab] Reset initial states")
+            agents[i_agent].set_pos(agents[i_agent].init_pos, batch_index=env_i)
+            agents[i_agent].set_rot(agents[i_agent].init_rot, batch_index=env_i)
+            agents[i_agent].set_steering(
+                agents[i_agent].init_steering, batch_index=env_i
             )
+            agents[i_agent].set_sideslip_angle(
+                agents[i_agent].init_sideslip_angle, batch_index=env_i
+            )
+            agents[i_agent].set_speed(agents[i_agent].init_speed, batch_index=env_i)
+            agents[i_agent].set_vel(agents[i_agent].init_vel, batch_index=env_i)
 
-            agents[i_agent].set_rot(rot_start, batch_index=env_i)
-            agents[i_agent].set_steering(steering_start, batch_index=env_i)
-            agents[i_agent].set_sideslip_angle(sideslip_start, batch_index=env_i)
-            agents[i_agent].set_speed(vel_start_abs, batch_index=env_i)
-            agents[i_agent].set_vel(vel_start, batch_index=env_i)
+            path_id = agents[i_agent].path_id
+            ref_path = ref_paths_scenario[path_id]
 
         return ref_path, path_id
 
@@ -2515,7 +2536,7 @@ class ScenarioRoadTraffic(BaseScenario):
             ),
             obs_vel_other_agents_flat,  # [others] velocities
             obs_steering_other_agents_flat
-            if self.is_obs_steering
+            if self.parameters.is_obs_steering
             else None,  # [others] steering angles
             (
                 obs_distance_other_agents_flat
@@ -2571,7 +2592,7 @@ class ScenarioRoadTraffic(BaseScenario):
             self.observations.past_steering.get_latest()[:, agent_index].reshape(
                 self.world.batch_dim, -1
             )
-            if self.is_obs_steering
+            if self.parameters.is_obs_steering
             else None,  # [own] steering angle
             self.observations.past_short_term_ref_points.get_latest()[
                 indexing_tuple_3

@@ -45,5 +45,8 @@
     "is_observe_ref_path_other_agents": false,
     "is_using_opponent_modeling": false,
     "is_using_prioritized_marl": false,
-    "prioritization_method": "random"
+    "prioritization_method": "random",
+    "is_using_cbf": false,
+    "experiment_type": "simulation",
+    "is_obs_steering": false
 }

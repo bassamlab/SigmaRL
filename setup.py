@@ -32,14 +32,14 @@ setup(
     python_requires=">=3.9, <3.11",  # Specify your Python version
     install_requires=[
         "gym==0.26.2",
-        "numpy==1.26.1",
+        "numpy",
         "tensordict==0.2.1",
         "torch==2.1.0",
         "torchrl==0.2.1",
         "tqdm==4.66.1",
         "typing_extensions==4.8.0",
         "vmas==1.4.1",
-        "matplotlib==3.8.2",
+        "matplotlib",
         "termcolor==2.4.0",
         "SciencePlots==2.1.1",
         "pre-commit==3.7.1",
