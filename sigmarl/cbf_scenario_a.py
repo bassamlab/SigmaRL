@@ -25,9 +25,20 @@ from sigmarl.distance_nn import SafetyMarginEstimatorModule
 
 from sigmarl.dynamics import KinematicBicycleModel
 
-from sigmarl.helper_scenario import Normalizers, get_perpendicular_distances
+from sigmarl.helper_scenario import (
+    Normalizers,
+    get_perpendicular_distances,
+    get_distances_between_agents,
+)
 
 from sigmarl.constants import AGENTS
+
+import random
+
+# Set seeds for reproducibility
+random.seed(0)
+np.random.seed(0)
+torch.manual_seed(0)
 
 
 class ConstantController:
@@ -52,6 +63,9 @@ class CBF:
 
         # Load safety margin estimator module
         self.load_safety_margin_estimator()
+        self.d_min = (
+            self.SME.error_upper_bound
+        )  # Minimum safety distance (m), considering uncertainties such as safety-margin prediction errors
 
         # Initialize Kinematic Bicycle Model
         self.kbm = KinematicBicycleModel(
@@ -103,12 +117,11 @@ class CBF:
             "max_steering_rate"
         ]  # Max steering rate (rad/s)
         self.steering_rate_min = AGENTS["min_steering_rate"]
-        self.d_min = 0.01  # Minimum safety distance (m), considering uncertainties such as safety-margin prediction errors
 
         self.lane_width = self.width * 1.8  # Lane width
 
         # CBF
-        self.lambda_cbf = 1  # Design parameter for CBF
+        self.lambda_cbf = 4  # Design parameter for CBF
         self.w_acc = 1  # Weight for acceleration in QP
         self.w_steer = 1  # Weight for steering rate in QP
         self.Q = np.diag(
@@ -117,7 +130,7 @@ class CBF:
 
         # Safety margin
         # Radius of the circle that convers the vehicle
-        self.radius = np.hypot(self.length, self.width) / 2
+        self.radius = np.sqrt(self.length**2 + self.width**2) / 2
         # Two types of safety margin: center-center-based safety margin, Minimum Translation Vector (MTV)-based safety margin
         self.sm_type = "mtv"  # One of "c2c" and "mtv"
 
@@ -127,6 +140,8 @@ class CBF:
         # (2) bypassing: two agents, both controlled by a greedy RL policy with CBF verification,
         # needs to bypass each other within a confined space
         self.scenario_type = "overtaking"  # One of "overtaking" and "bypassing"
+        self.switch_step_i = 5
+        self.switch_step_j = None
 
         # RL policy
         self.rl_policy_path = "checkpoints/ecc25/higher_ref_penalty_5.pth"
@@ -143,8 +158,8 @@ class CBF:
 
         # Initialize states ([x, y, psi, v, delta]) and goal states ([x, y])
         if self.scenario_type.lower() == "overtaking":
-            self.state_i = torch.tensor([-1, 0.0, 0, 1.0, 0.0], dtype=torch.float32)
-            self.state_j = torch.tensor([5.0, 0.0, 0.0, 0.5, 0.0], dtype=torch.float32)
+            self.state_i = torch.tensor([-0, 0.0, 0, 1.0, 0.0], dtype=torch.float32)
+            self.state_j = torch.tensor([1.0, 0.0, 0.0, 0.3, 0.0], dtype=torch.float32)
             self.goal_i = torch.tensor([5, 0], device=self.device, dtype=torch.float32)
             self.goal_j = None
         else:
@@ -178,6 +193,7 @@ class CBF:
         self.SME = SafetyMarginEstimatorModule(
             length=self.length,
             width=self.width,
+            path_nn="sigmarl/assets/nn_sm_predictors/sm_predictor_41.pth",
         )
 
         self.SME.load_model()  # Neural network for estimating safety margin
@@ -291,7 +307,7 @@ class CBF:
         )
 
     @staticmethod
-    def compute_relative_poses(x_ego, y_ego, psi_ego, x_target, y_target):
+    def compute_relative_poses(x_ego, y_ego, psi_ego, x_target, y_target, psi_target):
         """
         Compute the relative poses (positions and heading) between the ego vehicle and the target.
 
@@ -301,15 +317,16 @@ class CBF:
 
         dx = x_target - x_ego
         dy = y_target - y_ego
-        distance = np.hypot(dx, dy)
-        psi_relative = np.arctan2(dy, dx) - psi_ego  # Relative heading
-
-        # Normalize psi_relative to [-pi, pi]
-        psi_relative = (psi_relative + np.pi) % (2 * np.pi) - np.pi
+        psi_relative = psi_target - psi_ego  # Relative heading
+        psi_relative = (psi_relative + np.pi) % (
+            2 * np.pi
+        ) - np.pi  # Normalize psi_relative to [-pi, pi]
 
         # Transform to vehicle i's coordinate system
-        x_relative = distance * np.cos(psi_relative)
-        y_relative = distance * np.sin(psi_relative)
+        distance = np.sqrt(dx**2 + dy**2)
+        psi_relative_coordinate = np.arctan2(dy, dx) - psi_ego
+        x_relative = distance * np.cos(psi_relative_coordinate)
+        y_relative = distance * np.sin(psi_relative_coordinate)
 
         return x_relative, y_relative, psi_relative, distance
 
@@ -330,10 +347,57 @@ class CBF:
                 and (y_relative > self.SME.y_min)
                 and (y_relative < self.SME.y_max)
             ):
+                assert not (
+                    (x_relative > self.SME.excl_x_min)
+                    and (x_relative < self.SME.excl_x_max)
+                    and (y_relative > self.SME.excl_y_min)
+                    and (y_relative < self.SME.excl_y_max)
+                )
+                assert (psi_relative >= self.SME.heading_min) and (
+                    psi_relative <= self.SME.heading_max
+                )
+
                 # Use MTV-based distance, which considers the headings, to estimate safety margin if the surrounding objective is geometrically inside the allowed ranges
+                # print(f"Use MTV-based safety margin.")
                 sm, grad, hessian = self.mtv_based_sm(
                     x_relative, y_relative, psi_relative
                 )
+
+                # Compute actual safety margin
+                rect_i_vertices = torch.tensor(
+                    self.SME.get_rectangle_vertices(
+                        self.state_i[0].item(),
+                        self.state_i[1].item(),
+                        self.state_i[2].item(),
+                    ),
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+                rect_j_vertices = torch.tensor(
+                    self.SME.get_rectangle_vertices(
+                        self.state_j[0].item(),
+                        self.state_j[1].item(),
+                        self.state_j[2].item(),
+                    ),
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+                vertices = torch.stack(
+                    [rect_i_vertices, rect_j_vertices], dim=0
+                ).unsqueeze(0)
+
+                actual_sm = get_distances_between_agents(
+                    vertices, distance_type="mtv", is_set_diagonal=False
+                )[0, 0, 1].item()
+
+                print(f"Predicted safety margin: {sm:.6f} m")
+                print(f"Actual safety margin (absolute vertices): {(actual_sm):.6f} m")
+
+                error_prediction = abs(actual_sm - sm)
+
+                print(f"Safety-margin prediction error: {error_prediction:.6f}")
+
+                assert error_prediction <= self.SME.error_upper_bound
             else:
                 # If the surrounding objective is outside the ranges, using center-to-center based distance, which does not consider headings, to estimate safety margin.
                 # This is allowable since the objective if far and the heading information is unessential.
@@ -444,6 +508,7 @@ class CBF:
         inputs = torch.tensor(
             [x_ji, y_ji, psi_ji], dtype=torch.float32, device=self.device
         )
+        print(f"Feature: {inputs}")
         normalized_inputs = inputs / feature_norm
         normalized_inputs.requires_grad_(True)  # Enable gradient tracking
 
@@ -451,7 +516,7 @@ class CBF:
         sm_normalized = self.SME.net(normalized_inputs)  # Assuming scalar output
 
         # Denormalize the output
-        sm_actual = sm_normalized * label_norm  # Scalar
+        sm_predicted = sm_normalized * label_norm  # Scalar
 
         # First-order derivatives
         grad_sm_1st_order = torch.autograd.grad(
@@ -463,7 +528,7 @@ class CBF:
         )[0]
 
         # Denormalize the first-order gradients
-        grad_sm_actual = (grad_sm_1st_order * label_norm) / feature_norm
+        grad_sm_predicted = (grad_sm_1st_order * label_norm) / feature_norm
 
         # Second-order derivatives (Hessian)
         second_derivatives = []
@@ -481,16 +546,16 @@ class CBF:
             second_derivatives.append(grad2_denorm)
 
         # Stack second derivatives to form the Hessian matrix (shape [3, 3])
-        hessian = torch.stack(
+        hessian_predicted = torch.stack(
             second_derivatives
         )  # Each row corresponds to d^2 sm / d input_i d input_j
 
         # Detach gradients to prevent further computation
-        sm_actual = sm_actual.detach().item()
-        grad_sm_actual = grad_sm_actual.detach().numpy()
-        hessian = hessian.detach().numpy()
+        sm_predicted = sm_predicted.detach().item()
+        grad_sm_predicted = grad_sm_predicted.detach().numpy()
+        hessian_predicted = hessian_predicted.detach().numpy()
 
-        return sm_actual, grad_sm_actual, hessian
+        return sm_predicted, grad_sm_predicted, hessian_predicted
 
     def compute_cbf_conditions(
         self, dstate_time, ddstate_time, sm, grad_sm, hessian_sm
@@ -580,7 +645,7 @@ class CBF:
 
         return ddx, ddy, ddpsi
 
-    def eval_cbf_conditions(self, u_i_opt, u_j, h, dot_h, grad_sm):
+    def eval_cbf_conditions(self, u_i_opt, u_j_opt, x_ji_opt, y_ji_opt, psi_ji_opt):
         """
         Substitute the optimal control values to evaluate the second-order CBF condition.
 
@@ -593,6 +658,35 @@ class CBF:
         Returns:
             tuple: ddot_h_opt, cbf_condition_2_opt
         """
+        dstate_time_ji_opt, ddstate_time_ji_opt = self.compute_state_time_derivatives(
+            u_i_opt, u_j_opt
+        )
+
+        sm_ji_opt, grad_sm_ji_opt, hessian_sm_ji_opt = self.estimate_safety_margin(
+            x_ji_opt, y_ji_opt, psi_ji_opt
+        )
+        (
+            h_ji_opt,
+            dot_h_ji_opt,
+            ddot_h_ji_opt,
+            cbf_condition_1_ji_opt,
+            cbf_condition_2_ji_opt,
+        ) = self.compute_cbf_conditions(
+            dstate_time_ji_opt,
+            ddstate_time_ji_opt,
+            sm_ji_opt,
+            grad_sm_ji_opt,
+            hessian_sm_ji_opt,
+        )
+
+        return (
+            h_ji_opt,
+            dot_h_ji_opt,
+            ddot_h_ji_opt,
+            cbf_condition_1_ji_opt,
+            cbf_condition_2_ji_opt,
+        )
+
         u_i1_opt, u_i2_opt = u_i_opt
 
         k = self.l_r / self.l_wb
@@ -653,6 +747,11 @@ class CBF:
         Generate a fixed number of points along a reference path starting from the agent's current position
         and pointing towards the goal. The points are spaced at a fixed distance apart.
         """
+        # Adjust the goal to encourage lane switch
+        if self.step >= self.switch_step_i:
+            goal_pos[1] += self.lane_width
+        if self.step >= self.switch_step_i + 10:
+            orig_pos[1] += self.lane_width
 
         direction = goal_pos - cur_pos
 
@@ -668,6 +767,18 @@ class CBF:
         # Generate the points along the path
         path_points = cur_pos + direction_norm * distances
 
+        if self.step >= self.switch_step_i + 10:
+            # Project the reference points on the line connecting the original position and the goal
+            projected_points = self.project_to_line(path_points, goal_pos, orig_pos)
+        else:
+            # Without project
+            projected_points = path_points
+
+        return projected_points
+
+    @staticmethod
+    def project_to_line(path_points, goal_pos, orig_pos):
+        # Project points to the line connecting the initial position and the goal
         direction_orig = goal_pos - orig_pos
 
         # Normalize the direction vectors to unit vectors
@@ -681,10 +792,6 @@ class CBF:
             (vectors_to_points * direction_norm_orig).sum(dim=-1).unsqueeze(-1)
         )
         projected_points = orig_pos + proj_length * direction_norm_orig
-
-        # Add offset to encourage overtaking
-        if self.step >= 20:
-            projected_points[:, 1] += self.lane_width
 
         return projected_points
 
@@ -750,7 +857,7 @@ class CBF:
         x_j, y_j = self.state_j[0].item(), self.state_j[1].item()
         dx_nominal_i = x_j - x_i
         dy_nominal_i = y_j - y_i
-        norm_i_nominal = np.hypot(dx_nominal_i, dy_nominal_i)
+        norm_i_nominal = np.sqrt(dx_nominal_i**2 + dy_nominal_i**2)
         if norm_i_nominal != 0:
             dx_nominal_i = (
                 dx_nominal_i / norm_i_nominal
@@ -914,13 +1021,6 @@ class CBF:
         print(
             f"------------Step: {self.step}--Time: {frame * self.dt:.2f}s------------"
         )
-        self.state_j, _, _ = self.kbm.step(
-            self.state_j.clone(),
-            torch.tensor([0, 0], device=self.device, dtype=torch.float32),
-            self.dt,
-        )
-        self.states_j.append(self.state_j.clone().numpy())
-
         # Initialize optimization variables for vehicle i and possibly j
         u_i = cp.Variable(2)
         u_j = (
@@ -939,6 +1039,7 @@ class CBF:
             self.state_i[2],
             self.state_j[0],
             self.state_j[1],
+            self.state_j[2],
         )
         # Estimate safety margin and gradients
         sm_ji, grad_sm_ji, hessian_sm_ji = self.estimate_safety_margin(
@@ -958,7 +1059,7 @@ class CBF:
 
         # Get RL observations
         obs_i, self.ref_points_i, self.ref_points_ego_view_i = self.observation(
-            self.state_i, self.states_i[0][0:2], self.goal_i
+            self.state_i, self.states_i[0][0:2], self.goal_i.clone()
         )
         # Update tensordict for later policy call
         self.tensordict_i.set(self.rl_observation_key, obs_i.unsqueeze(0))
@@ -971,9 +1072,6 @@ class CBF:
             .detach()
         )
         print(f"rl_actions_i: {rl_actions_i}")
-        if self.step >= 20:
-            print(f"rl_actions_i: {rl_actions_i}")
-            pass
         u_nominal_i = self.rl_acrion_to_u(
             rl_actions_i, self.state_i[3], self.state_i[4]
         )
@@ -998,6 +1096,7 @@ class CBF:
                 self.state_j[2],
                 self.state_i[0],
                 self.state_i[1],
+                self.state_i[2],
             )
             sm_ij, grad_sm_ij, hessian_sm_ij = self.estimate_safety_margin(
                 x_ij, y_ij, psi_ij
@@ -1014,7 +1113,7 @@ class CBF:
 
             # Get RL observations
             obs_j, self.ref_points_j, self.ref_points_ego_view_j = self.observation(
-                self.state_j, self.states_j[0][0:2], self.goal_j
+                self.state_j, self.states_j[0][0:2], self.goal_j.clone()
             )
             # Update tensordict for later policy call
             self.tensordict_j.set(self.rl_observation_key, obs_j.unsqueeze(0))
@@ -1053,7 +1152,7 @@ class CBF:
         prob = cp.Problem(objective, constraints)
         prob.solve(
             solver=cp.OSQP,  # DCP, DQCP
-            verbose=True,  # Set to True for solver details
+            verbose=False,  # Set to True for solver details
             eps_abs=1e-5,
             eps_rel=1e-5,
             max_iter=100,
@@ -1066,9 +1165,14 @@ class CBF:
                 u_i_opt = u_nominal_i
             else:
                 u_i_opt = u_i.value
-            # ddot_h_opt_ji, cbf_condition_2_opt_ji = self.eval_cbf_conditions(
-            #     u_i_opt, u_j, h_ji, dot_h_ji, grad_sm_ji
-            # )
+            u_j_opt = u_nominal_j.numpy()
+            (
+                h_ji_opt,
+                dot_h_ji_opt,
+                ddot_h_ji_opt,
+                cbf_condition_1_ji_opt,
+                cbf_condition_2_ji_opt,
+            ) = self.eval_cbf_conditions(u_i_opt, u_j_opt, x_ji, y_ji, psi_ji)
 
             print(f"Nominal actions i: {u_nominal_i}")
             print(f"Optimized actions i: {u_i.value}")
@@ -1097,15 +1201,24 @@ class CBF:
         )
         self.states_i.append(self.state_i.clone().numpy())
 
+        self.state_j, _, _ = self.kbm.step(
+            self.state_j.clone(),
+            torch.tensor([0, 0], device=self.device, dtype=torch.float32),
+            self.dt,
+        )
+        self.states_j.append(self.state_j.clone().numpy())
+
         # Print CBF details for debugging
         # Recompute CBF conditions with actual control actions
+        assert h_ji == h_ji_opt
+        assert dot_h_ji == dot_h_ji_opt
+        assert cbf_condition_1_ji == cbf_condition_1_ji_opt
 
-        print(f"Concrete h: {h_ji:.4f}")
-        print(f"Concrete dot_h: {dot_h_ji:.4f}")
-        # print(f"Concrete ddot_h: {ddot_h_opt_ji:.4f}")
-        print(f"1st-order CBF condition: {cbf_condition_1_ji.item():.4f}")
-        # print(f"2nd-order CBF condition: {cbf_condition_2_opt_ji.item():.4f}")
-
+        print(f"h_ji_opt: {h_ji_opt:.4f} (should >= 0)")
+        print(f"dot_h_ji_opt: {dot_h_ji_opt:.4f}")
+        print(f"ddot_h_ji_opt: {ddot_h_ji_opt:.4f}")
+        print(f"cbf_condition_1_ji_opt: {cbf_condition_1_ji_opt:.4f} (should >= 0)")
+        print(f"cbf_condition_2_ji_opt: {cbf_condition_2_ji_opt:.4f} (should >= 0)")
         # Update plot elements including arrows
         self.update_plot_elements()
 
@@ -1196,7 +1309,7 @@ class CBF:
             self.update,
             frames=self.num_steps,
             blit=True,
-            interval=self.dt * 100,
+            interval=self.dt * 10000,
             repeat=False,
         )
         plt.show()
