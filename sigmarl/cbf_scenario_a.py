@@ -34,6 +34,7 @@ from sigmarl.helper_scenario import (
 from sigmarl.constants import AGENTS
 
 import random
+import time
 
 # Set seeds for reproducibility
 random.seed(0)
@@ -92,7 +93,7 @@ class CBF:
         # General
         self.device = "cpu"
         self.dt = 0.05  # Sample time (50 ms)
-        self.total_time = 100.0  # Total simulation time
+        self.total_time = 4.0  # Total simulation time
         self.num_steps = int(self.total_time / self.dt)  # Total simulation time steps
         self.length = AGENTS["length"]  # Length of each rectangle (m)
         self.width = AGENTS["width"]  # Width of each rectangle (m)
@@ -121,7 +122,7 @@ class CBF:
         self.lane_width = self.width * 1.8  # Lane width
 
         # CBF
-        self.lambda_cbf = 4  # Design parameter for CBF
+        self.lambda_cbf = 2  # Design parameter for CBF
         self.w_acc = 1  # Weight for acceleration in QP
         self.w_steer = 1  # Weight for steering rate in QP
         self.Q = np.diag(
@@ -139,9 +140,10 @@ class CBF:
         # needs to overtake its precede agent that moves slowly
         # (2) bypassing: two agents, both controlled by a greedy RL policy with CBF verification,
         # needs to bypass each other within a confined space
-        self.scenario_type = "overtaking"  # One of "overtaking" and "bypassing"
-        self.switch_step_i = 5
-        self.switch_step_j = None
+        self.scenario_type = "bypassing"  # One of "overtaking" and "bypassing"
+        self.switch_step = 5
+        self.evasion_step_start = 35
+        self.evasion_step_end = 45
 
         # RL policy
         self.rl_policy_path = "checkpoints/ecc25/higher_ref_penalty_5.pth"
@@ -164,8 +166,8 @@ class CBF:
             self.goal_j = None
         else:
             # In the bypassing scenario, two agents are facing each other
-            self.state_i = torch.tensor([-2, 0.0, 0, 1.0, 0.0], dtype=torch.float32)
-            self.state_j = torch.tensor([2, 0.0, 0.0, 1.0, 0.0], dtype=torch.float32)
+            self.state_i = torch.tensor([-2, 0.0, 0.0, 1.0, 0.0], dtype=torch.float32)
+            self.state_j = torch.tensor([2, 0.0, -np.pi, 1.0, 0.0], dtype=torch.float32)
             self.goal_i = self.state_j[0:2].clone()
             self.goal_j = self.state_i[0:2].clone()
 
@@ -176,6 +178,19 @@ class CBF:
         self.u_placeholder = torch.tensor(
             [0.0, 0.0], dtype=torch.float32
         )  # Do not update its value
+
+        self.list_h_ji = []
+        self.list_dot_h_ji = []
+        self.list_ddot_h_ji = []
+        self.list_cbf_condition_1_ji = []
+        self.list_cbf_condition_2_ji = []
+        self.list_h_ij = []
+        self.list_dot_h_ij = []
+        self.list_ddot_h_ij = []
+        self.list_cbf_condition_1_ij = []
+        self.list_cbf_condition_2_ij = []
+
+        self.list_opt_duration = []
 
         self.step = 0  # Simulation step counter
 
@@ -347,12 +362,12 @@ class CBF:
                 and (y_relative > self.SME.y_min)
                 and (y_relative < self.SME.y_max)
             ):
-                assert not (
-                    (x_relative > self.SME.excl_x_min)
-                    and (x_relative < self.SME.excl_x_max)
-                    and (y_relative > self.SME.excl_y_min)
-                    and (y_relative < self.SME.excl_y_max)
-                )
+                # assert not (
+                #     (x_relative > self.SME.excl_x_min)
+                #     and (x_relative < self.SME.excl_x_max)
+                #     and (y_relative > self.SME.excl_y_min)
+                #     and (y_relative < self.SME.excl_y_max)
+                # )
                 assert (psi_relative >= self.SME.heading_min) and (
                     psi_relative <= self.SME.heading_max
                 )
@@ -390,8 +405,8 @@ class CBF:
                     vertices, distance_type="mtv", is_set_diagonal=False
                 )[0, 0, 1].item()
 
-                print(f"Predicted safety margin: {sm:.6f} m")
-                print(f"Actual safety margin (absolute vertices): {(actual_sm):.6f} m")
+                # print(f"Predicted safety margin: {sm:.6f} m")
+                # print(f"Actual safety margin (absolute vertices): {(actual_sm):.6f} m")
 
                 error_prediction = abs(actual_sm - sm)
 
@@ -687,71 +702,28 @@ class CBF:
             cbf_condition_2_ji_opt,
         )
 
-        u_i1_opt, u_i2_opt = u_i_opt
-
-        k = self.l_r / self.l_wb
-        x_i, y_i, psi_i, v_i, delta_i = self.state_i
-
-        tan_delta_i = np.tan(delta_i)
-        beta_i = np.arctan(k * tan_delta_i)
-        sec_delta_i_sq = 1 / np.cos(delta_i) ** 2
-        tan_beta_i = k * tan_delta_i
-        cos_beta_i = 1 / np.sqrt(1 + tan_beta_i**2)
-        sin_beta_i = tan_beta_i * cos_beta_i
-
-        dx_i, dy_i, dpsi_i, _, _ = self.dstate_time_i
-        dx_j, dy_j, dpsi_j, _, _ = self.dstate_time_j
-
-        # Recompute dbeta_i with optimized steering rate
-        dbeta_i_opt = (k * sec_delta_i_sq * u_i2_opt) / (1 + (k * tan_delta_i) ** 2)
-
-        # Recompute ddx_i, ddy_i, ddpsi_i with optimized control inputs
-        ddx_i_opt = u_i1_opt * np.cos(psi_i + beta_i) - v_i * np.sin(psi_i + beta_i) * (
-            dpsi_i + dbeta_i_opt
-        )
-        ddy_i_opt = u_i1_opt * np.sin(psi_i + beta_i) + v_i * np.cos(psi_i + beta_i) * (
-            dpsi_i + dbeta_i_opt
-        )
-
-        ddpsi_i_opt = (
-            (u_i1_opt / self.l_wb) * cos_beta_i * tan_delta_i
-            - (v_i / self.l_wb) * sin_beta_i * tan_delta_i * dbeta_i_opt
-            + (v_i / self.l_wb) * cos_beta_i * sec_delta_i_sq * u_i2_opt
-        )
-
-        # Second derivatives for vehicle j remain zero
-        ddx_j = 0.0
-        ddy_j = 0.0
-        ddpsi_j = 0.0
-
-        # Recompute relative second derivatives with optimized controls
-        ddx_ji_opt = ddx_j - ddx_i_opt
-        ddy_ji_opt = ddy_j - ddy_i_opt
-        ddpsi_ji_opt = ddpsi_j - ddpsi_i_opt
-
-        # Recompute ddot_h
-        dsm_dxji, dsm_dyji, dsm_dpsiji = grad_sm
-        ddot_h_opt = (
-            dsm_dxji * ddx_ji_opt + dsm_dyji * ddy_ji_opt + dsm_dpsiji * ddpsi_ji_opt
-        )
-
-        # Recompute the second-order CBF condition
-        cbf_condition_2_opt = (
-            ddot_h_opt + 2 * self.lambda_cbf * dot_h + self.lambda_cbf**2 * h
-        )
-
-        return ddot_h_opt, cbf_condition_2_opt
-
-    def generate_reference_path(self, cur_pos, orig_pos, goal_pos):
+    def generate_reference_path(self, cur_pos, orig_pos, goal_pos, agent_idx):
         """
         Generate a fixed number of points along a reference path starting from the agent's current position
         and pointing towards the goal. The points are spaced at a fixed distance apart.
         """
-        # Adjust the goal to encourage lane switch
-        if self.step >= self.switch_step_i:
-            goal_pos[1] += self.lane_width
-        if self.step >= self.switch_step_i + 10:
-            orig_pos[1] += self.lane_width
+        if self.scenario_type.lower() == "overtaking":
+            # Adjust the goal to encourage lane switch
+            if self.step >= self.switch_step:
+                goal_pos[1] += self.lane_width
+            if self.step >= self.switch_step + 10:
+                orig_pos[1] += self.lane_width
+        else:
+            # Adjust the goal to encourage evasion
+            if (self.step >= self.evasion_step_start) and (
+                self.step <= self.evasion_step_end
+            ):
+                if agent_idx == 0:
+                    goal_pos[1] += 1 * self.lane_width  # Introduce a small perturbation
+                    orig_pos[1] += 1 * self.lane_width
+                else:
+                    goal_pos[1] -= 1 * self.lane_width  # Introduce a small perturbation
+                    orig_pos[1] -= 1 * self.lane_width
 
         direction = goal_pos - cur_pos
 
@@ -767,12 +739,21 @@ class CBF:
         # Generate the points along the path
         path_points = cur_pos + direction_norm * distances
 
-        if self.step >= self.switch_step_i + 10:
-            # Project the reference points on the line connecting the original position and the goal
-            projected_points = self.project_to_line(path_points, goal_pos, orig_pos)
+        if self.scenario_type.lower() == "overtaking":
+            if self.step >= self.switch_step + 10:
+                # Project the reference points on the line connecting the original position and the goal
+                projected_points = self.project_to_line(path_points, goal_pos, orig_pos)
+            else:
+                projected_points = path_points
         else:
             # Without project
-            projected_points = path_points
+            # projected_points = path_points
+            if (self.step >= self.evasion_step_start) and (
+                self.step <= self.evasion_step_end
+            ):
+                projected_points = self.project_to_line(path_points, goal_pos, orig_pos)
+            else:
+                projected_points = path_points
 
         return projected_points
 
@@ -808,83 +789,6 @@ class CBF:
 
         return obs_ego
 
-    def update_plot_elements(self):
-        """
-        Update the positions and orientations of the vehicle rectangles and path lines,
-        and update the action arrows for visualization.
-        """
-        # Update vehicle rectangles
-        for rect, state in zip(
-            [self.vehicle_i_rect, self.vehicle_j_rect], [self.state_i, self.state_j]
-        ):
-            x, y, psi = state[0].item(), state[1].item(), state[2].item()
-            cos_angle = np.cos(psi)
-            sin_angle = np.sin(psi)
-            bottom_left_x = (
-                x - (self.length / 2) * cos_angle + (self.width / 2) * sin_angle
-            )
-            bottom_left_y = (
-                y - (self.length / 2) * sin_angle - (self.width / 2) * cos_angle
-            )
-            rect.set_xy((bottom_left_x, bottom_left_y))
-            rect.angle = np.degrees(psi)
-
-        # Update path lines
-        self.line_i.set_data(
-            [s[0] for s in self.states_i], [s[1] for s in self.states_i]
-        )
-        self.line_j.set_data(
-            [s[0] for s in self.states_j], [s[1] for s in self.states_j]
-        )
-
-        # Update short-term reference path polylinex
-        ref_x = self.ref_points_i[:, 0].numpy()
-        ref_y = self.ref_points_i[:, 1].numpy()
-        self.ref_line.set_data(ref_x, ref_y)
-
-        # Update short-term reference path points
-        self.ref_points.set_data(ref_x, ref_y)
-
-        plt.pause(0.001)
-
-        # Update goal point
-        goal_x = self.goal_i[0].item()
-        goal_y = self.goal_i[1].item()
-        self.goal_point_i.set_data([goal_x], [goal_y])
-
-        # Update quiver for nominal actions of vehicle i
-        x_i, y_i = self.state_i[0].item(), self.state_i[1].item()
-        x_j, y_j = self.state_j[0].item(), self.state_j[1].item()
-        dx_nominal_i = x_j - x_i
-        dy_nominal_i = y_j - y_i
-        norm_i_nominal = np.sqrt(dx_nominal_i**2 + dy_nominal_i**2)
-        if norm_i_nominal != 0:
-            dx_nominal_i = (
-                dx_nominal_i / norm_i_nominal
-            ) * 1.0  # Nominal speed is 1.0 m/s
-            dy_nominal_i = (dy_nominal_i / norm_i_nominal) * 1.0
-        else:
-            dx_nominal_i = 0
-            dy_nominal_i = 0
-
-        self.quiver_nominal_i.set_offsets([x_i, y_i])
-        self.quiver_nominal_i.set_UVC([dx_nominal_i], [dy_nominal_i])
-
-        # Update quiver for optimized actions of vehicle i
-        v_i = self.state_i[3].item()
-        psi_i = self.state_i[2].item()
-        dx_opt_i = v_i * np.cos(psi_i)
-        dy_opt_i = v_i * np.sin(psi_i)
-        self.quiver_opt_i.set_offsets([x_i, y_i])
-        self.quiver_opt_i.set_UVC([dx_opt_i], [dy_opt_i])
-
-        # Update quiver for nominal actions of vehicle j (currently zero)
-        x_j, y_j = self.state_j[0].item(), self.state_j[1].item()
-        dx_nominal_j = 0.0  # Since nominal controller for j is zero
-        dy_nominal_j = 0.0
-        self.quiver_nominal_j.set_offsets([x_j, y_j])
-        self.quiver_nominal_j.set_UVC([dx_nominal_j], [dy_nominal_j])
-
     def update_goal_i(self):
         pass
 
@@ -902,7 +806,7 @@ class CBF:
             tuple: Tuple containing figure, axes, vehicle rectangles, path lines, and quivers.
         """
         fig, ax = plt.subplots(figsize=(30, 6))
-        ax.set_xlim(-2.0, 8.0)
+        ax.set_xlim(-3.0, 5.0)
         ax.set_ylim(-0.2, 0.2)
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlabel("X position (m)")
@@ -982,15 +886,16 @@ class CBF:
         )
 
         # Initialize polyline for short-term reference path
-        (ref_line,) = ax.plot([], [], "g--", lw=1, label="Short-term Reference Path")
+        (ref_line_i,) = ax.plot([], [], "g--", lw=1)
+        (ref_line_j,) = ax.plot([], [], "g--", lw=1)
 
         # Initialize points for short-term reference path
-        (ref_points,) = ax.plot(
-            [], [], "go", markersize=4, label="Short-term Reference Points"
-        )
+        (visu_ref_points_i,) = ax.plot([], [], "go", markersize=4)
+        (visu_ref_points_j,) = ax.plot([], [], "go", markersize=4)
 
         # Initialize point for goal
-        (goal_point_i,) = ax.plot([], [], "mo", markersize=8, label="Goal Point")
+        (visu_goal_point_i,) = ax.plot([], [], "mo", markersize=8, label="Goal Point")
+        (visu_goal_point_j,) = ax.plot([], [], "mo", markersize=8, label="Goal Point")
 
         ax.legend(loc="upper right")
 
@@ -1003,9 +908,98 @@ class CBF:
         self.quiver_nominal_i = quiver_nominal_i
         self.quiver_opt_i = quiver_opt_i
         self.quiver_nominal_j = quiver_nominal_j
-        self.ref_line = ref_line
-        self.ref_points = ref_points
-        self.goal_point_i = goal_point_i
+        self.ref_line_i = ref_line_i
+        self.ref_line_j = ref_line_j
+        self.visu_ref_points_i = visu_ref_points_i
+        self.visu_ref_points_j = visu_ref_points_j
+        self.visu_goal_point_i = visu_goal_point_i
+        self.visu_goal_point_j = visu_goal_point_j
+
+    def update_plot_elements(self):
+        """
+        Update the positions and orientations of the vehicle rectangles and path lines,
+        and update the action arrows for visualization.
+        """
+        # Update vehicle rectangles
+        for rect, state in zip(
+            [self.vehicle_i_rect, self.vehicle_j_rect], [self.state_i, self.state_j]
+        ):
+            x, y, psi = state[0].item(), state[1].item(), state[2].item()
+            cos_angle = np.cos(psi)
+            sin_angle = np.sin(psi)
+            bottom_left_x = (
+                x - (self.length / 2) * cos_angle + (self.width / 2) * sin_angle
+            )
+            bottom_left_y = (
+                y - (self.length / 2) * sin_angle - (self.width / 2) * cos_angle
+            )
+            rect.set_xy((bottom_left_x, bottom_left_y))
+            rect.angle = np.degrees(psi)
+
+        # Update path lines
+        self.line_i.set_data(
+            [s[0] for s in self.states_i], [s[1] for s in self.states_i]
+        )
+        self.line_j.set_data(
+            [s[0] for s in self.states_j], [s[1] for s in self.states_j]
+        )
+
+        # Update short-term reference path polylinex
+        ref_x_i = self.ref_points_i[:, 0].numpy()
+        ref_y_i = self.ref_points_i[:, 1].numpy()
+        self.ref_line_i.set_data(ref_x_i, ref_y_i)
+        # Update short-term reference path points
+        self.visu_ref_points_i.set_data(ref_x_i, ref_y_i)
+
+        # Update short-term reference path polylinex
+        ref_x_j = self.ref_points_j[:, 0].numpy()
+        ref_y_j = self.ref_points_j[:, 1].numpy()
+        self.ref_line_j.set_data(ref_x_j, ref_y_j)
+        # Update short-term reference path points
+        self.visu_ref_points_j.set_data(ref_x_j, ref_y_j)
+
+        plt.pause(0.001)
+
+        # Update goal point
+        goal_x_i = self.goal_i[0].item()
+        goal_y_i = self.goal_i[1].item()
+        self.visu_goal_point_i.set_data([goal_x_i], [goal_y_i])
+        goal_x_j = self.goal_j[0].item()
+        goal_y_j = self.goal_j[1].item()
+        self.visu_goal_point_j.set_data([goal_x_j], [goal_y_j])
+
+        # Update quiver for nominal actions of vehicle i
+        x_i, y_i = self.state_i[0].item(), self.state_i[1].item()
+        x_j, y_j = self.state_j[0].item(), self.state_j[1].item()
+        dx_nominal_i = x_j - x_i
+        dy_nominal_i = y_j - y_i
+        norm_i_nominal = np.sqrt(dx_nominal_i**2 + dy_nominal_i**2)
+        if norm_i_nominal != 0:
+            dx_nominal_i = (
+                dx_nominal_i / norm_i_nominal
+            ) * 1.0  # Nominal speed is 1.0 m/s
+            dy_nominal_i = (dy_nominal_i / norm_i_nominal) * 1.0
+        else:
+            dx_nominal_i = 0
+            dy_nominal_i = 0
+
+        self.quiver_nominal_i.set_offsets([x_i, y_i])
+        self.quiver_nominal_i.set_UVC([dx_nominal_i], [dy_nominal_i])
+
+        # Update quiver for optimized actions of vehicle i
+        v_i = self.state_i[3].item()
+        psi_i = self.state_i[2].item()
+        dx_opt_i = v_i * np.cos(psi_i)
+        dy_opt_i = v_i * np.sin(psi_i)
+        self.quiver_opt_i.set_offsets([x_i, y_i])
+        self.quiver_opt_i.set_UVC([dx_opt_i], [dy_opt_i])
+
+        # Update quiver for nominal actions of vehicle j (currently zero)
+        x_j, y_j = self.state_j[0].item(), self.state_j[1].item()
+        dx_nominal_j = 0.0  # Since nominal controller for j is zero
+        dy_nominal_j = 0.0
+        self.quiver_nominal_j.set_offsets([x_j, y_j])
+        self.quiver_nominal_j.set_UVC([dx_nominal_j], [dy_nominal_j])
 
     def update(self, frame):
         """
@@ -1059,7 +1053,7 @@ class CBF:
 
         # Get RL observations
         obs_i, self.ref_points_i, self.ref_points_ego_view_i = self.observation(
-            self.state_i, self.states_i[0][0:2], self.goal_i.clone()
+            self.state_i, self.states_i[0][0:2], self.goal_i.clone(), agent_idx=0
         )
         # Update tensordict for later policy call
         self.tensordict_i.set(self.rl_observation_key, obs_i.unsqueeze(0))
@@ -1071,7 +1065,7 @@ class CBF:
             .squeeze(0)
             .detach()
         )
-        print(f"rl_actions_i: {rl_actions_i}")
+        # print(f"rl_actions_i: {rl_actions_i}")
         u_nominal_i = self.rl_acrion_to_u(
             rl_actions_i, self.state_i[3], self.state_i[4]
         )
@@ -1113,7 +1107,7 @@ class CBF:
 
             # Get RL observations
             obs_j, self.ref_points_j, self.ref_points_ego_view_j = self.observation(
-                self.state_j, self.states_j[0][0:2], self.goal_j.clone()
+                self.state_j, self.states_j[0][0:2], self.goal_j.clone(), agent_idx=1
             )
             # Update tensordict for later policy call
             self.tensordict_j.set(self.rl_observation_key, obs_j.unsqueeze(0))
@@ -1136,20 +1130,22 @@ class CBF:
             )
             constraints = [
                 cbf_condition_2_ji >= 0,
-                self.a_min <= u_i[0],
-                u_i[0] <= self.a_max,
-                self.steering_rate_min <= u_i[1],
-                u_i[1] <= self.steering_rate_max,
+                # self.a_min <= u_i[0],
+                # u_i[0] <= self.a_max,
+                # self.steering_rate_min <= u_i[1],
+                # u_i[1] <= self.steering_rate_max,
                 cbf_condition_2_ij >= 0,
-                self.a_min <= u_j[0],
-                u_j[0] <= self.a_max,
-                self.steering_rate_min <= u_j[1],
-                u_j[1] <= self.steering_rate_max,
+                # self.a_min <= u_j[0],
+                # u_j[0] <= self.a_max,
+                # self.steering_rate_min <= u_j[1],
+                # u_j[1] <= self.steering_rate_max,
             ]
 
         # Solve QP to get optimal control inputs for vehicle i
         # Formulate and solve the QP with custom solver settings
         prob = cp.Problem(objective, constraints)
+
+        t_start = time.time()
         prob.solve(
             solver=cp.OSQP,  # DCP, DQCP
             verbose=False,  # Set to True for solver details
@@ -1157,8 +1153,10 @@ class CBF:
             eps_rel=1e-5,
             max_iter=100,
         )
+        opt_duration = time.time() - t_start
+        self.list_opt_duration.append(opt_duration)
 
-        print(f"Cost: {prob.value:.4f}")
+        # print(f"Cost: {prob.value:.4f}")
         if self.scenario_type.lower() == "overtaking":
             if prob.status != cp.OPTIMAL:
                 print(f"Warning: QP not solved optimally. Status: {prob.status}")
@@ -1174,8 +1172,27 @@ class CBF:
                 cbf_condition_2_ji_opt,
             ) = self.eval_cbf_conditions(u_i_opt, u_j_opt, x_ji, y_ji, psi_ji)
 
+            # Append to lists
+            self.list_h_ji.append(h_ji_opt)
+            self.list_dot_h_ji.append(dot_h_ji_opt)
+            self.list_ddot_h_ji.append(ddot_h_ji_opt)
+            self.list_cbf_condition_1_ji.append(cbf_condition_1_ji_opt)
+            self.list_cbf_condition_2_ji.append(cbf_condition_2_ji_opt)
+
             print(f"Nominal actions i: {u_nominal_i}")
             print(f"Optimized actions i: {u_i.value}")
+
+            # Print CBF details for debugging
+            # Recompute CBF conditions with actual control actions
+            assert h_ji == h_ji_opt
+            assert dot_h_ji == dot_h_ji_opt
+            assert cbf_condition_1_ji == cbf_condition_1_ji_opt
+
+            print(f"h_ji_opt: {h_ji_opt:.4f} (should >= 0)")
+            print(f"dot_h_ji_opt: {dot_h_ji_opt:.4f}")
+            print(f"ddot_h_ji_opt: {ddot_h_ji_opt:.4f}")
+            print(f"cbf_condition_1_ji_opt: {cbf_condition_1_ji_opt:.4f} (should >= 0)")
+            print(f"cbf_condition_2_ji_opt: {cbf_condition_2_ji_opt:.4f} (should >= 0)")
         else:
             if prob.status != cp.OPTIMAL:
                 print(f"Warning: QP not solved optimally. Status: {prob.status}")
@@ -1184,14 +1201,58 @@ class CBF:
             else:
                 u_i_opt = u_i.value
                 u_j_opt = u_j.value
-            # ddot_h_opt_ij, cbf_condition_2_opt_ij = self.eval_cbf_conditions(
-            #     u_i_opt, u_j, h_ij, dot_h_ij, grad_sm_ij
-            # )
+            (
+                h_ji_opt,
+                dot_h_ji_opt,
+                ddot_h_ji_opt,
+                cbf_condition_1_ji_opt,
+                cbf_condition_2_ji_opt,
+            ) = self.eval_cbf_conditions(u_i_opt, u_j_opt, x_ji, y_ji, psi_ji)
+            (
+                h_ij_opt,
+                dot_h_ij_opt,
+                ddot_h_ij_opt,
+                cbf_condition_1_ij_opt,
+                cbf_condition_2_ij_opt,
+            ) = self.eval_cbf_conditions(u_j_opt, u_i_opt, x_ij, y_ij, psi_ij)
+
+            # Append to lists
+            self.list_h_ji.append(h_ji_opt)
+            self.list_dot_h_ji.append(dot_h_ji_opt)
+            self.list_ddot_h_ji.append(ddot_h_ji_opt)
+            self.list_cbf_condition_1_ji.append(cbf_condition_1_ji_opt)
+            self.list_cbf_condition_2_ji.append(cbf_condition_2_ji_opt)
+            self.list_h_ij.append(h_ij_opt)
+            self.list_dot_h_ij.append(dot_h_ij_opt)
+            self.list_ddot_h_ij.append(ddot_h_ij_opt)
+            self.list_cbf_condition_1_ij.append(cbf_condition_1_ij_opt)
+            self.list_cbf_condition_2_ij.append(cbf_condition_2_ij_opt)
+
             # Update state
             print(f"Nominal actions i: {u_nominal_i}")
             print(f"Optimized actions i: {u_i.value}")
             print(f"Nominal actions j: {u_nominal_j}")
             print(f"Optimized actions j: {u_j.value}")
+
+            # Print CBF details for debugging
+            # Recompute CBF conditions with actual control actions
+            # assert h_ji == h_ji_opt
+            # assert dot_h_ji == dot_h_ji_opt
+            # assert cbf_condition_1_ji == cbf_condition_1_ji_opt
+            # assert h_ij == h_ij_opt
+            # assert dot_h_ij == dot_h_ij_opt
+            # assert cbf_condition_1_ij == cbf_condition_1_ij_opt
+
+            print(f"h_ji_opt: {h_ji_opt:.4f} (should >= 0)")
+            print(f"dot_h_ji_opt: {dot_h_ji_opt:.4f}")
+            print(f"ddot_h_ji_opt: {ddot_h_ji_opt:.4f}")
+            print(f"cbf_condition_1_ji_opt: {cbf_condition_1_ji_opt:.4f} (should >= 0)")
+            print(f"cbf_condition_2_ji_opt: {cbf_condition_2_ji_opt:.4f} (should >= 0)")
+            print(f"h_ij_opt: {h_ij_opt:.4f} (should >= 0)")
+            print(f"dot_h_ij_opt: {dot_h_ij_opt:.4f}")
+            print(f"ddot_h_ij_opt: {ddot_h_ij_opt:.4f}")
+            print(f"cbf_condition_1_ij_opt: {cbf_condition_1_ij_opt:.4f} (should >= 0)")
+            print(f"cbf_condition_2_ij_opt: {cbf_condition_2_ij_opt:.4f} (should >= 0)")
 
         # Update state
         self.state_i, _, _ = self.kbm.step(
@@ -1203,22 +1264,11 @@ class CBF:
 
         self.state_j, _, _ = self.kbm.step(
             self.state_j.clone(),
-            torch.tensor([0, 0], device=self.device, dtype=torch.float32),
+            torch.tensor(u_j_opt, device=self.device, dtype=torch.float32),
             self.dt,
         )
         self.states_j.append(self.state_j.clone().numpy())
 
-        # Print CBF details for debugging
-        # Recompute CBF conditions with actual control actions
-        assert h_ji == h_ji_opt
-        assert dot_h_ji == dot_h_ji_opt
-        assert cbf_condition_1_ji == cbf_condition_1_ji_opt
-
-        print(f"h_ji_opt: {h_ji_opt:.4f} (should >= 0)")
-        print(f"dot_h_ji_opt: {dot_h_ji_opt:.4f}")
-        print(f"ddot_h_ji_opt: {ddot_h_ji_opt:.4f}")
-        print(f"cbf_condition_1_ji_opt: {cbf_condition_1_ji_opt:.4f} (should >= 0)")
-        print(f"cbf_condition_2_ji_opt: {cbf_condition_2_ji_opt:.4f} (should >= 0)")
         # Update plot elements including arrows
         self.update_plot_elements()
 
@@ -1236,7 +1286,7 @@ class CBF:
             self.quiver_nominal_j,
         ]
 
-    def observation(self, state, orig_pos, goal_pos):
+    def observation(self, state, orig_pos, goal_pos, agent_idx):
         if not isinstance(orig_pos, torch.Tensor):
             orig_pos = torch.tensor(orig_pos, device=self.device, dtype=torch.float32)
 
@@ -1245,6 +1295,7 @@ class CBF:
             cur_pos=state[0:2],
             orig_pos=orig_pos,
             goal_pos=goal_pos,
+            agent_idx=agent_idx,
         )
 
         # Observe short-term reference path using ego view
@@ -1300,6 +1351,57 @@ class CBF:
 
         return u_nominal
 
+    def plot_cbf_curve(self) -> None:
+        """
+        Plot data related to CBF.
+        """
+        steps = range(1, len(self.list_h_ji) + 1)
+        plt.figure(figsize=(5, 3))
+
+        plt.plot(steps, self.list_h_ji, label="h_ji", linestyle="-", lw="2.0")
+        # plt.plot(steps, self.list_dot_h_ji, label="dot_h_ji", linestyle="--", lw="2.0")
+        # plt.plot(steps, self.list_ddot_h_ji, label="ddot_h_ji", linestyle="-.", lw="2.0")
+        plt.plot(
+            steps,
+            self.list_cbf_condition_1_ji,
+            label="cbf_condition_1_ji",
+            linestyle="--",
+            lw="2.0",
+        )
+        plt.plot(
+            steps,
+            self.list_cbf_condition_2_ji,
+            label="cbf_condition_2_ji",
+            linestyle="-.",
+            lw="2.0",
+        )
+
+        if self.scenario_type.lower() == "bypassing":
+            plt.plot(steps, self.list_h_ij, label="h_ij", linestyle=":", lw="2.0")
+            # plt.plot(steps, self.list_dot_h_ij, label="dot_h_ij", linestyle="--", lw="2.0")
+            # plt.plot(steps, self.list_ddot_h_ij, label="ddot_h_ij", linestyle="-.", lw="2.0")
+            plt.plot(
+                steps,
+                self.list_cbf_condition_1_ij,
+                label="cbf_condition_1_ij",
+                linestyle="--",
+                lw="2.0",
+            )
+            plt.plot(
+                steps,
+                self.list_cbf_condition_2_ij,
+                label="cbf_condition_2_ij",
+                linestyle="-.",
+                lw="2.0",
+            )
+
+        plt.xlabel("Steps")
+        plt.ylabel("CBF Data")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
     def run(self):
         """
         Run the simulation and display the animation.
@@ -1309,7 +1411,7 @@ class CBF:
             self.update,
             frames=self.num_steps,
             blit=True,
-            interval=self.dt * 10000,
+            interval=self.dt * 100,
             repeat=False,
         )
         plt.show()
@@ -1318,6 +1420,10 @@ class CBF:
 def main():
     simulation = CBF()
     simulation.run()
+    simulation.plot_cbf_curve()
+    print(
+        f"Mean optimization time per step: {np.mean(simulation.list_opt_duration)} s."
+    )
 
 
 if __name__ == "__main__":
