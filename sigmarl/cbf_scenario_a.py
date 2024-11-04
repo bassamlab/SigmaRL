@@ -16,6 +16,10 @@ from tensordict.nn.distributions import NormalParamExtractor
 
 from tensordict.tensordict import TensorDict
 
+import matplotlib
+
+# matplotlib.use('TkAgg')  # or another interactive backend like 'Qt5Agg'
+
 import matplotlib.pyplot as plt
 import cvxpy as cp
 from matplotlib.patches import Rectangle
@@ -32,6 +36,8 @@ from sigmarl.helper_scenario import (
 )
 
 from sigmarl.constants import AGENTS
+
+from sigmarl.colors import colors
 
 import random
 import time
@@ -93,8 +99,6 @@ class CBF:
         # General
         self.device = "cpu"
         self.dt = 0.05  # Sample time (50 ms)
-        self.total_time = 4.0  # Total simulation time
-        self.num_steps = int(self.total_time / self.dt)  # Total simulation time steps
         self.length = AGENTS["length"]  # Length of each rectangle (m)
         self.width = AGENTS["width"]  # Width of each rectangle (m)
         self.l_wb = AGENTS["l_wb"]  # Wheelbase
@@ -121,29 +125,139 @@ class CBF:
 
         self.lane_width = self.width * 1.8  # Lane width
 
-        # CBF
-        self.lambda_cbf = 2  # Design parameter for CBF
-        self.w_acc = 1  # Weight for acceleration in QP
-        self.w_steer = 1  # Weight for steering rate in QP
-        self.Q = np.diag(
-            [self.w_acc, self.w_steer]
-        )  # Weights for acceleration and steering rate
-
         # Safety margin
         # Radius of the circle that convers the vehicle
         self.radius = np.sqrt(self.length**2 + self.width**2) / 2
-        # Two types of safety margin: center-center-based safety margin, Minimum Translation Vector (MTV)-based safety margin
-        self.sm_type = "mtv"  # One of "c2c" and "mtv"
+
+        # On which lane is an agent on (1 for the top lane; 2 for the bottom lane; and 0 for a transition state between two lanes). Mainly used in the overtaking scenario.
+        self.lane_i = None
+        self.lane_j = None
+
+        self.list_lane_i = []
+        self.list_lane_j = []
+
+        # y-coordinate of lane boundaries
+        self.y_lane_top_bound = self.lane_width
+        self.y_lane_center_line = 0
+        self.y_lane_bottom_bound = -self.lane_width
+
+        self.y_lane_1 = (self.y_lane_center_line + self.y_lane_top_bound) / 2
+        self.y_lane_2 = (self.y_lane_center_line + self.y_lane_bottom_bound) / 2
+
+        self.threshold_within_lane = self.width / 2
+        self.threshold_overtake = (
+            self.length
+        )  # If agents' longitudinal distance is less than this value, one agent will overtake another agent, given they are within the same lane
 
         # Two scenarios are available:
         # (1) overtaking: the ego agent, controlled by a greedy RL policy with CBF verification,
         # needs to overtake its precede agent that moves slowly
         # (2) bypassing: two agents, both controlled by a greedy RL policy with CBF verification,
         # needs to bypass each other within a confined space
-        self.scenario_type = "bypassing"  # One of "overtaking" and "bypassing"
-        self.switch_step = 5
-        self.evasion_step_start = 35
-        self.evasion_step_end = 45
+        self.scenario_type = "overtaking"  # One of "overtaking" and "bypassing"
+
+        # Two types of safety margin: center-center-based safety margin, Minimum Translation Vector (MTV)-based safety margin
+        self.sm_type = "mtv"  # One of "c2c" and "mtv"
+
+        # CBF
+        if self.scenario_type.lower() == "overtaking":
+            # Set simulation duration
+            self.total_time = 6.0  # Total simulation time
+            self.num_steps = int(
+                self.total_time / self.dt
+            )  # Total simulation time steps
+
+            # Initialize states ([x, y, psi, v, delta]) and goal states ([x, y])
+            self.state_i = torch.tensor(
+                [-1.2, self.y_lane_2, 0, 1.0, 0.0], dtype=torch.float32
+            )
+            self.state_j = torch.tensor(
+                [0.2, self.y_lane_2, 0.0, 0.3, 0.0], dtype=torch.float32
+            )
+            self.goal_i = torch.tensor(
+                [5, self.y_lane_2], device=self.device, dtype=torch.float32
+            )
+            self.goal_j = None
+
+            self.switch_step = 20  # Time step to encourage one agent to switch lane to overtake another agent
+
+            # Irrelevant
+            self.evasion_step_start = None
+            self.evasion_step_end = None
+            self.evasive_offset = None
+
+            if self.sm_type.lower() == "c2c":
+                # Overtaking & C2C
+                self.lambda_cbf = 3  # Design parameter for CBF
+                self.w_acc = 1  # Weight for acceleration in QP
+                self.w_steer = 1  # Weight for steering rate in QP
+                self.Q = np.diag(
+                    [self.w_acc, self.w_steer]
+                )  # Weights for acceleration and steering rate
+            else:
+                # Overtaking & MTV
+                self.lambda_cbf = 3  # Design parameter for CBF
+                self.w_acc = 1  # Weight for acceleration in QP
+                self.w_steer = 1  # Weight for steering rate in QP
+                self.Q = np.diag(
+                    [self.w_acc, self.w_steer]
+                )  # Weights for acceleration and steering rate
+        else:
+            # Initialize states ([x, y, psi, v, delta]) and goal states ([x, y])
+            # In the bypassing scenario, two agents are facing each other
+            self.state_i = torch.tensor(
+                [-1.2, self.y_lane_2, 0.0, 1.0, 0.0], dtype=torch.float32
+            )
+            self.state_j = torch.tensor(
+                [1.2, self.y_lane_2, -np.pi, 1.0, 0.0], dtype=torch.float32
+            )
+            self.goal_i = self.state_j[0:2].clone()
+            self.goal_i[0] += 2
+            self.goal_j = self.state_i[0:2].clone()
+            self.goal_j[0] -= 2
+
+            self.switch_step = None
+
+            if self.sm_type.lower() == "c2c":
+                # Bypassing & C2C
+                self.total_time = 3.0  # Total simulation time
+                self.num_steps = int(
+                    self.total_time / self.dt
+                )  # Total simulation time steps
+
+                self.lambda_cbf = 3  # Design parameter for CBF
+                self.evasion_step_start = 15
+                self.evasion_step_end = 25
+                self.evasive_offset = 1 * self.lane_width
+
+                self.w_acc = 1  # Weight for acceleration in QP
+                self.w_steer = 0.3  # Weight for steering rate in QP
+                self.Q = np.diag(
+                    [self.w_acc, self.w_steer]
+                )  # Weights for acceleration and steering rate
+            else:
+                # Bypassing & MTV
+                self.total_time = 3.0  # Total simulation time
+                self.num_steps = int(
+                    self.total_time / self.dt
+                )  # Total simulation time steps
+
+                self.lambda_cbf = 4  # Design parameter for CBF
+                self.evasion_step_start = 15
+                self.evasion_step_end = 40
+                self.evasive_offset = 0.6 * self.lane_width
+
+                self.w_acc = 1  # Weight for acceleration in QP
+                self.w_steer = 0.8  # Weight for steering rate in QP
+                self.Q = np.diag(
+                    [self.w_acc, self.w_steer]
+                )  # Weights for acceleration and steering rate
+
+        self.list_state_i = [self.state_i.clone().numpy()]
+        self.list_state_j = [self.state_j.clone().numpy()]
+
+        self.color_i = colors[0]
+        self.color_j = colors[1]
 
         # RL policy
         self.rl_policy_path = "checkpoints/ecc25/higher_ref_penalty_5.pth"
@@ -157,22 +271,6 @@ class CBF:
         self.rl_distance_between_points_ref_path = (
             self.length
         )  # Distance between the points in the short-term reference paths
-
-        # Initialize states ([x, y, psi, v, delta]) and goal states ([x, y])
-        if self.scenario_type.lower() == "overtaking":
-            self.state_i = torch.tensor([-0, 0.0, 0, 1.0, 0.0], dtype=torch.float32)
-            self.state_j = torch.tensor([1.0, 0.0, 0.0, 0.3, 0.0], dtype=torch.float32)
-            self.goal_i = torch.tensor([5, 0], device=self.device, dtype=torch.float32)
-            self.goal_j = None
-        else:
-            # In the bypassing scenario, two agents are facing each other
-            self.state_i = torch.tensor([-2, 0.0, 0.0, 1.0, 0.0], dtype=torch.float32)
-            self.state_j = torch.tensor([2, 0.0, -np.pi, 1.0, 0.0], dtype=torch.float32)
-            self.goal_i = self.state_j[0:2].clone()
-            self.goal_j = self.state_i[0:2].clone()
-
-        self.states_i = [self.state_i.clone().numpy()]
-        self.states_j = [self.state_j.clone().numpy()]
 
         # Initialize optimization variable placeholder for vehicle i
         self.u_placeholder = torch.tensor(
@@ -373,7 +471,7 @@ class CBF:
                 )
 
                 # Use MTV-based distance, which considers the headings, to estimate safety margin if the surrounding objective is geometrically inside the allowed ranges
-                # print(f"Use MTV-based safety margin.")
+                print(f"********************************Use MTV-based safety margin.")
                 sm, grad, hessian = self.mtv_based_sm(
                     x_relative, y_relative, psi_relative
                 )
@@ -523,7 +621,6 @@ class CBF:
         inputs = torch.tensor(
             [x_ji, y_ji, psi_ji], dtype=torch.float32, device=self.device
         )
-        print(f"Feature: {inputs}")
         normalized_inputs = inputs / feature_norm
         normalized_inputs.requires_grad_(True)  # Enable gradient tracking
 
@@ -627,7 +724,10 @@ class CBF:
         # Extract control inputs
         ddstate_time_ji = [ddx_ji, ddy_ji, ddpsi_ji]
 
-        return dstate_time_ji, ddstate_time_ji
+        dstate_time_ij = -dstate_time_ji
+        ddstate_time_ij = [-expr for expr in ddstate_time_ji]
+
+        return dstate_time_ji, ddstate_time_ji, dstate_time_ij, ddstate_time_ij
 
     def compute_dstate_2nd_time(self, u, state, dstate_time):
         u_1, u_2 = u  # Acceleration and steering rate
@@ -660,7 +760,14 @@ class CBF:
 
         return ddx, ddy, ddpsi
 
-    def eval_cbf_conditions(self, u_i_opt, u_j_opt, x_ji_opt, y_ji_opt, psi_ji_opt):
+    def eval_cbf_conditions(
+        self,
+        dstate_time_relative_opt,
+        ddstate_time_relative_opt,
+        x_relative_opt,
+        y_relative_opt,
+        psi_relative_opt,
+    ):
         """
         Substitute the optimal control values to evaluate the second-order CBF condition.
 
@@ -673,33 +780,30 @@ class CBF:
         Returns:
             tuple: ddot_h_opt, cbf_condition_2_opt
         """
-        dstate_time_ji_opt, ddstate_time_ji_opt = self.compute_state_time_derivatives(
-            u_i_opt, u_j_opt
-        )
 
-        sm_ji_opt, grad_sm_ji_opt, hessian_sm_ji_opt = self.estimate_safety_margin(
-            x_ji_opt, y_ji_opt, psi_ji_opt
+        sm_opt, grad_sm_opt, hessian_sm_opt = self.estimate_safety_margin(
+            x_relative_opt, y_relative_opt, psi_relative_opt
         )
         (
-            h_ji_opt,
-            dot_h_ji_opt,
-            ddot_h_ji_opt,
-            cbf_condition_1_ji_opt,
-            cbf_condition_2_ji_opt,
+            h_opt,
+            dot_h_opt,
+            ddot_h_opt,
+            cbf_condition_1_opt,
+            cbf_condition_2_opt,
         ) = self.compute_cbf_conditions(
-            dstate_time_ji_opt,
-            ddstate_time_ji_opt,
-            sm_ji_opt,
-            grad_sm_ji_opt,
-            hessian_sm_ji_opt,
+            dstate_time_relative_opt,
+            ddstate_time_relative_opt,
+            sm_opt,
+            grad_sm_opt,
+            hessian_sm_opt,
         )
 
         return (
-            h_ji_opt,
-            dot_h_ji_opt,
-            ddot_h_ji_opt,
-            cbf_condition_1_ji_opt,
-            cbf_condition_2_ji_opt,
+            h_opt,
+            dot_h_opt,
+            ddot_h_opt,
+            cbf_condition_1_opt,
+            cbf_condition_2_opt,
         )
 
     def generate_reference_path(self, cur_pos, orig_pos, goal_pos, agent_idx):
@@ -708,54 +812,66 @@ class CBF:
         and pointing towards the goal. The points are spaced at a fixed distance apart.
         """
         if self.scenario_type.lower() == "overtaking":
-            # Adjust the goal to encourage lane switch
-            if self.step >= self.switch_step:
-                goal_pos[1] += self.lane_width
-            if self.step >= self.switch_step + 10:
-                orig_pos[1] += self.lane_width
+            path_points = torch.zeros(
+                (self.rl_n_points_ref, 2), device=self.device, dtype=torch.float32
+            )
+            # x-coordinates
+            path_points[:, 0] = (
+                self.state_i[0]
+                + torch.arange(1, self.rl_n_points_ref + 1, device=self.device)
+                * self.rl_distance_between_points_ref_path
+            )
+
+            # Conditions for overtaking: (a) Both agents are on the same lane, (b) None of them is on a transition from one lane to another, and (c) their longitudinal distance is less than a threshold
+            is_conduct_overtaking = (
+                (self.lane_i == self.lane_j)
+                and (len(self.lane_i) == 1)
+                and (
+                    (self.state_i[0] - self.state_j[0]).abs() < self.threshold_overtake
+                )
+            )
+            if is_conduct_overtaking:
+                # Switch reference path to another lane to encourage overtaking
+                # y-coordinates
+                path_points[:, 1] = (
+                    self.y_lane_2 if self.lane_i == "1" else self.y_lane_1
+                )
+            else:
+                # y-coordinates
+                path_points[:, 1] = (
+                    self.y_lane_1 if self.lane_i == "1" else self.y_lane_2
+                )
         else:
             # Adjust the goal to encourage evasion
             if (self.step >= self.evasion_step_start) and (
                 self.step <= self.evasion_step_end
             ):
                 if agent_idx == 0:
-                    goal_pos[1] += 1 * self.lane_width  # Introduce a small perturbation
-                    orig_pos[1] += 1 * self.lane_width
+                    goal_pos[1] += self.evasive_offset  # Introduce a small perturbation
+                    orig_pos[1] += self.evasive_offset
                 else:
-                    goal_pos[1] -= 1 * self.lane_width  # Introduce a small perturbation
-                    orig_pos[1] -= 1 * self.lane_width
+                    goal_pos[1] -= self.evasive_offset  # Introduce a small perturbation
+                    orig_pos[1] -= self.evasive_offset
 
-        direction = goal_pos - cur_pos
+            direction = goal_pos - cur_pos
 
-        # Normalize the direction vector
-        direction_norm = direction / direction.norm(dim=-1, keepdim=True)
+            # Normalize the direction vector
+            direction_norm = direction / direction.norm(dim=-1, keepdim=True)
 
-        # Create a range of distances for the points along the path
-        distances = (
-            torch.arange(1, self.rl_n_points_ref + 1, device=self.device).view(-1, 1)
-            * self.rl_distance_between_points_ref_path
-        )
+            # Create a range of distances for the points along the path
+            distances = (
+                torch.arange(1, self.rl_n_points_ref + 1, device=self.device).view(
+                    -1, 1
+                )
+                * self.rl_distance_between_points_ref_path
+            )
 
-        # Generate the points along the path
-        path_points = cur_pos + direction_norm * distances
+            # Generate the points along the path
+            path_points = cur_pos + direction_norm * distances
 
-        if self.scenario_type.lower() == "overtaking":
-            if self.step >= self.switch_step + 10:
-                # Project the reference points on the line connecting the original position and the goal
-                projected_points = self.project_to_line(path_points, goal_pos, orig_pos)
-            else:
-                projected_points = path_points
-        else:
-            # Without project
-            # projected_points = path_points
-            if (self.step >= self.evasion_step_start) and (
-                self.step <= self.evasion_step_end
-            ):
-                projected_points = self.project_to_line(path_points, goal_pos, orig_pos)
-            else:
-                projected_points = path_points
+            path_points = self.project_to_line(path_points, goal_pos, orig_pos)
 
-        return projected_points
+        return path_points
 
     @staticmethod
     def project_to_line(path_points, goal_pos, orig_pos):
@@ -795,212 +911,6 @@ class CBF:
     def update_goal_j(self):
         pass
 
-    def setup_plot(self):
-        """
-        Set up the matplotlib figure and plot elements for visualization.
-
-        Args:
-            params (dict): Simulation parameters.
-
-        Returns:
-            tuple: Tuple containing figure, axes, vehicle rectangles, path lines, and quivers.
-        """
-        fig, ax = plt.subplots(figsize=(30, 6))
-        ax.set_xlim(-3.0, 5.0)
-        ax.set_ylim(-0.2, 0.2)
-        ax.set_aspect("equal", adjustable="box")
-        ax.set_xlabel("X position (m)")
-        ax.set_ylabel("Y position (m)")
-        ax.set_title("Trajectories and Control Actions of Vehicles i and j")
-        # ax.grid(True)
-
-        # Add static horizontal lines as lane boundaries
-        ax.axhline(y=-self.lane_width / 2, color="k", linestyle="-", lw=1.0)
-        ax.axhline(y=self.lane_width / 2, color="k", linestyle="--", lw=1.0)
-        ax.axhline(y=self.lane_width * 1.5, color="k", linestyle="-", lw=1.0)
-
-        # Initialize vehicle rectangles
-        vehicle_i_rect = Rectangle(
-            (0, 0),
-            self.length,
-            self.width,
-            angle=0,
-            color="blue",
-            alpha=0.5,
-            label="Vehicle i",
-        )
-        vehicle_j_rect = Rectangle(
-            (0, 0),
-            self.length,
-            self.width,
-            angle=0,
-            color="red",
-            alpha=0.5,
-            label="Vehicle j",
-        )
-        ax.add_patch(vehicle_i_rect)
-        ax.add_patch(vehicle_j_rect)
-
-        # Initialize path lines
-        (line_i,) = ax.plot([], [], "b-", lw=1.0, label="Vehicle i Path")
-        (line_j,) = ax.plot([], [], "r-", lw=1.0, label="Vehicle j Path")
-
-        # Initialize quivers for nominal and optimized actions of Vehicle i
-        quiver_nominal_i = ax.quiver(
-            [],
-            [],
-            [],
-            [],
-            color="cyan",
-            scale_units="xy",
-            angles="xy",
-            scale=1,
-            width=0.005,
-            label="Vehicle i Nominal Action",
-        )
-        quiver_opt_i = ax.quiver(
-            [],
-            [],
-            [],
-            [],
-            color="magenta",
-            scale_units="xy",
-            angles="xy",
-            scale=1,
-            width=0.005,
-            label="Vehicle i Optimized Action",
-        )
-
-        # Initialize quivers for nominal actions of Vehicle j (if needed)
-        quiver_nominal_j = ax.quiver(
-            [],
-            [],
-            [],
-            [],
-            color="orange",
-            scale_units="xy",
-            angles="xy",
-            scale=1,
-            width=0.005,
-            label="Vehicle j Nominal Action",
-        )
-
-        # Initialize polyline for short-term reference path
-        (ref_line_i,) = ax.plot([], [], "g--", lw=1)
-        (ref_line_j,) = ax.plot([], [], "g--", lw=1)
-
-        # Initialize points for short-term reference path
-        (visu_ref_points_i,) = ax.plot([], [], "go", markersize=4)
-        (visu_ref_points_j,) = ax.plot([], [], "go", markersize=4)
-
-        # Initialize point for goal
-        (visu_goal_point_i,) = ax.plot([], [], "mo", markersize=8, label="Goal Point")
-        (visu_goal_point_j,) = ax.plot([], [], "mo", markersize=8, label="Goal Point")
-
-        ax.legend(loc="upper right")
-
-        self.fig = fig
-        self.ax = ax
-        self.vehicle_i_rect = vehicle_i_rect
-        self.vehicle_j_rect = vehicle_j_rect
-        self.line_i = line_i
-        self.line_j = line_j
-        self.quiver_nominal_i = quiver_nominal_i
-        self.quiver_opt_i = quiver_opt_i
-        self.quiver_nominal_j = quiver_nominal_j
-        self.ref_line_i = ref_line_i
-        self.ref_line_j = ref_line_j
-        self.visu_ref_points_i = visu_ref_points_i
-        self.visu_ref_points_j = visu_ref_points_j
-        self.visu_goal_point_i = visu_goal_point_i
-        self.visu_goal_point_j = visu_goal_point_j
-
-    def update_plot_elements(self):
-        """
-        Update the positions and orientations of the vehicle rectangles and path lines,
-        and update the action arrows for visualization.
-        """
-        # Update vehicle rectangles
-        for rect, state in zip(
-            [self.vehicle_i_rect, self.vehicle_j_rect], [self.state_i, self.state_j]
-        ):
-            x, y, psi = state[0].item(), state[1].item(), state[2].item()
-            cos_angle = np.cos(psi)
-            sin_angle = np.sin(psi)
-            bottom_left_x = (
-                x - (self.length / 2) * cos_angle + (self.width / 2) * sin_angle
-            )
-            bottom_left_y = (
-                y - (self.length / 2) * sin_angle - (self.width / 2) * cos_angle
-            )
-            rect.set_xy((bottom_left_x, bottom_left_y))
-            rect.angle = np.degrees(psi)
-
-        # Update path lines
-        self.line_i.set_data(
-            [s[0] for s in self.states_i], [s[1] for s in self.states_i]
-        )
-        self.line_j.set_data(
-            [s[0] for s in self.states_j], [s[1] for s in self.states_j]
-        )
-
-        # Update short-term reference path polylinex
-        ref_x_i = self.ref_points_i[:, 0].numpy()
-        ref_y_i = self.ref_points_i[:, 1].numpy()
-        self.ref_line_i.set_data(ref_x_i, ref_y_i)
-        # Update short-term reference path points
-        self.visu_ref_points_i.set_data(ref_x_i, ref_y_i)
-
-        # Update short-term reference path polylinex
-        ref_x_j = self.ref_points_j[:, 0].numpy()
-        ref_y_j = self.ref_points_j[:, 1].numpy()
-        self.ref_line_j.set_data(ref_x_j, ref_y_j)
-        # Update short-term reference path points
-        self.visu_ref_points_j.set_data(ref_x_j, ref_y_j)
-
-        plt.pause(0.001)
-
-        # Update goal point
-        goal_x_i = self.goal_i[0].item()
-        goal_y_i = self.goal_i[1].item()
-        self.visu_goal_point_i.set_data([goal_x_i], [goal_y_i])
-        goal_x_j = self.goal_j[0].item()
-        goal_y_j = self.goal_j[1].item()
-        self.visu_goal_point_j.set_data([goal_x_j], [goal_y_j])
-
-        # Update quiver for nominal actions of vehicle i
-        x_i, y_i = self.state_i[0].item(), self.state_i[1].item()
-        x_j, y_j = self.state_j[0].item(), self.state_j[1].item()
-        dx_nominal_i = x_j - x_i
-        dy_nominal_i = y_j - y_i
-        norm_i_nominal = np.sqrt(dx_nominal_i**2 + dy_nominal_i**2)
-        if norm_i_nominal != 0:
-            dx_nominal_i = (
-                dx_nominal_i / norm_i_nominal
-            ) * 1.0  # Nominal speed is 1.0 m/s
-            dy_nominal_i = (dy_nominal_i / norm_i_nominal) * 1.0
-        else:
-            dx_nominal_i = 0
-            dy_nominal_i = 0
-
-        self.quiver_nominal_i.set_offsets([x_i, y_i])
-        self.quiver_nominal_i.set_UVC([dx_nominal_i], [dy_nominal_i])
-
-        # Update quiver for optimized actions of vehicle i
-        v_i = self.state_i[3].item()
-        psi_i = self.state_i[2].item()
-        dx_opt_i = v_i * np.cos(psi_i)
-        dy_opt_i = v_i * np.sin(psi_i)
-        self.quiver_opt_i.set_offsets([x_i, y_i])
-        self.quiver_opt_i.set_UVC([dx_opt_i], [dy_opt_i])
-
-        # Update quiver for nominal actions of vehicle j (currently zero)
-        x_j, y_j = self.state_j[0].item(), self.state_j[1].item()
-        dx_nominal_j = 0.0  # Since nominal controller for j is zero
-        dy_nominal_j = 0.0
-        self.quiver_nominal_j.set_offsets([x_j, y_j])
-        self.quiver_nominal_j.set_UVC([dx_nominal_j], [dy_nominal_j])
-
     def update(self, frame):
         """
         Update function for each frame of the animation.
@@ -1022,10 +932,50 @@ class CBF:
             if self.scenario_type.lower() == "overtaking"
             else cp.Variable(2)
         )
+
+        # Update lane information
+        self.lane_i = (
+            "1"
+            if (self.state_i[1] - self.y_lane_1).abs() <= self.threshold_within_lane
+            else (
+                "2"
+                if (self.state_i[1] - self.y_lane_2).abs() <= self.threshold_within_lane
+                else None
+            )
+        )
+        self.lane_j = (
+            "1"
+            if (self.state_j[1] - self.y_lane_1).abs() <= self.threshold_within_lane
+            else (
+                "2"
+                if (self.state_j[1] - self.y_lane_2).abs() <= self.threshold_within_lane
+                else None
+            )
+        )
+        if self.lane_i == None:
+            # "12" mean on a transition from lane 1 to lane 2; vice versa
+            self.lane_i = (
+                "12"
+                if self.list_lane_i[-1] == "1"
+                else ("21" if self.list_lane_i[-1] == "2" else self.list_lane_i[-1])
+            )
+        if self.lane_j == None:
+            self.lane_j = (
+                "12"
+                if self.list_lane_j[-1] == "1"
+                else ("21" if self.list_lane_j[-1] == "2" else self.list_lane_j[-1])
+            )
+
+        self.list_lane_i.append(self.lane_i)
+        self.list_lane_j.append(self.lane_j)
+
         # State derivative to time
-        dstate_time_ji, ddstate_time_ji = self.compute_state_time_derivatives(u_i, u_j)
-        dstate_time_ij = -dstate_time_ji
-        ddstate_time_ij = [-expr for expr in ddstate_time_ji]
+        (
+            dstate_time_ji,
+            ddstate_time_ji,
+            dstate_time_ij,
+            ddstate_time_ij,
+        ) = self.compute_state_time_derivatives(u_i, u_j)
 
         x_ji, y_ji, psi_ji, _ = self.compute_relative_poses(
             self.state_i[0],
@@ -1053,7 +1003,7 @@ class CBF:
 
         # Get RL observations
         obs_i, self.ref_points_i, self.ref_points_ego_view_i = self.observation(
-            self.state_i, self.states_i[0][0:2], self.goal_i.clone(), agent_idx=0
+            self.state_i, self.list_state_i[0][0:2], self.goal_i.clone(), agent_idx=0
         )
         # Update tensordict for later policy call
         self.tensordict_i.set(self.rl_observation_key, obs_i.unsqueeze(0))
@@ -1065,7 +1015,8 @@ class CBF:
             .squeeze(0)
             .detach()
         )
-        # print(f"rl_actions_i: {rl_actions_i}")
+        rl_actions_i[0] = torch.clamp(rl_actions_i[0], 0, self.v_max / 2)
+        print(f"Reduce rl_actions_i: {rl_actions_i}")
         u_nominal_i = self.rl_acrion_to_u(
             rl_actions_i, self.state_i[3], self.state_i[4]
         )
@@ -1107,7 +1058,10 @@ class CBF:
 
             # Get RL observations
             obs_j, self.ref_points_j, self.ref_points_ego_view_j = self.observation(
-                self.state_j, self.states_j[0][0:2], self.goal_j.clone(), agent_idx=1
+                self.state_j,
+                self.list_state_j[0][0:2],
+                self.goal_j.clone(),
+                agent_idx=1,
             )
             # Update tensordict for later policy call
             self.tensordict_j.set(self.rl_observation_key, obs_j.unsqueeze(0))
@@ -1151,7 +1105,7 @@ class CBF:
             verbose=False,  # Set to True for solver details
             eps_abs=1e-5,
             eps_rel=1e-5,
-            max_iter=100,
+            max_iter=1000,
         )
         opt_duration = time.time() - t_start
         self.list_opt_duration.append(opt_duration)
@@ -1163,14 +1117,23 @@ class CBF:
                 u_i_opt = u_nominal_i
             else:
                 u_i_opt = u_i.value
+
             u_j_opt = u_nominal_j.numpy()
+            (
+                dstate_time_ji_opt,
+                ddstate_time_ji_opt,
+                _,
+                _,
+            ) = self.compute_state_time_derivatives(u_i_opt, u_j_opt)
             (
                 h_ji_opt,
                 dot_h_ji_opt,
                 ddot_h_ji_opt,
                 cbf_condition_1_ji_opt,
                 cbf_condition_2_ji_opt,
-            ) = self.eval_cbf_conditions(u_i_opt, u_j_opt, x_ji, y_ji, psi_ji)
+            ) = self.eval_cbf_conditions(
+                dstate_time_ji_opt, ddstate_time_ji_opt, x_ji, y_ji, psi_ji
+            )
 
             # Append to lists
             self.list_h_ji.append(h_ji_opt)
@@ -1184,9 +1147,9 @@ class CBF:
 
             # Print CBF details for debugging
             # Recompute CBF conditions with actual control actions
-            assert h_ji == h_ji_opt
-            assert dot_h_ji == dot_h_ji_opt
-            assert cbf_condition_1_ji == cbf_condition_1_ji_opt
+            assert h_ji_opt == h_ji
+            assert dot_h_ji_opt == dot_h_ji
+            assert cbf_condition_1_ji_opt == cbf_condition_1_ji
 
             print(f"h_ji_opt: {h_ji_opt:.4f} (should >= 0)")
             print(f"dot_h_ji_opt: {dot_h_ji_opt:.4f}")
@@ -1201,20 +1164,31 @@ class CBF:
             else:
                 u_i_opt = u_i.value
                 u_j_opt = u_j.value
+
+            (
+                dstate_time_ji_opt,
+                ddstate_time_ji_opt,
+                dstate_time_ij_opt,
+                ddstate_time_ij_opt,
+            ) = self.compute_state_time_derivatives(u_i_opt, u_j_opt)
             (
                 h_ji_opt,
                 dot_h_ji_opt,
                 ddot_h_ji_opt,
                 cbf_condition_1_ji_opt,
                 cbf_condition_2_ji_opt,
-            ) = self.eval_cbf_conditions(u_i_opt, u_j_opt, x_ji, y_ji, psi_ji)
+            ) = self.eval_cbf_conditions(
+                dstate_time_ji_opt, ddstate_time_ji_opt, x_ji, y_ji, psi_ji
+            )
             (
                 h_ij_opt,
                 dot_h_ij_opt,
                 ddot_h_ij_opt,
                 cbf_condition_1_ij_opt,
                 cbf_condition_2_ij_opt,
-            ) = self.eval_cbf_conditions(u_j_opt, u_i_opt, x_ij, y_ij, psi_ij)
+            ) = self.eval_cbf_conditions(
+                dstate_time_ij_opt, ddstate_time_ij_opt, x_ij, y_ij, psi_ij
+            )
 
             # Append to lists
             self.list_h_ji.append(h_ji_opt)
@@ -1236,12 +1210,13 @@ class CBF:
 
             # Print CBF details for debugging
             # Recompute CBF conditions with actual control actions
-            # assert h_ji == h_ji_opt
-            # assert dot_h_ji == dot_h_ji_opt
-            # assert cbf_condition_1_ji == cbf_condition_1_ji_opt
-            # assert h_ij == h_ij_opt
-            # assert dot_h_ij == dot_h_ij_opt
-            # assert cbf_condition_1_ij == cbf_condition_1_ij_opt
+            assert h_ji_opt == h_ji
+            assert dot_h_ji_opt == dot_h_ji
+            assert cbf_condition_1_ji_opt == cbf_condition_1_ji
+
+            assert h_ij_opt == h_ij
+            assert dot_h_ij_opt == dot_h_ij
+            assert cbf_condition_1_ij_opt == cbf_condition_1_ij
 
             print(f"h_ji_opt: {h_ji_opt:.4f} (should >= 0)")
             print(f"dot_h_ji_opt: {dot_h_ji_opt:.4f}")
@@ -1260,14 +1235,14 @@ class CBF:
             torch.tensor(u_i_opt, device=self.device, dtype=torch.float32),
             self.dt,
         )
-        self.states_i.append(self.state_i.clone().numpy())
+        self.list_state_i.append(self.state_i.clone().numpy())
 
         self.state_j, _, _ = self.kbm.step(
             self.state_j.clone(),
             torch.tensor(u_j_opt, device=self.device, dtype=torch.float32),
             self.dt,
         )
-        self.states_j.append(self.state_j.clone().numpy())
+        self.list_state_j.append(self.state_j.clone().numpy())
 
         # Update plot elements including arrows
         self.update_plot_elements()
@@ -1281,9 +1256,10 @@ class CBF:
             self.vehicle_j_rect,
             self.line_i,
             self.line_j,
-            self.quiver_nominal_i,
-            self.quiver_opt_i,
-            self.quiver_nominal_j,
+            self.visu_goal_point_i,
+            self.visu_goal_point_j,
+            self.visu_ref_points_i,
+            self.visu_ref_points_j,
         ]
 
     def observation(self, state, orig_pos, goal_pos, agent_idx):
@@ -1351,6 +1327,189 @@ class CBF:
 
         return u_nominal
 
+    def setup_plot(self):
+        """
+        Set up the matplotlib figure and plot elements for visualization.
+
+        Args:
+            params (dict): Simulation parameters.
+
+        Returns:
+            tuple: Tuple containing figure, axes, vehicle rectangles, path lines, and quivers.
+        """
+        x_min = -2
+        x_max = 2
+        y_min = -0.2
+        y_max = 0.2
+        xy_ratio = (y_max - y_min) / (x_max - x_min)
+
+        x_fig_size = 20
+        fig, ax = plt.subplots(figsize=(x_fig_size, x_fig_size * xy_ratio + 2))
+
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel("X position (m)")
+        ax.set_ylabel("Y position (m)")
+        ax.set_title("Trajectories and Control Actions of Vehicles i and j")
+        # ax.grid(True)
+        plt.tight_layout()
+
+        # Add static horizontal lines as lane boundaries
+        ax.axhline(
+            y=self.y_lane_bottom_bound, color="k", linestyle="-", lw=1.0
+        )  # Bottom lane boundary
+        ax.axhline(
+            y=self.y_lane_center_line, color="k", linestyle="--", lw=1.0
+        )  # Center line
+        ax.axhline(
+            y=self.y_lane_top_bound, color="k", linestyle="-", lw=1.0
+        )  # Top lane boundary
+
+        # Initialize vehicle rectangles
+        vehicle_i_rect = Rectangle(
+            (0, 0),
+            self.length,
+            self.width,
+            angle=0,
+            color=self.color_i,
+            alpha=0.5,
+            label="Vehicle i",
+        )
+        vehicle_j_rect = Rectangle(
+            (0, 0),
+            self.length,
+            self.width,
+            angle=0,
+            color=self.color_j,
+            alpha=0.5,
+            label="Vehicle j",
+        )
+        ax.add_patch(vehicle_i_rect)
+        ax.add_patch(vehicle_j_rect)
+
+        # Initialize path lines
+        (line_i,) = ax.plot(
+            [],
+            [],
+            color=self.color_i,
+            linestyle="-",
+            lw=1.0,
+            label="Vehicle i footprint",
+        )
+        (line_j,) = ax.plot(
+            [],
+            [],
+            color=self.color_j,
+            linestyle="-",
+            lw=1.0,
+            label="Vehicle j footprint",
+        )
+
+        # Initialize polyline for short-term reference path
+        (ref_line_i,) = ax.plot(
+            [], [], color=self.color_i, linestyle="-", lw=0.5, alpha=0.5
+        )
+        (ref_line_j,) = ax.plot(
+            [], [], color=self.color_j, linestyle="-", lw=0.5, alpha=0.5
+        )
+
+        # Initialize points for short-term reference path
+        (visu_ref_points_i,) = ax.plot(
+            [], [], color=self.color_i, marker="o", markersize=4
+        )
+        (visu_ref_points_j,) = ax.plot(
+            [], [], color=self.color_j, marker="o", markersize=4
+        )
+
+        # Initialize point for goal
+        (visu_goal_point_i,) = ax.plot(
+            [],
+            [],
+            color=self.color_i,
+            marker="o",
+            markersize=8,
+            label="Vehicle i: goal",
+        )
+        (visu_goal_point_j,) = ax.plot(
+            [],
+            [],
+            color=self.color_j,
+            marker="o",
+            markersize=8,
+            label="Vehicle j: goal",
+        )
+
+        ax.legend(loc="upper right")
+
+        self.fig = fig
+        self.ax = ax
+        self.vehicle_i_rect = vehicle_i_rect
+        self.vehicle_j_rect = vehicle_j_rect
+        self.line_i = line_i
+        self.line_j = line_j
+        self.ref_line_i = ref_line_i
+        self.ref_line_j = ref_line_j
+        self.visu_ref_points_i = visu_ref_points_i
+        self.visu_ref_points_j = visu_ref_points_j
+        self.visu_goal_point_i = visu_goal_point_i
+        self.visu_goal_point_j = visu_goal_point_j
+
+    def update_plot_elements(self):
+        """
+        Update the positions and orientations of the vehicle rectangles and path lines,
+        and update the action arrows for visualization.
+        """
+        # Update vehicle rectangles
+        for rect, state in zip(
+            [self.vehicle_i_rect, self.vehicle_j_rect], [self.state_i, self.state_j]
+        ):
+            x, y, psi = state[0].item(), state[1].item(), state[2].item()
+            cos_angle = np.cos(psi)
+            sin_angle = np.sin(psi)
+            bottom_left_x = (
+                x - (self.length / 2) * cos_angle + (self.width / 2) * sin_angle
+            )
+            bottom_left_y = (
+                y - (self.length / 2) * sin_angle - (self.width / 2) * cos_angle
+            )
+            rect.set_xy((bottom_left_x, bottom_left_y))
+            rect.angle = np.degrees(psi)
+
+        # Update path lines
+        self.line_i.set_data(
+            [s[0] for s in self.list_state_i], [s[1] for s in self.list_state_i]
+        )
+        self.line_j.set_data(
+            [s[0] for s in self.list_state_j], [s[1] for s in self.list_state_j]
+        )
+
+        # Update short-term reference path polylinex
+        ref_x_i = self.ref_points_i[:, 0].numpy()
+        ref_y_i = self.ref_points_i[:, 1].numpy()
+        self.ref_line_i.set_data(ref_x_i, ref_y_i)
+        # Update short-term reference path points
+        self.visu_ref_points_i.set_data(ref_x_i, ref_y_i)
+
+        # Update goal point
+        goal_x_i = self.goal_i[0].item()
+        goal_y_i = self.goal_i[1].item()
+        self.visu_goal_point_i.set_data([goal_x_i], [goal_y_i])
+
+        if self.scenario_type.lower() == "bypassing":
+            # Update short-term reference path polylinex
+            ref_x_j = self.ref_points_j[:, 0].numpy()
+            ref_y_j = self.ref_points_j[:, 1].numpy()
+            self.ref_line_j.set_data(ref_x_j, ref_y_j)
+            # Update short-term reference path points
+            self.visu_ref_points_j.set_data(ref_x_j, ref_y_j)
+
+            goal_x_j = self.goal_j[0].item()
+            goal_y_j = self.goal_j[1].item()
+            self.visu_goal_point_j.set_data([goal_x_j], [goal_y_j])
+
+        # plt.pause(0.0001)
+
     def plot_cbf_curve(self) -> None:
         """
         Plot data related to CBF.
@@ -1410,8 +1569,8 @@ class CBF:
             self.fig,
             self.update,
             frames=self.num_steps,
-            blit=True,
-            interval=self.dt * 100,
+            blit=False,  # Set to True to optimize the rendering by updating only parts of the frame that have changed (may rely heavily on the capabilities of the underlying GUI backend and the system’s graphical stack)
+            interval=self.dt * 1000,
             repeat=False,
         )
         plt.show()
