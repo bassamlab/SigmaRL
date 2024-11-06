@@ -25,6 +25,25 @@ import cvxpy as cp
 from matplotlib.patches import Rectangle
 from matplotlib import animation
 
+# Use Type 1 fonts (vector fonts) for IEEE paper submission
+matplotlib.rcParams["pdf.fonttype"] = 42  # Use Type 42 (TrueType) fonts
+
+matplotlib.rcParams["font.family"] = "serif"
+matplotlib.rcParams["font.serif"] = ["Times New Roman"]
+# Set global font size
+matplotlib.rcParams.update({"font.size": 11})
+# Scientific plotting
+# import scienceplots  # Do not remove (https://github.com/garrettj403/SciencePlots)
+
+# plt.rcParams.update(
+#     {"figure.dpi": "20"}
+# )  # Avoid DPI problem (https://github.com/garrettj403/SciencePlots/issues/60)
+# plt.style.use(
+#     "ieee"
+# )  # The science + ieee styles for IEEE papers (can also be one of 'ieee' and 'science' )
+# print(plt.style.available) # List all available style
+
+
 from sigmarl.distance_nn import SafetyMarginEstimatorModule
 
 from sigmarl.dynamics import KinematicBicycleModel
@@ -70,9 +89,11 @@ class CBF:
 
         # Load safety margin estimator module
         self.load_safety_margin_estimator()
-        self.d_min = (
+        self.mtv_safety_buffer = (
             self.SME.error_upper_bound
         )  # Minimum safety distance (m), considering uncertainties such as safety-margin prediction errors
+
+        self.compute_rectangles()
 
         # Initialize Kinematic Bicycle Model
         self.kbm = KinematicBicycleModel(
@@ -129,12 +150,29 @@ class CBF:
         # Radius of the circle that convers the vehicle
         self.radius = np.sqrt(self.length**2 + self.width**2) / 2
 
-        # On which lane is an agent on (1 for the top lane; 2 for the bottom lane; and 0 for a transition state between two lanes). Mainly used in the overtaking scenario.
-        self.lane_i = None
-        self.lane_j = None
+        # On which lane is an agent's center of gravity (1 for the top lane; 2 for the bottom lane)
+        self.lane_i = "2"
+        self.lane_j = "2"
 
-        self.list_lane_i = []
-        self.list_lane_j = []
+        self.list_lane_i = [self.lane_i]
+        self.list_lane_j = [self.lane_j]
+
+        self.within_lane_threshold = (
+            20  # Number of steps to determine if an agent is within a lane
+        )
+
+        self.is_overtake = False  # Whether agent i is overtaking agent j
+        self.list_is_overtake = [self.is_overtake]
+
+        self.is_impede = False  # Whether agent j is impeding agent i
+        self.list_is_impede = [self.is_impede]
+        self.impede_times_max = 3  # Number of times agent j impedes agent i
+        self.n_success_impede = (
+            0  # Number of times agent j successfully impedes agent i
+        )
+
+        self.overtake_target_lane = None  # Agent 1's target lane for overtaking
+        self.impede_target_lane = None  # Agent 2's target lane for bypassing
 
         # y-coordinate of lane boundaries
         self.y_lane_top_bound = self.lane_width
@@ -144,9 +182,13 @@ class CBF:
         self.y_lane_1 = (self.y_lane_center_line + self.y_lane_top_bound) / 2
         self.y_lane_2 = (self.y_lane_center_line + self.y_lane_bottom_bound) / 2
 
+        self.threshold_success_overtake = (
+            self.length
+        )  # Agent i successfully overtakes agent j if its longitudinal coordinate is larger than agent j plus a threshold
+
         self.threshold_within_lane = self.width / 2
         self.threshold_overtake = (
-            self.length
+            4 * self.length
         )  # If agents' longitudinal distance is less than this value, one agent will overtake another agent, given they are within the same lane
 
         # Two scenarios are available:
@@ -154,32 +196,34 @@ class CBF:
         # needs to overtake its precede agent that moves slowly
         # (2) bypassing: two agents, both controlled by a greedy RL policy with CBF verification,
         # needs to bypass each other within a confined space
-        self.scenario_type = "overtaking"  # One of "overtaking" and "bypassing"
+        self.scenario_type = "bypassing"  # One of "overtaking" and "bypassing"
 
         # Two types of safety margin: center-center-based safety margin, Minimum Translation Vector (MTV)-based safety margin
         self.sm_type = "mtv"  # One of "c2c" and "mtv"
 
         # CBF
         if self.scenario_type.lower() == "overtaking":
-            # Set simulation duration
-            self.total_time = 6.0  # Total simulation time
-            self.num_steps = int(
-                self.total_time / self.dt
-            )  # Total simulation time steps
-
             # Initialize states ([x, y, psi, v, delta]) and goal states ([x, y])
             self.state_i = torch.tensor(
-                [-1.2, self.y_lane_2, 0, 1.0, 0.0], dtype=torch.float32
+                [-1, self.y_lane_2, 0, 1.0, 0.0], dtype=torch.float32
             )
             self.state_j = torch.tensor(
-                [0.2, self.y_lane_2, 0.0, 0.3, 0.0], dtype=torch.float32
+                [0, self.y_lane_2, 0.0, 0.3, 0.0], dtype=torch.float32
             )
             self.goal_i = torch.tensor(
-                [5, self.y_lane_2], device=self.device, dtype=torch.float32
+                [10, self.y_lane_2], device=self.device, dtype=torch.float32
             )
-            self.goal_j = None
+            self.goal_j = torch.tensor(
+                [10, self.y_lane_2], device=self.device, dtype=torch.float32
+            )
 
-            self.switch_step = 20  # Time step to encourage one agent to switch lane to overtake another agent
+            # Plot limits
+            self.plot_x_min = min(self.state_i[0].item(), self.state_j[0].item()) - 0.2
+            self.plot_x_max = 3
+            self.plot_y_min = self.y_lane_bottom_bound - 0.2
+            self.plot_y_max = self.y_lane_top_bound + 0.2
+
+            self.visu_step_interval = 10
 
             # Irrelevant
             self.evasion_step_start = None
@@ -188,17 +232,19 @@ class CBF:
 
             if self.sm_type.lower() == "c2c":
                 # Overtaking & C2C
-                self.lambda_cbf = 3  # Design parameter for CBF
+                self.total_time = 6.0  # Total simulation time
+                self.lambda_cbf = 2  # Design parameter for CBF
                 self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 1  # Weight for steering rate in QP
+                self.w_steer = 5  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
             else:
                 # Overtaking & MTV
-                self.lambda_cbf = 3  # Design parameter for CBF
+                self.total_time = 5.5  # Total simulation time
+                self.lambda_cbf = 2  # Design parameter for CBF
                 self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 1  # Weight for steering rate in QP
+                self.w_steer = 5  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
@@ -206,29 +252,32 @@ class CBF:
             # Initialize states ([x, y, psi, v, delta]) and goal states ([x, y])
             # In the bypassing scenario, two agents are facing each other
             self.state_i = torch.tensor(
-                [-1.2, self.y_lane_2, 0.0, 1.0, 0.0], dtype=torch.float32
+                [-1.2, self.y_lane_center_line, 0.0, 1.0, 0.0], dtype=torch.float32
             )
             self.state_j = torch.tensor(
-                [1.2, self.y_lane_2, -np.pi, 1.0, 0.0], dtype=torch.float32
+                [1.2, self.y_lane_center_line, -np.pi, 1.0, 0.0], dtype=torch.float32
             )
             self.goal_i = self.state_j[0:2].clone()
             self.goal_i[0] += 2
             self.goal_j = self.state_i[0:2].clone()
             self.goal_j[0] -= 2
 
-            self.switch_step = None
+            # Plot limits
+            self.plot_x_min = min(self.state_i[0].item(), self.state_j[0].item()) - 0.25
+            self.plot_x_max = max(self.state_i[0].item(), self.state_j[0].item()) + 0.25
+            self.plot_y_min = self.y_lane_bottom_bound - 0.15
+            self.plot_y_max = self.y_lane_top_bound + 0.15
+
+            self.visu_step_interval = 5
 
             if self.sm_type.lower() == "c2c":
                 # Bypassing & C2C
-                self.total_time = 3.0  # Total simulation time
-                self.num_steps = int(
-                    self.total_time / self.dt
-                )  # Total simulation time steps
+                self.total_time = 2.6  # Total simulation time
 
-                self.lambda_cbf = 3  # Design parameter for CBF
+                self.lambda_cbf = 4  # Design parameter for CBF
                 self.evasion_step_start = 15
                 self.evasion_step_end = 25
-                self.evasive_offset = 1 * self.lane_width
+                self.evasive_offset = 0.5 * self.lane_width
 
                 self.w_acc = 1  # Weight for acceleration in QP
                 self.w_steer = 0.3  # Weight for steering rate in QP
@@ -237,10 +286,7 @@ class CBF:
                 )  # Weights for acceleration and steering rate
             else:
                 # Bypassing & MTV
-                self.total_time = 3.0  # Total simulation time
-                self.num_steps = int(
-                    self.total_time / self.dt
-                )  # Total simulation time steps
+                self.total_time = 2.6  # Total simulation time
 
                 self.lambda_cbf = 4  # Design parameter for CBF
                 self.evasion_step_start = 15
@@ -248,10 +294,12 @@ class CBF:
                 self.evasive_offset = 0.6 * self.lane_width
 
                 self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 0.8  # Weight for steering rate in QP
+                self.w_steer = 0.5  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
+
+        self.num_steps = int(self.total_time / self.dt)  # Total simulation time steps
 
         self.list_state_i = [self.state_i.clone().numpy()]
         self.list_state_j = [self.state_j.clone().numpy()]
@@ -287,6 +335,9 @@ class CBF:
         self.list_ddot_h_ij = []
         self.list_cbf_condition_1_ij = []
         self.list_cbf_condition_2_ij = []
+
+        self.list_rectangles_i = []
+        self.list_rectangles_j = []
 
         self.list_opt_duration = []
 
@@ -385,23 +436,23 @@ class CBF:
             batch_size=[1],
         )
 
-        if self.scenario_type.lower() == "overtaking":
-            # In the overtaking scenario, agent j moves with constant speed
-            self.nomi_cont_j = ConstantController(self.device)
-            self.tensordict_j = None
-        else:
-            # In the bapassing scenario, agent j is controlled by a greedy RL policy with CBF verification
-            self.nomi_cont_j = self.load_rl_policy()
-            self.tensordict_j = TensorDict(
-                {
-                    self.rl_observation_key: torch.zeros(
-                        (1, self.rl_policy_n_in_feature),
-                        device=self.device,
-                        dtype=torch.float32,
-                    )
-                },
-                batch_size=[1],
-            )
+        # if self.scenario_type.lower() == "overtaking":
+        #     # In the overtaking scenario, agent j moves with constant speed
+        #     self.nomi_cont_j = ConstantController(self.device)
+        #     self.tensordict_j = None
+        # else:
+        # In the bapassing scenario, agent j is controlled by a greedy RL policy with CBF verification
+        self.nomi_cont_j = self.load_rl_policy()
+        self.tensordict_j = TensorDict(
+            {
+                self.rl_observation_key: torch.zeros(
+                    (1, self.rl_policy_n_in_feature),
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+            },
+            batch_size=[1],
+        )
 
         # Initialize normalizers for preparing observations for the RL policy
         self.rl_normalizers = Normalizers(
@@ -471,46 +522,11 @@ class CBF:
                 )
 
                 # Use MTV-based distance, which considers the headings, to estimate safety margin if the surrounding objective is geometrically inside the allowed ranges
-                print(f"********************************Use MTV-based safety margin.")
+                # print(f"********************************Use MTV-based safety margin.")
                 sm, grad, hessian = self.mtv_based_sm(
                     x_relative, y_relative, psi_relative
                 )
 
-                # Compute actual safety margin
-                rect_i_vertices = torch.tensor(
-                    self.SME.get_rectangle_vertices(
-                        self.state_i[0].item(),
-                        self.state_i[1].item(),
-                        self.state_i[2].item(),
-                    ),
-                    device=self.device,
-                    dtype=torch.float32,
-                )
-                rect_j_vertices = torch.tensor(
-                    self.SME.get_rectangle_vertices(
-                        self.state_j[0].item(),
-                        self.state_j[1].item(),
-                        self.state_j[2].item(),
-                    ),
-                    device=self.device,
-                    dtype=torch.float32,
-                )
-                vertices = torch.stack(
-                    [rect_i_vertices, rect_j_vertices], dim=0
-                ).unsqueeze(0)
-
-                actual_sm = get_distances_between_agents(
-                    vertices, distance_type="mtv", is_set_diagonal=False
-                )[0, 0, 1].item()
-
-                # print(f"Predicted safety margin: {sm:.6f} m")
-                # print(f"Actual safety margin (absolute vertices): {(actual_sm):.6f} m")
-
-                error_prediction = abs(actual_sm - sm)
-
-                print(f"Safety-margin prediction error: {error_prediction:.6f}")
-
-                assert error_prediction <= self.SME.error_upper_bound
             else:
                 # If the surrounding objective is outside the ranges, using center-to-center based distance, which does not consider headings, to estimate safety margin.
                 # This is allowable since the objective if far and the heading information is unessential.
@@ -683,7 +699,10 @@ class CBF:
         Returns:
             tuple: h, dot_h, ddot_h, cbf_condition_1, cbf_condition_2
         """
-        h = sm - self.d_min
+        if self.sm_type.lower() == "c2c":
+            h = sm
+        else:
+            h = sm - self.mtv_safety_buffer
 
         # Compute dot_h
         dot_h = grad_sm @ dstate_time
@@ -815,32 +834,48 @@ class CBF:
             path_points = torch.zeros(
                 (self.rl_n_points_ref, 2), device=self.device, dtype=torch.float32
             )
-            # x-coordinates
-            path_points[:, 0] = (
-                self.state_i[0]
-                + torch.arange(1, self.rl_n_points_ref + 1, device=self.device)
-                * self.rl_distance_between_points_ref_path
-            )
-
-            # Conditions for overtaking: (a) Both agents are on the same lane, (b) None of them is on a transition from one lane to another, and (c) their longitudinal distance is less than a threshold
-            is_conduct_overtaking = (
-                (self.lane_i == self.lane_j)
-                and (len(self.lane_i) == 1)
-                and (
-                    (self.state_i[0] - self.state_j[0]).abs() < self.threshold_overtake
+            if agent_idx == 0:
+                # Agent i
+                ref_points_x = (
+                    self.state_i[0]
+                    + torch.arange(1, self.rl_n_points_ref + 1, device=self.device)
+                    * self.rl_distance_between_points_ref_path
                 )
-            )
-            if is_conduct_overtaking:
-                # Switch reference path to another lane to encourage overtaking
-                # y-coordinates
-                path_points[:, 1] = (
-                    self.y_lane_2 if self.lane_i == "1" else self.y_lane_1
-                )
+                if self.is_overtake:
+                    # Switch reference path to another lane to encourage overtaking
+                    # Switch to target lane
+                    ref_points_y = (
+                        self.y_lane_1
+                        if self.overtake_target_lane == "1"
+                        else self.y_lane_2
+                    )
+                else:
+                    # Stay in the current lane
+                    ref_points_y = (
+                        self.y_lane_1 if self.lane_i == "1" else self.y_lane_2
+                    )
             else:
-                # y-coordinates
-                path_points[:, 1] = (
-                    self.y_lane_1 if self.lane_i == "1" else self.y_lane_2
+                # Agent j
+                ref_points_x = (
+                    self.state_j[0]
+                    + torch.arange(1, self.rl_n_points_ref + 1, device=self.device)
+                    * self.rl_distance_between_points_ref_path
                 )
+                if self.is_impede:
+                    print("Agent j is impeding agent i!")
+                    # Switch to the target lane of agent i
+                    ref_points_y = (
+                        self.y_lane_1
+                        if self.impede_target_lane == "1"
+                        else self.y_lane_2
+                    )
+                else:
+                    # Stay in the current lane
+                    ref_points_y = (
+                        self.y_lane_1 if self.lane_j == "1" else self.y_lane_2
+                    )
+            path_points[:, 0] = ref_points_x
+            path_points[:, 1] = ref_points_y
         else:
             # Adjust the goal to encourage evasion
             if (self.step >= self.evasion_step_start) and (
@@ -905,12 +940,6 @@ class CBF:
 
         return obs_ego
 
-    def update_goal_i(self):
-        pass
-
-    def update_goal_j(self):
-        pass
-
     def update(self, frame):
         """
         Update function for each frame of the animation.
@@ -925,49 +954,60 @@ class CBF:
         print(
             f"------------Step: {self.step}--Time: {frame * self.dt:.2f}s------------"
         )
+
+        if self.scenario_type.lower() == "overtaking":
+            # Update flags such as lane, overtaking, impeding, etc., for the overtaking scenario
+            self.update_flags_prior()
+
+        # RL actions for agent i as its nominal actions
+        obs_i, self.ref_points_i, self.ref_points_ego_view_i = self.observation(
+            self.state_i,
+            self.list_state_i[0][0:2],
+            self.goal_i.clone(),
+            agent_idx=0,
+        )
+        self.tensordict_i.set(
+            self.rl_observation_key, obs_i.unsqueeze(0)
+        )  # Update tensordict for later policy call
+        rl_actions_i = (  # Get nominal control inputs
+            self.nomi_cont_i(self.tensordict_i)
+            .get(self.rl_action_key)
+            .squeeze(0)
+            .detach()
+        )
+        u_nominal_i = self.rl_acrion_to_u(
+            rl_actions_i, self.state_i[3], self.state_i[4]
+        )
+
+        # RL actions for agent j as its nominal actions
+        obs_j, self.ref_points_j, self.ref_points_ego_view_j = self.observation(
+            self.state_j,
+            self.list_state_j[0][0:2],
+            self.goal_j.clone(),
+            agent_idx=1,
+        )
+        self.tensordict_j.set(
+            self.rl_observation_key, obs_j.unsqueeze(0)
+        )  # Update tensordict for later policy call
+        rl_actions_j = (  # Get nominal control inputs
+            self.nomi_cont_j(self.tensordict_j)
+            .get(self.rl_action_key)
+            .squeeze(0)
+            .detach()
+        )
+        if self.scenario_type.lower() == "overtaking":
+            # Purposely lowers the speed of agent j
+            rl_actions_j[0] = torch.clamp(rl_actions_j[0], 0, self.v_max / 2)
+        u_nominal_j = self.rl_acrion_to_u(
+            rl_actions_j, self.state_j[3], self.state_j[4]
+        )
+
         # Initialize optimization variables for vehicle i and possibly j
         u_i = cp.Variable(2)
-        u_j = (
-            self.nomi_cont_j.get_actions().numpy()
-            if self.scenario_type.lower() == "overtaking"
-            else cp.Variable(2)
-        )
-
-        # Update lane information
-        self.lane_i = (
-            "1"
-            if (self.state_i[1] - self.y_lane_1).abs() <= self.threshold_within_lane
-            else (
-                "2"
-                if (self.state_i[1] - self.y_lane_2).abs() <= self.threshold_within_lane
-                else None
-            )
-        )
-        self.lane_j = (
-            "1"
-            if (self.state_j[1] - self.y_lane_1).abs() <= self.threshold_within_lane
-            else (
-                "2"
-                if (self.state_j[1] - self.y_lane_2).abs() <= self.threshold_within_lane
-                else None
-            )
-        )
-        if self.lane_i == None:
-            # "12" mean on a transition from lane 1 to lane 2; vice versa
-            self.lane_i = (
-                "12"
-                if self.list_lane_i[-1] == "1"
-                else ("21" if self.list_lane_i[-1] == "2" else self.list_lane_i[-1])
-            )
-        if self.lane_j == None:
-            self.lane_j = (
-                "12"
-                if self.list_lane_j[-1] == "1"
-                else ("21" if self.list_lane_j[-1] == "2" else self.list_lane_j[-1])
-            )
-
-        self.list_lane_i.append(self.lane_i)
-        self.list_lane_j.append(self.lane_j)
+        if self.scenario_type.lower() == "overtaking":
+            u_j = u_nominal_j
+        else:
+            u_j = cp.Variable(2)
 
         # State derivative to time
         (
@@ -1001,29 +1041,7 @@ class CBF:
             dstate_time_ji, ddstate_time_ji, sm_ji, grad_sm_ji, hessian_sm_ji
         )
 
-        # Get RL observations
-        obs_i, self.ref_points_i, self.ref_points_ego_view_i = self.observation(
-            self.state_i, self.list_state_i[0][0:2], self.goal_i.clone(), agent_idx=0
-        )
-        # Update tensordict for later policy call
-        self.tensordict_i.set(self.rl_observation_key, obs_i.unsqueeze(0))
-
-        # Get nominal control inputs
-        rl_actions_i = (
-            self.nomi_cont_i(self.tensordict_i)
-            .get(self.rl_action_key)
-            .squeeze(0)
-            .detach()
-        )
-        rl_actions_i[0] = torch.clamp(rl_actions_i[0], 0, self.v_max / 2)
-        print(f"Reduce rl_actions_i: {rl_actions_i}")
-        u_nominal_i = self.rl_acrion_to_u(
-            rl_actions_i, self.state_i[3], self.state_i[4]
-        )
-
         if self.scenario_type.lower() == "overtaking":
-            u_nominal_j = self.nomi_cont_j.get_actions()
-
             # Objective: Minimize weighted squared deviation from nominal control inputs
             objective = cp.Minimize(cp.quad_form(u_i - u_nominal_i, self.Q))
             constraints = [
@@ -1054,27 +1072,6 @@ class CBF:
                 cbf_condition_2_ij,
             ) = self.compute_cbf_conditions(
                 dstate_time_ij, ddstate_time_ij, sm_ij, grad_sm_ij, hessian_sm_ij
-            )
-
-            # Get RL observations
-            obs_j, self.ref_points_j, self.ref_points_ego_view_j = self.observation(
-                self.state_j,
-                self.list_state_j[0][0:2],
-                self.goal_j.clone(),
-                agent_idx=1,
-            )
-            # Update tensordict for later policy call
-            self.tensordict_j.set(self.rl_observation_key, obs_j.unsqueeze(0))
-
-            # Get nominal control inputs
-            rl_actions_j = (
-                self.nomi_cont_j(self.tensordict_j)
-                .get(self.rl_action_key)
-                .squeeze(0)
-                .detach()
-            )
-            u_nominal_j = self.rl_acrion_to_u(
-                rl_actions_j, self.state_j[3], self.state_j[4]
             )
 
             # Objective: Minimize weighted squared deviation from nominal control inputs
@@ -1113,12 +1110,19 @@ class CBF:
         # print(f"Cost: {prob.value:.4f}")
         if self.scenario_type.lower() == "overtaking":
             if prob.status != cp.OPTIMAL:
-                print(f"Warning: QP not solved optimally. Status: {prob.status}")
+                print(
+                    f"Warning: QP not solved optimally. Status: {prob.status} \n\n\n\n "
+                )
+                # Redefine nominal control inputs to be safe
+                rl_actions_i[0] = torch.clamp(rl_actions_i[0], 0, self.v_max / 10)
+                u_nominal_i = self.rl_acrion_to_u(
+                    rl_actions_i, self.state_i[3], self.state_i[4]
+                )
                 u_i_opt = u_nominal_i
             else:
                 u_i_opt = u_i.value
 
-            u_j_opt = u_nominal_j.numpy()
+            u_j_opt = u_nominal_j
             (
                 dstate_time_ji_opt,
                 ddstate_time_ji_opt,
@@ -1142,8 +1146,8 @@ class CBF:
             self.list_cbf_condition_1_ji.append(cbf_condition_1_ji_opt)
             self.list_cbf_condition_2_ji.append(cbf_condition_2_ji_opt)
 
-            print(f"Nominal actions i: {u_nominal_i}")
-            print(f"Optimized actions i: {u_i.value}")
+            # print(f"Nominal actions i: {u_nominal_i}")
+            # print(f"Optimized actions i: {u_i.value}")
 
             # Print CBF details for debugging
             # Recompute CBF conditions with actual control actions
@@ -1151,11 +1155,11 @@ class CBF:
             assert dot_h_ji_opt == dot_h_ji
             assert cbf_condition_1_ji_opt == cbf_condition_1_ji
 
-            print(f"h_ji_opt: {h_ji_opt:.4f} (should >= 0)")
-            print(f"dot_h_ji_opt: {dot_h_ji_opt:.4f}")
-            print(f"ddot_h_ji_opt: {ddot_h_ji_opt:.4f}")
-            print(f"cbf_condition_1_ji_opt: {cbf_condition_1_ji_opt:.4f} (should >= 0)")
-            print(f"cbf_condition_2_ji_opt: {cbf_condition_2_ji_opt:.4f} (should >= 0)")
+            # print(f"h_ji_opt: {h_ji_opt:.4f} (should >= 0)")
+            # print(f"dot_h_ji_opt: {dot_h_ji_opt:.4f}")
+            # print(f"ddot_h_ji_opt: {ddot_h_ji_opt:.4f}")
+            # print(f"cbf_condition_1_ji_opt: {cbf_condition_1_ji_opt:.4f} (should >= 0)")
+            # print(f"cbf_condition_2_ji_opt: {cbf_condition_2_ji_opt:.4f} (should >= 0)")
         else:
             if prob.status != cp.OPTIMAL:
                 print(f"Warning: QP not solved optimally. Status: {prob.status}")
@@ -1203,10 +1207,10 @@ class CBF:
             self.list_cbf_condition_2_ij.append(cbf_condition_2_ij_opt)
 
             # Update state
-            print(f"Nominal actions i: {u_nominal_i}")
-            print(f"Optimized actions i: {u_i.value}")
-            print(f"Nominal actions j: {u_nominal_j}")
-            print(f"Optimized actions j: {u_j.value}")
+            # print(f"Nominal actions i: {u_nominal_i}")
+            # print(f"Optimized actions i: {u_i.value}")
+            # print(f"Nominal actions j: {u_nominal_j}")
+            # print(f"Optimized actions j: {u_j.value}")
 
             # Print CBF details for debugging
             # Recompute CBF conditions with actual control actions
@@ -1244,12 +1248,15 @@ class CBF:
         )
         self.list_state_j.append(self.state_j.clone().numpy())
 
+        # Compute rectangles for later plotting
+        self.compute_rectangles()
+
+        # Update success and fail flags for the overtaking scenario
+        if self.scenario_type.lower() == "overtaking":
+            self.update_flags_posterior()
+
         # Update plot elements including arrows
         self.update_plot_elements()
-
-        # Update traget
-        self.update_goal_i()
-        self.update_goal_j()
 
         return [
             self.vehicle_i_rect,
@@ -1260,7 +1267,151 @@ class CBF:
             self.visu_goal_point_j,
             self.visu_ref_points_i,
             self.visu_ref_points_j,
+            self.visu_circle_i,
+            self.visu_circle_j,
         ]
+
+    def update_flags_prior(self):
+        # If an agent is previously on a transition, it should finish this transition
+        self.lane_i = "2" if self.state_i[1] <= self.y_lane_center_line else "1"
+        self.lane_j = "2" if self.state_j[1] <= self.y_lane_center_line else "1"
+
+        self.list_lane_i.append(self.lane_i)
+        self.list_lane_j.append(self.lane_j)
+
+        # An agent is considered within a lane if its CoG is inside a lane for at least a certain duration
+        if len(self.list_lane_i) < self.within_lane_threshold:
+            within_lane_1_i = False
+            within_lane_2_i = False
+        else:
+            within_lane_1_i = all(
+                lane == "1" for lane in self.list_lane_i[-self.within_lane_threshold :]
+            )
+            within_lane_2_i = all(
+                lane == "2" for lane in self.list_lane_i[-self.within_lane_threshold :]
+            )
+        if len(self.list_lane_j) < self.within_lane_threshold:
+            within_lane_1_j = False
+            within_lane_2_j = False
+        else:
+            within_lane_1_j = all(
+                lane == "1" for lane in self.list_lane_j[-self.within_lane_threshold :]
+            )
+            within_lane_2_j = all(
+                lane == "2" for lane in self.list_lane_j[-self.within_lane_threshold :]
+            )
+
+        # Agent i will contibue overtaking if it was previously in an overtaking state, or it starts overtaking if the following conditions are satisfied
+        # Condition 1: both agents are within same lane
+        self.overtake_condition_1 = (within_lane_1_i and within_lane_1_j) or (
+            within_lane_2_i and within_lane_2_j
+        )
+        # Condition 2: longitudinal distance is less than a threshold
+        self.overtake_condition_2 = (
+            self.state_i[0] - self.state_j[0]
+        ).abs().item() < self.threshold_overtake
+        if self.list_is_overtake[-1]:
+            # Continue overtaking
+            self.is_overtake = True
+        else:
+            self.is_overtake = self.overtake_condition_1 and self.overtake_condition_2
+
+        if self.overtake_target_lane is None:
+            self.overtake_target_lane = (
+                "2" if (within_lane_1_i and within_lane_1_j) else "1"
+            )
+
+        # Before actual overtaking, purposely use a larger safety buffer to ensure enough longitudinal distance; when actual overtaking, switch to a smaller safety buffer, which equals the upper bound of the safety margin estimation error
+        if self.n_success_impede < self.impede_times_max:
+            self.mtv_safety_buffer = self.length
+        else:
+            self.mtv_safety_buffer = self.SME.error_upper_bound
+
+        # Agent i will continue impeding agent j if it was previously in an impeding state, or it starts impeding if the following conditions are satisfied
+        # Condition 1: agent i is on an overtaking
+        impede_condition_1 = self.is_overtake
+        # Condition 2: agent j will not impede agent i if it has impeded agent i for more than a certain number of times
+        if self.n_success_impede >= self.impede_times_max:
+            impede_condition_2 = False
+        else:
+            impede_condition_2 = True
+        if self.list_is_impede[-1]:
+            # Continue impeding
+            self.is_impede = True
+        else:
+            self.is_impede = impede_condition_1 and impede_condition_2
+        if self.impede_target_lane is None:
+            self.impede_target_lane = self.overtake_target_lane
+
+        print(f"self.lane_i: {self.lane_i}; self.lane_j: {self.lane_j}")
+
+        self.list_lane_i.append(self.lane_i)
+        self.list_lane_j.append(self.lane_j)
+
+    def update_flags_posterior(self):
+        # Agent i successfully overtakes agent j if its longitudinal coordinate is larger than agent j plus a threshold
+        self.success_overtake = (
+            self.state_i[0] > self.state_j[0] + self.threshold_success_overtake
+        )
+
+        if self.success_overtake:
+            print("Agent i successfully overtakes agent j!")
+            self.fail_overtake = False
+            self.is_overtake = False
+            self.is_impede = False
+            self.overtake_target_lane = None
+            self.impede_target_lane = None
+        else:
+            # Agent i fails to overtake if the following conditions are satisfied
+            # Condition 1: it used to be in an overtaking state at least for a certain duration
+            fail_condition_1 = len(self.list_is_overtake) >= 10 and all(
+                self.list_is_overtake[-10:]
+            )
+            # Condition 2: It is (again) on the same lane as agent j
+            fail_condition_2 = self.overtake_condition_1
+            self.fail_overtake = fail_condition_1 and fail_condition_2
+
+            # Reset overtaking and impeding flags if agent i fails
+            if self.fail_overtake:
+                print("Agent i fails to overtake agent j!")
+                self.success_overtake = False
+                self.is_overtake = False
+                self.is_impede = False
+                self.overtake_target_lane = None
+                self.impede_target_lane = None
+                self.n_success_impede += 1
+
+        self.list_is_overtake.append(self.is_overtake)
+        self.list_is_impede.append(self.is_impede)
+
+    def compute_rectangles(self):
+        # Compute actual safety margin
+        rect_i_vertices = torch.tensor(
+            self.SME.get_rectangle_vertices(
+                self.state_i[0].item(),
+                self.state_i[1].item(),
+                self.state_i[2].item(),
+            ),
+            device=self.device,
+            dtype=torch.float32,
+        )
+        rect_j_vertices = torch.tensor(
+            self.SME.get_rectangle_vertices(
+                self.state_j[0].item(),
+                self.state_j[1].item(),
+                self.state_j[2].item(),
+            ),
+            device=self.device,
+            dtype=torch.float32,
+        )
+        vertices = torch.stack([rect_i_vertices, rect_j_vertices], dim=0).unsqueeze(0)
+
+        actual_sm = get_distances_between_agents(
+            vertices, distance_type="mtv", is_set_diagonal=False
+        )[0, 0, 1].item()
+
+        self.list_rectangles_i.append(rect_i_vertices)
+        self.list_rectangles_j.append(rect_j_vertices)
 
     def observation(self, state, orig_pos, goal_pos, agent_idx):
         if not isinstance(orig_pos, torch.Tensor):
@@ -1337,18 +1488,16 @@ class CBF:
         Returns:
             tuple: Tuple containing figure, axes, vehicle rectangles, path lines, and quivers.
         """
-        x_min = -2
-        x_max = 2
-        y_min = -0.2
-        y_max = 0.2
-        xy_ratio = (y_max - y_min) / (x_max - x_min)
+        xy_ratio = (self.plot_y_max - self.plot_y_min) / (
+            self.plot_x_max - self.plot_x_min
+        )
 
         x_fig_size = 20
         fig, ax = plt.subplots(figsize=(x_fig_size, x_fig_size * xy_ratio + 2))
 
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
-        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlim(self.plot_x_min, self.plot_x_max)
+        ax.set_ylim(self.plot_y_min, self.plot_y_max)
+        ax.set_aspect("equal")
         ax.set_xlabel("X position (m)")
         ax.set_ylabel("Y position (m)")
         ax.set_title("Trajectories and Control Actions of Vehicles i and j")
@@ -1440,6 +1589,22 @@ class CBF:
             label="Vehicle j: goal",
         )
 
+        # Create Circle patches
+        visu_circle_i = plt.Circle(
+            (self.state_i[0].item(), self.state_i[1].item()),
+            self.radius,
+            color=self.color_i,
+            fill=False,
+        )
+        ax.add_patch(visu_circle_i)
+        visu_circle_j = plt.Circle(
+            (self.state_j[0].item(), self.state_j[1].item()),
+            self.radius,
+            color=self.color_j,
+            fill=False,
+        )
+        ax.add_patch(visu_circle_j)
+
         ax.legend(loc="upper right")
 
         self.fig = fig
@@ -1454,6 +1619,8 @@ class CBF:
         self.visu_ref_points_j = visu_ref_points_j
         self.visu_goal_point_i = visu_goal_point_i
         self.visu_goal_point_j = visu_goal_point_j
+        self.visu_circle_i = visu_circle_i
+        self.visu_circle_j = visu_circle_j
 
     def update_plot_elements(self):
         """
@@ -1496,69 +1663,222 @@ class CBF:
         goal_y_i = self.goal_i[1].item()
         self.visu_goal_point_i.set_data([goal_x_i], [goal_y_i])
 
-        if self.scenario_type.lower() == "bypassing":
-            # Update short-term reference path polylinex
-            ref_x_j = self.ref_points_j[:, 0].numpy()
-            ref_y_j = self.ref_points_j[:, 1].numpy()
-            self.ref_line_j.set_data(ref_x_j, ref_y_j)
-            # Update short-term reference path points
-            self.visu_ref_points_j.set_data(ref_x_j, ref_y_j)
+        # if self.scenario_type.lower() == "bypassing":
+        # Update short-term reference path polylinex
+        ref_x_j = self.ref_points_j[:, 0].numpy()
+        ref_y_j = self.ref_points_j[:, 1].numpy()
+        self.ref_line_j.set_data(ref_x_j, ref_y_j)
+        # Update short-term reference path points
+        self.visu_ref_points_j.set_data(ref_x_j, ref_y_j)
 
-            goal_x_j = self.goal_j[0].item()
-            goal_y_j = self.goal_j[1].item()
-            self.visu_goal_point_j.set_data([goal_x_j], [goal_y_j])
+        goal_x_j = self.goal_j[0].item()
+        goal_y_j = self.goal_j[1].item()
+        self.visu_goal_point_j.set_data([goal_x_j], [goal_y_j])
+
+        # Update circles with a radius of self.radius for C2C safety margin visualization
+        # Replace set_data() with center property
+        self.visu_circle_i.center = (self.state_i[0].item(), self.state_i[1].item())
+        self.visu_circle_j.center = (self.state_j[0].item(), self.state_j[1].item())
 
         # plt.pause(0.0001)
 
     def plot_cbf_curve(self) -> None:
         """
-        Plot data related to CBF.
+        Plot the simulation results including:
+        1. The trajectories of both agents represented by rectangles with fading colors
+        2. CBF-related data including barrier functions and CBF conditions
         """
-        steps = range(1, len(self.list_h_ji) + 1)
-        plt.figure(figsize=(5, 3))
+        # Create figure with 2x1 subplots
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 5), height_ratios=[1, 1])
 
-        plt.plot(steps, self.list_h_ji, label="h_ji", linestyle="-", lw="2.0")
-        # plt.plot(steps, self.list_dot_h_ji, label="dot_h_ji", linestyle="--", lw="2.0")
-        # plt.plot(steps, self.list_ddot_h_ji, label="ddot_h_ji", linestyle="-.", lw="2.0")
-        plt.plot(
-            steps,
+        # Plot lane boundaries and center line
+        ax1.axhline(
+            y=self.y_lane_bottom_bound, color="k", linestyle="-", lw=1.0
+        )  # Bottom lane boundary
+        ax1.axhline(
+            y=self.y_lane_center_line, color="k", linestyle="--", lw=1.0
+        )  # Center line
+        ax1.axhline(
+            y=self.y_lane_top_bound, color="k", linestyle="-", lw=1.0
+        )  # Top lane boundary
+
+        # Create a list of time steps to be visualized
+        time_steps_to_visualize = np.arange(
+            0, len(self.list_h_ij), self.visu_step_interval
+        ).tolist()
+        # # Include the final time step
+        # time_steps_to_visualize.append(len(self.list_h_ij) - 1)
+        # Find the time step where the CBF value is minimum and add it to the time steps to be visualized
+        min_cbf_value = min(self.list_h_ij)
+        min_cbf_idx = self.list_h_ij.index(min_cbf_value)
+        time_steps_to_visualize = [min_cbf_idx] + time_steps_to_visualize
+        # Remove duplicates
+        time_steps_to_visualize = list(dict.fromkeys(time_steps_to_visualize))
+        # Rearrange time_steps_to_visualize in ascending order
+        time_steps_to_visualize.sort()
+
+        # Plot rectangles for each timestep with fading colors
+        n_steps = len(self.list_rectangles_i)
+        for t in time_steps_to_visualize:
+            # Calculate alpha (transparency) based on timestep
+            alpha = 0.1 + 0.9 * (t / n_steps)
+
+            alpha_text = np.clip(alpha * 1.2, 0.0, 1.0)
+
+            # Get vertices for both agents at timestep t
+            vertices_i = self.list_rectangles_i[t].numpy()
+            vertices_j = self.list_rectangles_j[t].numpy()
+
+            # Create polygon patches
+            poly_i = plt.Polygon(
+                vertices_i, facecolor=self.color_i, alpha=alpha, edgecolor="none"
+            )
+            poly_j = plt.Polygon(
+                vertices_j, facecolor=self.color_j, alpha=alpha, edgecolor="none"
+            )
+
+            # Add patches to plot
+            ax1.add_patch(poly_i)
+            ax1.add_patch(poly_j)
+
+            center_i = self.list_state_i[t][0:2]
+            center_j = self.list_state_j[t][0:2]
+
+            # Visualize circles with a radius of self.radius for C2C safety margin visualization
+            circle_i = plt.Circle(
+                center_i, self.radius, color=self.color_i, fill=False, alpha=alpha
+            )
+            ax1.add_patch(circle_i)
+            circle_j = plt.Circle(
+                center_j, self.radius, color=self.color_j, fill=False, alpha=alpha
+            )
+            ax1.add_patch(circle_j)
+
+            # Add timestep text near each rectangle
+            if t == 0:
+                ax1.text(
+                    self.plot_x_min,
+                    self.y_lane_top_bound + 0.05,
+                    "Steps:",
+                    color=self.color_i,
+                    horizontalalignment="left",
+                    verticalalignment="center",
+                    fontsize=9,
+                )
+                ax1.text(
+                    self.plot_x_min,
+                    self.y_lane_bottom_bound - 0.07,
+                    "Steps:",
+                    color=self.color_j,
+                    horizontalalignment="left",
+                    verticalalignment="center",
+                    fontsize=9,
+                )
+
+            # Text properties
+            text_props = {
+                "horizontalalignment": "center",
+                "verticalalignment": "center",
+                "alpha": alpha_text,
+                "fontsize": 9,
+            }
+
+            # Add fontweight='bold' if this is the min CBF timestep
+            if t == min_cbf_idx:
+                text_props["fontweight"] = "bold"
+
+            # Add timestep text for both agents
+            ax1.text(
+                center_i[0],
+                self.y_lane_top_bound + 0.05,
+                str(t),
+                color=self.color_i,
+                **text_props,
+            )
+            ax1.text(
+                center_j[0],
+                self.y_lane_bottom_bound - 0.07,
+                str(t),
+                color=self.color_j,
+                **text_props,
+            )
+
+        # Set equal aspect ratio and limits
+        ax1.set_aspect("equal")
+        ax1.set_xlim(self.plot_x_min, self.plot_x_max)
+        ax1.set_ylim(self.plot_y_min, self.plot_y_max)
+        ax2.set_xlabel(r"x [m]")
+        ax1.set_ylabel(r"y [m]")
+        ax1.grid(False)
+
+        # Second subplot: CBF data
+        x_i = [s[0] for s in self.list_state_i]  # x-positions as x-axis
+        x_data = x_i[0:-1]
+
+        # Plot CBF-related curves
+        ax2.plot(
+            x_data,
             self.list_cbf_condition_1_ji,
-            label="cbf_condition_1_ji",
+            label="1st-Order CBF Condition",
             linestyle="--",
-            lw="2.0",
+            lw=2.0,
         )
-        plt.plot(
-            steps,
+        ax2.plot(
+            x_data,
             self.list_cbf_condition_2_ji,
-            label="cbf_condition_2_ji",
+            label="2nd-Order CBF Condition",
             linestyle="-.",
-            lw="2.0",
+            lw=2.0,
         )
+
+        # Add curves for bypassing scenario
+        if self.scenario_type.lower() == "bypassing":
+            ax2.plot(x_data, self.list_h_ij, label="CBF Value", linestyle=":", lw=2.0)
+            ax2.plot(
+                x_data,
+                self.list_cbf_condition_1_ij,
+                label="1st-Order CBF Condition",
+                linestyle="--",
+                lw=2.0,
+            )
+            ax2.plot(
+                x_data,
+                self.list_cbf_condition_2_ij,
+                label="2nd-Order CBF Condition",
+                linestyle="-.",
+                lw=2.0,
+            )
+
+        ax2.set_xlabel(r"x [m]")
+        ax2.set_ylabel("CBF-Related Data")
+        ax2.legend()
+        ax2.grid(True)
+        ax2.set_xlim(self.plot_x_min, self.plot_x_max)
+        ax2.set_ylim((-0.2, 2.0))
 
         if self.scenario_type.lower() == "bypassing":
-            plt.plot(steps, self.list_h_ij, label="h_ij", linestyle=":", lw="2.0")
-            # plt.plot(steps, self.list_dot_h_ij, label="dot_h_ij", linestyle="--", lw="2.0")
-            # plt.plot(steps, self.list_ddot_h_ij, label="ddot_h_ij", linestyle="-.", lw="2.0")
-            plt.plot(
-                steps,
-                self.list_cbf_condition_1_ij,
-                label="cbf_condition_1_ij",
-                linestyle="--",
-                lw="2.0",
+            # Print the maximum deviation in y-direction of each agent to the center line among all time steps
+            # Get the y-coordinates of all time steps
+            y_i = [s[1] for s in self.list_state_i]
+            y_j = [s[1] for s in self.list_state_j]
+            max_deviation_i = max(abs(np.array(y_i) - self.y_lane_center_line))
+            max_deviation_j = max(abs(np.array(y_j) - self.y_lane_center_line))
+            print_str = (
+                f"Maximum deviation in y-direction with {self.sm_type.upper()}-based safety margin:"
+                f" Vehicle i: {max_deviation_i:.4f} m; Vehicle j: {max_deviation_j:.4f} m; Mean: {(max_deviation_i + max_deviation_j) / 2:.4f} m"
             )
-            plt.plot(
-                steps,
-                self.list_cbf_condition_2_ij,
-                label="cbf_condition_2_ij",
-                linestyle="-.",
-                lw="2.0",
-            )
+            print(print_str)
+            # Save the print output to a text file
+            file_name = f"max_deviation_{self.sm_type}.txt"
+            with open(file_name, "w") as file:
+                file.write(print_str)
+            # Print that a file has been saved
+            print(f"Maximum deviation data has been saved to {file_name}.")
 
-        plt.xlabel("Steps")
-        plt.ylabel("CBF Data")
-        plt.legend()
-        plt.grid(True)
+        # Adjust layout and save
         plt.tight_layout()
+        fig_name = f"eva_cbf_{self.scenario_type}_{self.sm_type}.pdf"
+        plt.savefig(fig_name, bbox_inches="tight", dpi=300)
         plt.show()
 
     def run(self):
@@ -1570,7 +1890,7 @@ class CBF:
             self.update,
             frames=self.num_steps,
             blit=False,  # Set to True to optimize the rendering by updating only parts of the frame that have changed (may rely heavily on the capabilities of the underlying GUI backend and the system’s graphical stack)
-            interval=self.dt * 1000,
+            interval=self.dt * 10,
             repeat=False,
         )
         plt.show()
