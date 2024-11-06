@@ -199,7 +199,7 @@ class CBF:
         self.scenario_type = "bypassing"  # One of "overtaking" and "bypassing"
 
         # Two types of safety margin: center-center-based safety margin, Minimum Translation Vector (MTV)-based safety margin
-        self.sm_type = "mtv"  # One of "c2c" and "mtv"
+        self.sm_type = "c2c"  # One of "c2c" and "mtv"
 
         # CBF
         if self.scenario_type.lower() == "overtaking":
@@ -274,10 +274,10 @@ class CBF:
                 # Bypassing & C2C
                 self.total_time = 2.6  # Total simulation time
 
-                self.lambda_cbf = 4  # Design parameter for CBF
+                self.lambda_cbf = 2  # Design parameter for CBF
                 self.evasion_step_start = 15
                 self.evasion_step_end = 25
-                self.evasive_offset = 0.5 * self.lane_width
+                self.evasive_offset = 0.8 * self.lane_width
 
                 self.w_acc = 1  # Weight for acceleration in QP
                 self.w_steer = 0.3  # Weight for steering rate in QP
@@ -286,15 +286,15 @@ class CBF:
                 )  # Weights for acceleration and steering rate
             else:
                 # Bypassing & MTV
-                self.total_time = 2.6  # Total simulation time
+                self.total_time = 3.0  # Total simulation time
 
-                self.lambda_cbf = 4  # Design parameter for CBF
+                self.lambda_cbf = 5  # Design parameter for CBF
                 self.evasion_step_start = 15
                 self.evasion_step_end = 40
-                self.evasive_offset = 0.6 * self.lane_width
+                self.evasive_offset = 0.7 * self.lane_width
 
                 self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 0.5  # Weight for steering rate in QP
+                self.w_steer = 1  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
@@ -464,14 +464,16 @@ class CBF:
                 device=self.device,
                 dtype=torch.float32,
             ),
-            v=torch.tensor(self.v_max, device=self.device, dtype=torch.float32),
+            v=self.v_max,
             rot=torch.tensor(2 * torch.pi, device=self.device, dtype=torch.float32),
             steering=self.steering_max,
             distance_ref=self.width * 2,
         )
 
     @staticmethod
-    def compute_relative_poses(x_ego, y_ego, psi_ego, x_target, y_target, psi_target):
+    def compute_relative_poses(
+        x_ego, y_ego, psi_ego, x_target, y_target, psi_target, sm_type
+    ):
         """
         Compute the relative poses (positions and heading) between the ego vehicle and the target.
 
@@ -492,6 +494,7 @@ class CBF:
         x_relative = distance * np.cos(psi_relative_coordinate)
         y_relative = distance * np.sin(psi_relative_coordinate)
 
+        # return dx, dy, psi_relative, distance
         return x_relative, y_relative, psi_relative, distance
 
     def estimate_safety_margin(self, x_relative, y_relative, psi_relative):
@@ -607,11 +610,17 @@ class CBF:
         )  # Each row corresponds to d^2 d / d input_i d input_j
 
         # Validation (consider numerical inaccuracies)
-        # assert(torch.allclose(grad_d_1st_order[0], x_ji / d))
-        # assert(torch.allclose(grad_d_1st_order[1], y_ji / d))
-        # assert(torch.allclose(hessian[1, 1], x_ji ** 2 / d ** 3))
-        # assert(torch.allclose(hessian[0, 0], y_ji ** 2 / d ** 3))
-        # assert(torch.allclose(hessian[0, 1], - x_ji * y_ji / d ** 3))
+        assert torch.allclose(grad_d_1st_order[0], x_ji / d, rtol=1e-3, atol=1e-3)
+
+        assert torch.allclose(grad_d_1st_order[1], y_ji / d, rtol=1e-3, atol=1e-3)
+
+        assert torch.allclose(hessian[1, 1], x_ji**2 / d**3, rtol=1e-3, atol=1e-3)
+
+        assert torch.allclose(hessian[0, 0], y_ji**2 / d**3, rtol=1e-3, atol=1e-3)
+
+        assert torch.allclose(
+            hessian[0, 1], -x_ji * y_ji / d**3, rtol=1e-3, atol=1e-3
+        )
 
         # Detach gradients to prevent further computation and convert to numpy
         return (
@@ -718,11 +727,31 @@ class CBF:
             ddot_h + 2 * self.lambda_cbf * dot_h + self.lambda_cbf**2 * h
         )
 
+        if self.step == 1:
+            # The first-order CBF condition and the CBF value at the first step should be greater than 0 to use the forward invariance property of CBF
+            assert cbf_condition_1 > 0
+            assert h > 0
+
         return h, dot_h, ddot_h, cbf_condition_1, cbf_condition_2
 
     def compute_state_time_derivatives(self, u_i, u_j):
+        """
+        Compute first and second order time derivatives of the relative states between vehicles i and j using global coordinates.
+
+        Args:
+            u_i: Control inputs [acceleration, steering rate] for vehicle i
+            u_j: Control inputs [acceleration, steering rate] for vehicle j
+
+        Returns:
+            dstate_time_ji: First derivatives of relative states j wrt i [dx, dy, dpsi]
+            ddstate_time_ji: Second derivatives of relative states j wrt i [ddx, ddy, ddpsi]
+            dstate_time_ij: First derivatives of relative states i wrt j [dx, dy, dpsi]
+            ddstate_time_ij: Second derivatives of relative states i wrt j [ddx, ddy, ddpsi]
+        """
         # Compute state time derivatives
-        self.dstate_time_i = self.kbm.ode(None, self.state_i, self.u_placeholder)
+        self.dstate_time_i = self.kbm.ode(
+            None, self.state_i, self.u_placeholder
+        )  # Since the time derivatives of x, y, and heading only depend on the states, we can simply ignore actions
         self.dstate_time_j = self.kbm.ode(None, self.state_j, self.u_placeholder)
 
         dstate_time_ji = (self.dstate_time_j - self.dstate_time_i)[0:3].numpy()
@@ -773,8 +802,8 @@ class CBF:
 
         ddpsi = (
             (u_1 / self.l_wb) * cos_beta * tan_delta
-            - (state[3].item() / self.l_wb) * sin_beta * tan_delta * dbeta
             + (state[3].item() / self.l_wb) * cos_beta * sec_delta_sq * u_2
+            - (state[3].item() / self.l_wb) * sin_beta * tan_delta * dbeta
         )
 
         return ddx, ddy, ddpsi
@@ -1024,6 +1053,7 @@ class CBF:
             self.state_j[0],
             self.state_j[1],
             self.state_j[2],
+            self.sm_type,
         )
         # Estimate safety margin and gradients
         sm_ji, grad_sm_ji, hessian_sm_ji = self.estimate_safety_margin(
@@ -1060,6 +1090,7 @@ class CBF:
                 self.state_i[0],
                 self.state_i[1],
                 self.state_i[2],
+                self.sm_type,
             )
             sm_ij, grad_sm_ij, hessian_sm_ij = self.estimate_safety_margin(
                 x_ij, y_ij, psi_ij
@@ -1085,7 +1116,7 @@ class CBF:
                 # u_i[0] <= self.a_max,
                 # self.steering_rate_min <= u_i[1],
                 # u_i[1] <= self.steering_rate_max,
-                cbf_condition_2_ij >= 0,
+                # cbf_condition_2_ij >= 0,
                 # self.a_min <= u_j[0],
                 # u_j[0] <= self.a_max,
                 # self.steering_rate_min <= u_j[1],
@@ -1110,14 +1141,7 @@ class CBF:
         # print(f"Cost: {prob.value:.4f}")
         if self.scenario_type.lower() == "overtaking":
             if prob.status != cp.OPTIMAL:
-                print(
-                    f"Warning: QP not solved optimally. Status: {prob.status} \n\n\n\n "
-                )
-                # Redefine nominal control inputs to be safe
-                rl_actions_i[0] = torch.clamp(rl_actions_i[0], 0, self.v_max / 10)
-                u_nominal_i = self.rl_acrion_to_u(
-                    rl_actions_i, self.state_i[3], self.state_i[4]
-                )
+                print(f"Warning: QP not solved optimally. Status: {prob.status}")
                 u_i_opt = u_nominal_i
             else:
                 u_i_opt = u_i.value
@@ -1169,6 +1193,7 @@ class CBF:
                 u_i_opt = u_i.value
                 u_j_opt = u_j.value
 
+            # Recompute CBF conditions with actual control actions
             (
                 dstate_time_ji_opt,
                 ddstate_time_ji_opt,
@@ -1194,6 +1219,14 @@ class CBF:
                 dstate_time_ij_opt, ddstate_time_ij_opt, x_ij, y_ij, psi_ij
             )
 
+            if abs(cbf_condition_2_ij_opt) < 1e-3:
+                print(f"Warning: 2nd-order CBF condition is zero")
+                ddot_h_ij_opt = (
+                    ddot_h_ij_opt
+                    + 2 * self.lambda_cbf * dot_h_ij_opt
+                    + self.lambda_cbf**2 * h_ij_opt
+                )
+
             # Append to lists
             self.list_h_ji.append(h_ji_opt)
             self.list_dot_h_ji.append(dot_h_ji_opt)
@@ -1206,14 +1239,6 @@ class CBF:
             self.list_cbf_condition_1_ij.append(cbf_condition_1_ij_opt)
             self.list_cbf_condition_2_ij.append(cbf_condition_2_ij_opt)
 
-            # Update state
-            # print(f"Nominal actions i: {u_nominal_i}")
-            # print(f"Optimized actions i: {u_i.value}")
-            # print(f"Nominal actions j: {u_nominal_j}")
-            # print(f"Optimized actions j: {u_j.value}")
-
-            # Print CBF details for debugging
-            # Recompute CBF conditions with actual control actions
             assert h_ji_opt == h_ji
             assert dot_h_ji_opt == dot_h_ji
             assert cbf_condition_1_ji_opt == cbf_condition_1_ji
@@ -1460,18 +1485,17 @@ class CBF:
         return obs, ref_points, ref_points_ego_view
 
     def rl_acrion_to_u(self, rl_actions, v, steering):
-        # Clamp
-        rl_actions[0] = torch.clamp(rl_actions[0], self.v_min, self.v_max)
-        rl_actions[1] = torch.clamp(rl_actions[1], self.steering_min, self.steering_max)
+        # rl_actions[0] = torch.clamp(rl_actions[0], self.v_min, self.v_max)
+        # rl_actions[1] = torch.clamp(rl_actions[1], self.steering_min, self.steering_max)
 
         # Convert from RL actions (speed and steering) to acceleration and steering rate used in the kinematic bicycle model needs
         # Assume linear acceleration and steering change
         u_acc = (rl_actions[0] - v) / self.dt
         u_steering_rate = (rl_actions[1] - steering) / self.dt
-        u_acc = torch.clamp(u_acc, self.a_min, self.a_max)
-        u_steering_rate = torch.clamp(
-            u_steering_rate, self.steering_rate_min, self.steering_rate_max
-        )
+        # u_acc = torch.clamp(u_acc, self.a_min, self.a_max)
+        # u_steering_rate = torch.clamp(
+        #     u_steering_rate, self.steering_rate_min, self.steering_rate_max
+        # )
         u_nominal = torch.tensor(
             [u_acc, u_steering_rate], device=self.device, dtype=torch.float32
         ).numpy()
@@ -1711,9 +1735,12 @@ class CBF:
         # Find the time step where the CBF value is minimum and add it to the time steps to be visualized
         min_cbf_value = min(self.list_h_ij)
         min_cbf_idx = self.list_h_ij.index(min_cbf_value)
-        time_steps_to_visualize = [min_cbf_idx] + time_steps_to_visualize
-        # Remove duplicates
-        time_steps_to_visualize = list(dict.fromkeys(time_steps_to_visualize))
+        # Add the time step where the CBF value is minimum and delete the time step that is most near the time step where the CBF value is minimum
+        near_min_cbf_idx = np.argmin(
+            np.abs(np.array(time_steps_to_visualize) - min_cbf_idx)
+        )
+        time_steps_to_visualize.remove(time_steps_to_visualize[near_min_cbf_idx])
+        time_steps_to_visualize.append(min_cbf_idx)
         # Rearrange time_steps_to_visualize in ascending order
         time_steps_to_visualize.sort()
 
@@ -1759,7 +1786,7 @@ class CBF:
                 ax1.text(
                     self.plot_x_min,
                     self.y_lane_top_bound + 0.05,
-                    "Steps:",
+                    "t:",
                     color=self.color_i,
                     horizontalalignment="left",
                     verticalalignment="center",
@@ -1768,7 +1795,7 @@ class CBF:
                 ax1.text(
                     self.plot_x_min,
                     self.y_lane_bottom_bound - 0.07,
-                    "Steps:",
+                    "t:",
                     color=self.color_j,
                     horizontalalignment="left",
                     verticalalignment="center",
@@ -1791,14 +1818,14 @@ class CBF:
             ax1.text(
                 center_i[0],
                 self.y_lane_top_bound + 0.05,
-                str(t),
+                f"{t*self.dt:.2f} s",
                 color=self.color_i,
                 **text_props,
             )
             ax1.text(
                 center_j[0],
                 self.y_lane_bottom_bound - 0.07,
-                str(t),
+                f"{t*self.dt:.2f} s",
                 color=self.color_j,
                 **text_props,
             )
@@ -1813,9 +1840,28 @@ class CBF:
 
         # Second subplot: CBF data
         x_i = [s[0] for s in self.list_state_i]  # x-positions as x-axis
-        x_data = x_i[0:-1]
+        # Time as x-axis
+        x_data = np.arange(0, len(self.list_h_ji)) * self.dt
+        # x_data = x_i[0:-1]
 
         # Plot CBF-related curves
+        ax2.plot(x_data, self.list_h_ji, label="CBF Value", linestyle="-", lw=2.0)
+        ax2.plot(
+            x_data,
+            self.list_dot_h_ji,
+            label="dot h",
+            linestyle="--",
+            marker="*",
+            lw=2.0,
+        )
+        ax2.plot(
+            x_data,
+            self.list_ddot_h_ji,
+            label="ddot h",
+            linestyle="-.",
+            marker="*",
+            lw=2.0,
+        )
         ax2.plot(
             x_data,
             self.list_cbf_condition_1_ji,
@@ -1831,34 +1877,70 @@ class CBF:
             lw=2.0,
         )
 
+        # # Calculate time derivatives and second order condition
+        # time_derivative_first_order_cbf_condition = np.diff(self.list_cbf_condition_1_ji) / self.dt
+        # x_data_derivative = x_data[1:]  # Shorter time array for derivatives
+        # # ax2.plot(x_data_derivative, time_derivative_first_order_cbf_condition,
+        # #          label="dot CBF_1 (manual)", linestyle="--", lw=2.0)
+
+        # time_derivative_cbf = np.diff(self.list_h_ji) / self.dt
+        # ax2.plot(x_data_derivative, time_derivative_cbf,
+        #          label="dot h (manual)", linestyle="--", lw=2.0)
+
+        # first_order_cbf_condition = time_derivative_cbf + self.lambda_cbf * np.array(self.list_h_ji[1:])
+        # ax2.plot(x_data_derivative, first_order_cbf_condition,
+        #          label="1st-Order CBF (manual)", linestyle="--", lw=2.0)
+
+        # # Use list_cbf_condition_1_ji[1:] to match the length of time_derivative_first_order_cbf_condition
+        # second_order_cbf_condition = (time_derivative_first_order_cbf_condition +
+        #                             self.lambda_cbf * np.array(self.list_cbf_condition_1_ji[1:]))
+        # ax2.plot(x_data_derivative, second_order_cbf_condition,
+        #          label="2nd-Order CBF (manual)", linestyle="-.", marker="+", lw=2.0)
+
         # Add curves for bypassing scenario
-        if self.scenario_type.lower() == "bypassing":
-            ax2.plot(x_data, self.list_h_ij, label="CBF Value", linestyle=":", lw=2.0)
-            ax2.plot(
-                x_data,
-                self.list_cbf_condition_1_ij,
-                label="1st-Order CBF Condition",
-                linestyle="--",
-                lw=2.0,
-            )
-            ax2.plot(
-                x_data,
-                self.list_cbf_condition_2_ij,
-                label="2nd-Order CBF Condition",
-                linestyle="-.",
-                lw=2.0,
-            )
+        # if self.scenario_type.lower() == "bypassing":
+        # ax2.plot(x_data, self.list_h_ij, label="CBF Value", linestyle="-", lw=2.0)
+        # ax2.plot(
+        #     x_data,
+        #     self.list_dot_h_ij,
+        #     label="dot h (j)",
+        #     linestyle="--",
+        #     marker="*",
+        #     lw=1.0,
+        # )
+        # ax2.plot(
+        #     x_data,
+        #     self.list_ddot_h_ij,
+        #     label="ddot h (j)",
+        #     linestyle="-.",
+        #     marker="*",
+        #     lw=2.0,
+        # )
+        # ax2.plot(
+        #     x_data,
+        #     self.list_cbf_condition_1_ij,
+        #     label="1st-Order CBF Condition (j)",
+        #     linestyle="--",
+        #     lw=2.0,
+        # )
+        # ax2.plot(
+        #     x_data,
+        #     self.list_cbf_condition_2_ij,
+        #     label="2nd-Order CBF Condition (j)",
+        #     linestyle="-.",
+        #     lw=2.0,
+        # )
 
         ax2.set_xlabel(r"x [m]")
         ax2.set_ylabel("CBF-Related Data")
         ax2.legend()
         ax2.grid(True)
-        ax2.set_xlim(self.plot_x_min, self.plot_x_max)
-        ax2.set_ylim((-0.2, 2.0))
+        # ax2.set_xlim(self.plot_x_min, self.plot_x_max)
+        ax2.set_xlim(0, x_data[-1])
+        ax2.set_ylim((-5, 10.0))
 
         if self.scenario_type.lower() == "bypassing":
-            # Print the maximum deviation in y-direction of each agent to the center line among all time steps
-            # Get the y-coordinates of all time steps
+            # Calculate and display the maximum lateral distance each agent deviates from the center line
             y_i = [s[1] for s in self.list_state_i]
             y_j = [s[1] for s in self.list_state_j]
             max_deviation_i = max(abs(np.array(y_i) - self.y_lane_center_line))
@@ -1868,18 +1950,17 @@ class CBF:
                 f" Vehicle i: {max_deviation_i:.4f} m; Vehicle j: {max_deviation_j:.4f} m; Mean: {(max_deviation_i + max_deviation_j) / 2:.4f} m"
             )
             print(print_str)
-            # Save the print output to a text file
-            file_name = f"max_deviation_{self.sm_type}.txt"
+            file_name = f"eval_cbf_bypassing_{self.sm_type}.txt"
             with open(file_name, "w") as file:
                 file.write(print_str)
-            # Print that a file has been saved
-            print(f"Maximum deviation data has been saved to {file_name}.")
+            print(f"A text file has been saved to {file_name}.")
 
         # Adjust layout and save
         plt.tight_layout()
         fig_name = f"eva_cbf_{self.scenario_type}_{self.sm_type}.pdf"
         plt.savefig(fig_name, bbox_inches="tight", dpi=300)
         plt.show()
+        print(f"A figure has been saved to {fig_name}.")
 
     def run(self):
         """
