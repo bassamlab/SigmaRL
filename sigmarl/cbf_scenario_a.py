@@ -89,9 +89,6 @@ class CBF:
 
         # Load safety margin estimator module
         self.load_safety_margin_estimator()
-        self.mtv_safety_buffer = (
-            self.SME.error_upper_bound
-        )  # Minimum safety distance (m), considering uncertainties such as safety-margin prediction errors
 
         self.compute_rectangles()
 
@@ -171,6 +168,9 @@ class CBF:
             0  # Number of times agent j successfully impedes agent i
         )
 
+        self.safety_buffer = 0
+        self.add_longitudinal_safety_buffer = False
+
         self.overtake_target_lane = None  # Agent 1's target lane for overtaking
         self.impede_target_lane = None  # Agent 2's target lane for bypassing
 
@@ -188,27 +188,31 @@ class CBF:
 
         self.threshold_within_lane = self.width / 2
         self.threshold_overtake = (
-            4 * self.length
+            3 * self.length
         )  # If agents' longitudinal distance is less than this value, one agent will overtake another agent, given they are within the same lane
+
+        self.threshold_impede = (
+            2 * self.length
+        )  # If agents' longitudinal distance is less than this value, agent j will impede agent i
 
         # Two scenarios are available:
         # (1) overtaking: the ego agent, controlled by a greedy RL policy with CBF verification,
         # needs to overtake its precede agent that moves slowly
         # (2) bypassing: two agents, both controlled by a greedy RL policy with CBF verification,
         # needs to bypass each other within a confined space
-        self.scenario_type = "bypassing"  # One of "overtaking" and "bypassing"
+        self.scenario_type = "overtaking"  # One of "overtaking" and "bypassing"
 
         # Two types of safety margin: center-center-based safety margin, Minimum Translation Vector (MTV)-based safety margin
-        self.sm_type = "c2c"  # One of "c2c" and "mtv"
+        self.sm_type = "mtv"  # One of "c2c" and "mtv"
 
         # CBF
         if self.scenario_type.lower() == "overtaking":
             # Initialize states ([x, y, psi, v, delta]) and goal states ([x, y])
             self.state_i = torch.tensor(
-                [-1, self.y_lane_2, 0, 1.0, 0.0], dtype=torch.float32
+                [-1.2, self.y_lane_2, 0, 1.0, 0.0], dtype=torch.float32
             )
             self.state_j = torch.tensor(
-                [0, self.y_lane_2, 0.0, 0.3, 0.0], dtype=torch.float32
+                [-0.4, self.y_lane_2, 0.0, 0.4, 0.0], dtype=torch.float32
             )
             self.goal_i = torch.tensor(
                 [10, self.y_lane_2], device=self.device, dtype=torch.float32
@@ -218,12 +222,12 @@ class CBF:
             )
 
             # Plot limits
-            self.plot_x_min = min(self.state_i[0].item(), self.state_j[0].item()) - 0.2
-            self.plot_x_max = 3
+            self.plot_x_min = min(self.state_i[0].item(), self.state_j[0].item()) - 0.25
+            self.plot_x_max = 3.5
             self.plot_y_min = self.y_lane_bottom_bound - 0.2
             self.plot_y_max = self.y_lane_top_bound + 0.2
 
-            self.visu_step_interval = 10
+            self.visu_step_interval = 12
 
             # Irrelevant
             self.evasion_step_start = None
@@ -232,19 +236,19 @@ class CBF:
 
             if self.sm_type.lower() == "c2c":
                 # Overtaking & C2C
-                self.total_time = 6.0  # Total simulation time
+                self.total_time = 7.0  # Total simulation time
                 self.lambda_cbf = 2  # Design parameter for CBF
                 self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 5  # Weight for steering rate in QP
+                self.w_steer = 1  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
             else:
                 # Overtaking & MTV
-                self.total_time = 5.5  # Total simulation time
-                self.lambda_cbf = 2  # Design parameter for CBF
+                self.total_time = 7.0  # Total simulation time
+                self.lambda_cbf = 2.0  # Design parameter for CBF
                 self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 5  # Weight for steering rate in QP
+                self.w_steer = 1  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
@@ -252,7 +256,7 @@ class CBF:
             # Initialize states ([x, y, psi, v, delta]) and goal states ([x, y])
             # In the bypassing scenario, two agents are facing each other
             self.state_i = torch.tensor(
-                [-1.2, self.y_lane_center_line, 0.0, 1.0, 0.0], dtype=torch.float32
+                [-1.2, self.y_lane_center_line, 0.0, 1.5, 0.0], dtype=torch.float32
             )
             self.state_j = torch.tensor(
                 [1.2, self.y_lane_center_line, -np.pi, 1.0, 0.0], dtype=torch.float32
@@ -268,19 +272,19 @@ class CBF:
             self.plot_y_min = self.y_lane_bottom_bound - 0.15
             self.plot_y_max = self.y_lane_top_bound + 0.15
 
-            self.visu_step_interval = 5
+            self.visu_step_interval = 6
 
             if self.sm_type.lower() == "c2c":
                 # Bypassing & C2C
-                self.total_time = 2.6  # Total simulation time
+                self.total_time = 3.8  # Total simulation time
 
-                self.lambda_cbf = 2  # Design parameter for CBF
-                self.evasion_step_start = 15
-                self.evasion_step_end = 25
-                self.evasive_offset = 0.8 * self.lane_width
+                self.lambda_cbf = 3  # Design parameter for CBF
+                self.evasion_step_start = 10
+                self.evasion_step_end = 50
+                self.evasive_offset = self.radius * 1.3
 
                 self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 0.3  # Weight for steering rate in QP
+                self.w_steer = 1  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
@@ -288,10 +292,10 @@ class CBF:
                 # Bypassing & MTV
                 self.total_time = 3.0  # Total simulation time
 
-                self.lambda_cbf = 5  # Design parameter for CBF
+                self.lambda_cbf = 6  # Design parameter for CBF
                 self.evasion_step_start = 15
                 self.evasion_step_end = 40
-                self.evasive_offset = 0.7 * self.lane_width
+                self.evasive_offset = 0.5 * self.lane_width
 
                 self.w_acc = 1  # Weight for acceleration in QP
                 self.w_steer = 1  # Weight for steering rate in QP
@@ -304,8 +308,8 @@ class CBF:
         self.list_state_i = [self.state_i.clone().numpy()]
         self.list_state_j = [self.state_j.clone().numpy()]
 
-        self.color_i = colors[0]
-        self.color_j = colors[1]
+        self.color_i = "tab:blue"
+        self.color_j = "tab:green"
 
         # RL policy
         self.rl_policy_path = "checkpoints/ecc25/higher_ref_penalty_5.pth"
@@ -708,10 +712,7 @@ class CBF:
         Returns:
             tuple: h, dot_h, ddot_h, cbf_condition_1, cbf_condition_2
         """
-        if self.sm_type.lower() == "c2c":
-            h = sm
-        else:
-            h = sm - self.mtv_safety_buffer
+        h = sm - self.safety_buffer
 
         # Compute dot_h
         dot_h = grad_sm @ dstate_time
@@ -736,7 +737,7 @@ class CBF:
 
     def compute_state_time_derivatives(self, u_i, u_j):
         """
-        Compute first and second order time derivatives of the relative states between vehicles i and j using global coordinates.
+        Compute first and second order time derivatives of the relative states between vehicles i and j using global coordinate system.
 
         Args:
             u_i: Control inputs [acceleration, steering rate] for vehicle i
@@ -754,7 +755,7 @@ class CBF:
         )  # Since the time derivatives of x, y, and heading only depend on the states, we can simply ignore actions
         self.dstate_time_j = self.kbm.ode(None, self.state_j, self.u_placeholder)
 
-        dstate_time_ji = (self.dstate_time_j - self.dstate_time_i)[0:3].numpy()
+        dstate_time_ji_global = (self.dstate_time_j - self.dstate_time_i)[0:3].numpy()
 
         ddx_i, ddy_i, ddpsi_i = self.compute_dstate_2nd_time(
             u_i, self.state_i, self.dstate_time_i
@@ -770,12 +771,69 @@ class CBF:
 
         # Compute second derivatives for vehicle i
         # Extract control inputs
-        ddstate_time_ji = [ddx_ji, ddy_ji, ddpsi_ji]
+        ddstate_time_ji_global = [ddx_ji, ddy_ji, ddpsi_ji]
 
-        dstate_time_ij = -dstate_time_ji
-        ddstate_time_ij = [-expr for expr in ddstate_time_ji]
+        dstate_time_ij_global = -dstate_time_ji_global
+        ddstate_time_ij_global = [-expr for expr in ddstate_time_ji_global]
 
-        return dstate_time_ji, ddstate_time_ji, dstate_time_ij, ddstate_time_ij
+        # Convert from the global coordinate system to the ego coordinate system
+        cos_psi = np.cos(self.state_i[2].item())
+        sin_psi = np.sin(self.state_i[2].item())
+
+        x_ji_global, y_ji_global, psi_ji_global = (
+            self.state_j[0:3] - self.state_i[0:3]
+        ).numpy()
+
+        [dx_ji_global, dy_ji_global, dpsi_ji_global] = dstate_time_ji_global
+        [ddx_ji_global, ddy_ji_global, ddpsi_ji_global] = ddstate_time_ji_global
+
+        dx_ji_ego = (
+            cos_psi * dx_ji_global
+            - x_ji_global * sin_psi * dpsi_ji_global
+            + sin_psi * dy_ji_global
+            + y_ji_global * cos_psi * dpsi_ji_global
+        )
+        ddx_ji_ego = (
+            cos_psi * ddx_ji_global
+            - 2 * dx_ji_global * sin_psi * dpsi_ji_global
+            - x_ji_global * cos_psi * dpsi_ji_global**2
+            - x_ji_global * sin_psi * ddpsi_ji_global
+            + sin_psi * ddy_ji_global
+            + 2 * dy_ji_global * cos_psi * dpsi_ji_global
+            - y_ji_global * sin_psi * dpsi_ji_global**2
+            + y_ji_global * cos_psi * ddpsi_ji_global
+        )
+        dy_ji_ego = (
+            cos_psi * dy_ji_global
+            - y_ji_global * sin_psi * dpsi_ji_global
+            - sin_psi * dx_ji_global
+            - x_ji_global * cos_psi * dpsi_ji_global
+        )
+        ddy_ji_ego = (
+            cos_psi * ddy_ji_global
+            - 2 * dy_ji_global * sin_psi * dpsi_ji_global
+            - y_ji_global * cos_psi * dpsi_ji_global**2
+            - y_ji_global * sin_psi * ddpsi_ji_global
+            - sin_psi * ddx_ji_global
+            - 2 * dx_ji_global * cos_psi * dpsi_ji_global
+            + x_ji_global * sin_psi * dpsi_ji_global**2
+            - x_ji_global * cos_psi * ddpsi_ji_global
+        )
+        dpsi_ji_ego = dpsi_ji_global
+        ddpsi_ji_ego = ddpsi_ji_global
+
+        dstate_time_ji_ego = np.array([dx_ji_ego, dy_ji_ego, dpsi_ji_ego])
+        ddstate_time_ji_ego = [ddx_ji_ego, ddy_ji_ego, ddpsi_ji_ego]
+
+        dstate_time_ij_ego = -dstate_time_ji_ego
+        ddstate_time_ij_ego = [-expr for expr in ddstate_time_ji_ego]
+
+        return (
+            dstate_time_ji_ego,
+            ddstate_time_ji_ego,
+            dstate_time_ij_ego,
+            ddstate_time_ij_ego,
+        )
 
     def compute_dstate_2nd_time(self, u, state, dstate_time):
         u_1, u_2 = u  # Acceleration and steering rate
@@ -1038,7 +1096,7 @@ class CBF:
         else:
             u_j = cp.Variable(2)
 
-        # State derivative to time
+        # State derivative to time in global coordinate system
         (
             dstate_time_ji,
             ddstate_time_ji,
@@ -1046,6 +1104,7 @@ class CBF:
             ddstate_time_ij,
         ) = self.compute_state_time_derivatives(u_i, u_j)
 
+        # Compute relative poses between vehicles i and j in ego coordinate system
         x_ji, y_ji, psi_ji, _ = self.compute_relative_poses(
             self.state_i[0],
             self.state_i[1],
@@ -1112,15 +1171,15 @@ class CBF:
             )
             constraints = [
                 cbf_condition_2_ji >= 0,
-                # self.a_min <= u_i[0],
-                # u_i[0] <= self.a_max,
-                # self.steering_rate_min <= u_i[1],
-                # u_i[1] <= self.steering_rate_max,
+                self.a_min <= u_i[0],
+                u_i[0] <= self.a_max,
+                self.steering_rate_min <= u_i[1],
+                u_i[1] <= self.steering_rate_max,
                 # cbf_condition_2_ij >= 0,
-                # self.a_min <= u_j[0],
-                # u_j[0] <= self.a_max,
-                # self.steering_rate_min <= u_j[1],
-                # u_j[1] <= self.steering_rate_max,
+                self.a_min <= u_j[0],
+                u_j[0] <= self.a_max,
+                self.steering_rate_min <= u_j[1],
+                u_j[1] <= self.steering_rate_max,
             ]
 
         # Solve QP to get optimal control inputs for vehicle i
@@ -1164,7 +1223,10 @@ class CBF:
             )
 
             # Append to lists
-            self.list_h_ji.append(h_ji_opt)
+            if self.add_longitudinal_safety_buffer:
+                self.list_h_ji.append(h_ji_opt + self.length / 4)
+            else:
+                self.list_h_ji.append(h_ji_opt)
             self.list_dot_h_ji.append(dot_h_ji_opt)
             self.list_ddot_h_ji.append(ddot_h_ji_opt)
             self.list_cbf_condition_1_ji.append(cbf_condition_1_ji_opt)
@@ -1347,10 +1409,16 @@ class CBF:
             )
 
         # Before actual overtaking, purposely use a larger safety buffer to ensure enough longitudinal distance; when actual overtaking, switch to a smaller safety buffer, which equals the upper bound of the safety margin estimation error
-        if self.n_success_impede < self.impede_times_max:
-            self.mtv_safety_buffer = self.length
+        if (
+            self.scenario_type.lower() == "overtaking"
+            and self.sm_type.lower() == "mtv"
+            and self.n_success_impede < self.impede_times_max
+        ):
+            self.safety_buffer = self.SME.error_upper_bound + self.length / 4
+            self.add_longitudinal_safety_buffer = True
         else:
-            self.mtv_safety_buffer = self.SME.error_upper_bound
+            self.safety_buffer = self.SME.error_upper_bound
+            self.add_longitudinal_safety_buffer = False
 
         # Agent i will continue impeding agent j if it was previously in an impeding state, or it starts impeding if the following conditions are satisfied
         # Condition 1: agent i is on an overtaking
@@ -1360,11 +1428,17 @@ class CBF:
             impede_condition_2 = False
         else:
             impede_condition_2 = True
+        # Condition 3: their longitudinal distance is less than a threshold
+        impede_condition_3 = (
+            self.state_i[0] - self.state_j[0]
+        ).abs().item() < self.threshold_impede
         if self.list_is_impede[-1]:
             # Continue impeding
             self.is_impede = True
         else:
-            self.is_impede = impede_condition_1 and impede_condition_2
+            self.is_impede = (
+                impede_condition_1 and impede_condition_2 and impede_condition_3
+            )
         if self.impede_target_lane is None:
             self.impede_target_lane = self.overtake_target_lane
 
@@ -1713,14 +1787,14 @@ class CBF:
         2. CBF-related data including barrier functions and CBF conditions
         """
         # Create figure with 2x1 subplots
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 5), height_ratios=[1, 1])
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 4), height_ratios=[1, 1])
 
         # Plot lane boundaries and center line
         ax1.axhline(
             y=self.y_lane_bottom_bound, color="k", linestyle="-", lw=1.0
         )  # Bottom lane boundary
         ax1.axhline(
-            y=self.y_lane_center_line, color="k", linestyle="--", lw=1.0
+            y=self.y_lane_center_line, color="gray", linestyle="--", lw=1.0, alpha=0.4
         )  # Center line
         ax1.axhline(
             y=self.y_lane_top_bound, color="k", linestyle="-", lw=1.0
@@ -1728,29 +1802,52 @@ class CBF:
 
         # Create a list of time steps to be visualized
         time_steps_to_visualize = np.arange(
-            0, len(self.list_h_ij), self.visu_step_interval
+            0, len(self.list_h_ji), self.visu_step_interval
         ).tolist()
-        # # Include the final time step
-        # time_steps_to_visualize.append(len(self.list_h_ij) - 1)
+        if self.scenario_type.lower() == "overtaking":
+            # Include the final time step
+            time_steps_to_visualize.append(len(self.list_h_ji) - 1)
         # Find the time step where the CBF value is minimum and add it to the time steps to be visualized
-        min_cbf_value = min(self.list_h_ij)
-        min_cbf_idx = self.list_h_ij.index(min_cbf_value)
+        min_cbf_value = min(self.list_h_ji)
+        t_min_cbf_idx = self.list_h_ji.index(min_cbf_value)
+
         # Add the time step where the CBF value is minimum and delete the time step that is most near the time step where the CBF value is minimum
         near_min_cbf_idx = np.argmin(
-            np.abs(np.array(time_steps_to_visualize) - min_cbf_idx)
+            np.abs(np.array(time_steps_to_visualize) - t_min_cbf_idx)
         )
         time_steps_to_visualize.remove(time_steps_to_visualize[near_min_cbf_idx])
-        time_steps_to_visualize.append(min_cbf_idx)
+
+        time_steps_to_visualize.append(t_min_cbf_idx)
         # Rearrange time_steps_to_visualize in ascending order
         time_steps_to_visualize.sort()
 
+        # Hide a fixed number of time texts for rectangles before the minimum CBF timestep
+        if self.scenario_type.lower() == "overtaking":
+            if self.sm_type.lower() == "c2c":
+                n_time_texts_to_hide = 0
+            else:
+                n_time_texts_to_hide = 0
+        else:
+            if self.sm_type.lower() == "c2c":
+                n_time_texts_to_hide = 3
+            else:
+                n_time_texts_to_hide = 2
+
+        # Find the index of the time step to hide
+        # find where is min_cbf_idx in time_steps_to_visualize
+        min_cbf_idx = time_steps_to_visualize.index(t_min_cbf_idx)
+        t_hide_text = time_steps_to_visualize[
+            min_cbf_idx - n_time_texts_to_hide : min_cbf_idx
+        ]
+
         # Plot rectangles for each timestep with fading colors
         n_steps = len(self.list_rectangles_i)
-        for t in time_steps_to_visualize:
+        for t_idx in range(len(time_steps_to_visualize)):
+            t = time_steps_to_visualize[t_idx]
             # Calculate alpha (transparency) based on timestep
-            alpha = 0.1 + 0.9 * (t / n_steps)
+            alpha = 0.2 + 0.8 * (t / n_steps)
 
-            alpha_text = np.clip(alpha * 1.2, 0.0, 1.0)
+            alpha_text = np.clip(alpha * 1.5, 0.0, 1.0)
 
             # Get vertices for both agents at timestep t
             vertices_i = self.list_rectangles_i[t].numpy()
@@ -1772,20 +1869,38 @@ class CBF:
             center_j = self.list_state_j[t][0:2]
 
             # Visualize circles with a radius of self.radius for C2C safety margin visualization
-            circle_i = plt.Circle(
-                center_i, self.radius, color=self.color_i, fill=False, alpha=alpha
-            )
-            ax1.add_patch(circle_i)
-            circle_j = plt.Circle(
-                center_j, self.radius, color=self.color_j, fill=False, alpha=alpha
-            )
-            ax1.add_patch(circle_j)
+            linestyle = "-" if t == t_min_cbf_idx else "--"
+            lw = 1.0 if t == t_min_cbf_idx else 1.0
+            alpha = 0.5 if t == t_min_cbf_idx else 0.3
+
+            for center, color in [(center_i, self.color_i), (center_j, self.color_j)]:
+                circle = plt.Circle(
+                    center,
+                    self.radius,
+                    color=color,
+                    fill=False,
+                    linestyle=linestyle,
+                    lw=lw,
+                    alpha=alpha,
+                )
+                ax1.add_patch(circle)
+
+            if self.scenario_type.lower() == "overtaking":
+                text_y_pos_i = self.y_lane_bottom_bound - 0.07
+                text_y_pos_j = self.y_lane_top_bound + 0.05
+                text_y_pos_i_0 = self.y_lane_bottom_bound - 0.068
+                text_y_pos_j_0 = self.y_lane_top_bound + 0.05
+            else:
+                text_y_pos_i = self.y_lane_top_bound + 0.05
+                text_y_pos_j = self.y_lane_bottom_bound - 0.07
+                text_y_pos_i_0 = self.y_lane_top_bound + 0.05
+                text_y_pos_j_0 = self.y_lane_bottom_bound - 0.068
 
             # Add timestep text near each rectangle
             if t == 0:
                 ax1.text(
-                    self.plot_x_min,
-                    self.y_lane_top_bound + 0.05,
+                    self.plot_x_min + 0.05,
+                    text_y_pos_i_0,
                     "t:",
                     color=self.color_i,
                     horizontalalignment="left",
@@ -1793,8 +1908,8 @@ class CBF:
                     fontsize=9,
                 )
                 ax1.text(
-                    self.plot_x_min,
-                    self.y_lane_bottom_bound - 0.07,
+                    self.plot_x_min + 0.05,
+                    text_y_pos_j_0,
                     "t:",
                     color=self.color_j,
                     horizontalalignment="left",
@@ -1811,31 +1926,40 @@ class CBF:
             }
 
             # Add fontweight='bold' if this is the min CBF timestep
-            if t == min_cbf_idx:
+            if t == t_min_cbf_idx:
                 text_props["fontweight"] = "bold"
 
-            # Add timestep text for both agents
-            ax1.text(
-                center_i[0],
-                self.y_lane_top_bound + 0.05,
-                f"{t*self.dt:.2f} s",
-                color=self.color_i,
-                **text_props,
-            )
-            ax1.text(
-                center_j[0],
-                self.y_lane_bottom_bound - 0.07,
-                f"{t*self.dt:.2f} s",
-                color=self.color_j,
-                **text_props,
-            )
+            if t not in t_hide_text:
+                # Add timestep text for both agents
+                ax1.text(
+                    center_i[0],
+                    text_y_pos_i,
+                    f"{t*self.dt:.1f} s",
+                    color=self.color_i,
+                    **text_props,
+                )
+                ax1.text(
+                    center_j[0],
+                    text_y_pos_j,
+                    f"{t*self.dt:.1f} s",
+                    color=self.color_j,
+                    **text_props,
+                )
 
         # Set equal aspect ratio and limits
         ax1.set_aspect("equal")
         ax1.set_xlim(self.plot_x_min, self.plot_x_max)
         ax1.set_ylim(self.plot_y_min, self.plot_y_max)
-        ax2.set_xlabel(r"x [m]")
-        ax1.set_ylabel(r"y [m]")
+        xticks = np.arange(self.list_state_i[0][0], self.list_state_i[-1][0], 0.4)
+        xticks = np.round(xticks, decimals=1)
+        # Convert 0.0 to 0 in xticks
+        xticks = np.array([0 if x == 0 else x for x in xticks])
+        ax1.set_xticks(xticks)
+        ax1.set_yticks(
+            [round(self.y_lane_bottom_bound, 2), 0, round(self.y_lane_top_bound, 2)]
+        )
+        ax1.set_xlabel(r"$x$ [m]")
+        ax1.set_ylabel(r"$y$ [m]")
         ax1.grid(False)
 
         # Second subplot: CBF data
@@ -1845,23 +1969,25 @@ class CBF:
         # x_data = x_i[0:-1]
 
         # Plot CBF-related curves
-        ax2.plot(x_data, self.list_h_ji, label="CBF Value", linestyle="-", lw=2.0)
-        ax2.plot(
-            x_data,
-            self.list_dot_h_ji,
-            label="dot h",
-            linestyle="--",
-            marker="*",
-            lw=2.0,
-        )
-        ax2.plot(
-            x_data,
-            self.list_ddot_h_ji,
-            label="ddot h",
-            linestyle="-.",
-            marker="*",
-            lw=2.0,
-        )
+        ax2.plot(x_data, self.list_h_ji, label="CBF", linestyle="-", lw=2.0)
+        # ax2.plot(
+        #     x_data,
+        #     self.list_dot_h_ji,
+        #     label="dot h",
+        #     linestyle="--",
+        #     marker="*",
+        #     lw=1.0,
+        #     alpha=0.2,
+        # )
+        # ax2.plot(
+        #     x_data,
+        #     self.list_ddot_h_ji,
+        #     label="ddot h",
+        #     linestyle="-.",
+        #     marker="*",
+        #     lw=1.0,
+        #     alpha=0.2,
+        # )
         ax2.plot(
             x_data,
             self.list_cbf_condition_1_ji,
@@ -1931,13 +2057,20 @@ class CBF:
         #     lw=2.0,
         # )
 
-        ax2.set_xlabel(r"x [m]")
-        ax2.set_ylabel("CBF-Related Data")
-        ax2.legend()
+        ax2.set_xlabel(r"$t$ [s]")
+        ax2.set_ylabel("CBF and CBF Conditions")
+        ax2.legend(loc="upper right")
         ax2.grid(True)
-        # ax2.set_xlim(self.plot_x_min, self.plot_x_max)
         ax2.set_xlim(0, x_data[-1])
-        ax2.set_ylim((-5, 10.0))
+        if self.scenario_type.lower() == "overtaking":
+            ax2.set_ylim((-0.2, 2.0))
+        else:
+            ax2.set_ylim((-0.2, 5.0))
+
+        opt_time_str = (
+            f"Mean optimization time per step: {np.mean(self.list_opt_duration):.4f} s."
+        )
+        print(opt_time_str)
 
         if self.scenario_type.lower() == "bypassing":
             # Calculate and display the maximum lateral distance each agent deviates from the center line
@@ -1952,13 +2085,20 @@ class CBF:
             print(print_str)
             file_name = f"eval_cbf_bypassing_{self.sm_type}.txt"
             with open(file_name, "w") as file:
-                file.write(print_str)
+                file.write(print_str + "\n")
+                file.write(opt_time_str + "\n")
+            print(f"A text file has been saved to {file_name}.")
+        else:
+            # Save optimization time to file
+            file_name = f"eval_cbf_overtaking_{self.sm_type}.txt"
+            with open(file_name, "w") as file:
+                file.write(opt_time_str + "\n")
             print(f"A text file has been saved to {file_name}.")
 
         # Adjust layout and save
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 1, 1])
         fig_name = f"eva_cbf_{self.scenario_type}_{self.sm_type}.pdf"
-        plt.savefig(fig_name, bbox_inches="tight", dpi=300)
+        plt.savefig(fig_name, bbox_inches="tight", dpi=450)
         plt.show()
         print(f"A figure has been saved to {fig_name}.")
 
@@ -1981,9 +2121,6 @@ def main():
     simulation = CBF()
     simulation.run()
     simulation.plot_cbf_curve()
-    print(
-        f"Mean optimization time per step: {np.mean(simulation.list_opt_duration)} s."
-    )
 
 
 if __name__ == "__main__":
