@@ -301,8 +301,8 @@ class MAPPOCAVs:
         with torch.no_grad():
             decision_making_module.GAE(
                 tensordict_data,
-                params=decision_making_module.loss_module.critic_params,
-                target_params=decision_making_module.loss_module.target_critic_params,
+                params=decision_making_module.loss_module.critic_network_params,
+                target_params=decision_making_module.loss_module.target_critic_network_params,
             )
             if (
                 priority_module
@@ -310,8 +310,8 @@ class MAPPOCAVs:
             ):
                 priority_module.GAE(
                     tensordict_data,
-                    params=priority_module.loss_module.critic_params,
-                    target_params=priority_module.loss_module.target_critic_params,
+                    params=priority_module.loss_module.critic_network_params,
+                    target_params=priority_module.loss_module.target_network_critic_params,
                 )
 
     def _update_priorities(self, tensordict_data):
