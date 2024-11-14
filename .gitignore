@@ -4,7 +4,8 @@
 
 # User-specific stuff
 outputs
-checkpoints
+checkpoints/*
+!checkpoints/.gitkeep
 *_tmp
 note*.md
 *tmp_[0-9].*
@@ -14,6 +15,7 @@ tmp
 *.pth
 venv/
 *.pdf
+*.txt
 
 # Distribution / packaging
 .Python
