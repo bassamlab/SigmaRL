@@ -226,10 +226,10 @@ AGENTS = {
     "max_speed_achievable": 1.0,  # [m/s]
     "max_steering": math.pi / 4,  # [radian]
     "min_steering": -math.pi / 4,  # [radian]
-    "max_acc": 4.0,  # [m/s^2]
-    "min_acc": -4.0,  # [m/s^2]
-    "max_steering_rate": 2 * math.pi,  # [radian/s]
-    "min_steering_rate": -2 * math.pi,  # [radian/s]
+    "max_acc": 20.0,  # [m/s^2]
+    "min_acc": -20.0,  # [m/s^2]
+    "max_steering_rate": 5 * math.pi,  # [radian/s]
+    "min_steering_rate": -5 * math.pi,  # [radian/s]
     "n_actions": 2,
 }
 
