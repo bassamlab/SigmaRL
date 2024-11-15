@@ -28,27 +28,11 @@ from torchrl.data.replay_buffers.storages import LazyTensorStorage
 
 # Env
 from torchrl.envs import RewardSum
-from torchrl.envs.utils import (
-    check_env_specs,
-)
 
 # Utils
 from tqdm import tqdm
 
 import os
-
-import matplotlib.pyplot as plt
-
-# Scientific plotting
-import scienceplots  # Do not remove (https://github.com/garrettj403/SciencePlots)
-
-plt.rcParams.update(
-    {"figure.dpi": "100"}
-)  # Avoid DPI problem (https://github.com/garrettj403/SciencePlots/issues/60)
-plt.style.use(
-    ["science", "ieee"]
-)  # The science + ieee styles for IEEE papers (can also be one of 'ieee' and 'science' )
-# print(plt.style.available) # List all available style
 
 from torchrl.envs.libs.vmas import VmasEnv
 
@@ -61,7 +45,6 @@ from sigmarl.helper_training import (
     find_the_highest_reward_among_all_models,
     save,
     compute_td_error,
-    get_observation_key,
 )
 
 from sigmarl.scenarios.road_traffic import ScenarioRoadTraffic

@@ -8,16 +8,9 @@ import matplotlib.pyplot as plt
 
 from abc import ABC, abstractmethod
 
-# Scientific plotting
-# import scienceplots
-# plt.rcParams.update({'figure.dpi': '100'}) # Avoid DPI problem (https://github.com/garrettj403/SciencePlots/issues/60)
-# plt.style.use(['science','ieee']) # The science + ieee styles for IEEE papers (can also be one of 'ieee' and 'science' )
-
 from sigmarl.colors import (
     Color,
-)  # Do not remove (https://github.com/garrettj403/SciencePlots)
-
-# print(plt.style.available) # List all available style
+)
 
 from sigmarl.constants import SCENARIOS, AGENTS, THRESHOLD
 

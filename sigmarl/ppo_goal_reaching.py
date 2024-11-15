@@ -38,17 +38,14 @@ from tqdm import tqdm
 import os
 
 import matplotlib.pyplot as plt
+import matplotlib
 
-# Scientific plotting
-import scienceplots  # Do not remove (https://github.com/garrettj403/SciencePlots)
-
-plt.rcParams.update(
-    {"figure.dpi": "100"}
-)  # Avoid DPI problem (https://github.com/garrettj403/SciencePlots/issues/60)
-plt.style.use(
-    ["science", "ieee"]
-)  # The science + ieee styles for IEEE papers (can also be one of 'ieee' and 'science' )
-# print(plt.style.available) # List all available style
+# Set up font
+matplotlib.rcParams["pdf.fonttype"] = 42  # Use Type 1 fonts (vector fonts)
+matplotlib.rcParams["font.family"] = "serif"
+matplotlib.rcParams["font.serif"] = ["Times New Roman"]
+matplotlib.rcParams.update({"font.size": 11})  # Set global font size
+plt.rcParams["text.usetex"] = True
 
 from torchrl.envs.libs.vmas import VmasEnv
 
