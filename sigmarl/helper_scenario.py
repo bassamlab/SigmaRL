@@ -825,7 +825,7 @@ def get_distances_between_agents(
                 axes_norm_j = axes_norm_all[:, j]
 
                 # 1. Project each of the four vertices of rectangle i and all the four vertices of rectangle j to each of the two axes of rectangle j.
-                # 2. The distance from a vertex of rectangle i to rectangle j is calculated by taking the Euclidean distance of the "gaps" on the two axes of rectangle j between the projected point of this vertex on the axes and the projected points of rectangle j. If the projected point of this vertex lies inside the projection of rectangle j, the gap is consider zero.
+                # 2. The distance from a vertex of rectangle i to rectangle j is calculated by taking the Euclidean distance of the "gaps" on the two axes of rectangle j between the projected point of this vertex on the axes and the projected points of rectangle j. If the projected point of this vertex lies inside the projection of rectangle j, the gap is consider zero. If the projections of a vertex to both axes of rectangle j are inside the projection of rectangle j, this vertex is considered inside rectangle j. In this case, the distance is a negative value indicating the shortest distance that this vertex should move to be outside rectangle j, while its other three vertices are still outside rectangle j.
                 # 3. Steps 1 and 2 give us four distances. Repeat these two step for rectangle j, which give us another four distances.
                 # 4. The mtv-based distance between the two rectangles is the smallest distance among the eight distances.
 
@@ -842,13 +842,19 @@ def get_distances_between_agents(
                 max_ij, _ = torch.max(projection_ij, dim=1)
                 min_ij, _ = torch.min(projection_ij, dim=1)
 
-                MTVs_ij = (projection_ij - min_jj.unsqueeze(1)) * (
+                MTVs_ij_positive = (projection_ij - min_jj.unsqueeze(1)) * (
                     projection_ij <= min_jj.unsqueeze(1)
                 ) + (max_jj.unsqueeze(1) - projection_ij) * (
                     projection_ij >= max_jj.unsqueeze(1)
                 )
-
-                MTVs_ij_Euclidean = torch.norm(MTVs_ij, dim=2)
+                MTVs_ij_Euclidean_positive = torch.norm(MTVs_ij_positive, dim=2)
+                # Overlap of the projections on the axes of rectangle j
+                overlap_j = torch.min(max_jj, max_ij) - torch.max(min_jj, min_ij)
+                MTVs_ij_Euclidean_negative = -overlap_j.min(dim=-1)[0].unsqueeze(-1) * (
+                    (projection_ij > min_jj.unsqueeze(1))
+                    * (projection_ij < max_jj.unsqueeze(1))
+                ).all(dim=-1)
+                # MTVs_ij_Euclidean = MTVs_ij_Euclidean_positive + MTVs_ij_Euclidean_negative
 
                 # Project rectangle i to its own axes
                 projection_ii = (
@@ -862,27 +868,42 @@ def get_distances_between_agents(
                 ).sum(dim=3)
                 max_ji, _ = torch.max(projection_ji, dim=1)
                 min_ji, _ = torch.min(projection_ji, dim=1)
-                MTVs_ji = (projection_ji - min_ii.unsqueeze(1)) * (
+                MTVs_ji_positive = (projection_ji - min_ii.unsqueeze(1)) * (
                     projection_ji <= min_ii.unsqueeze(1)
                 ) + (max_ii.unsqueeze(1) - projection_ji) * (
                     projection_ji >= max_ii.unsqueeze(1)
                 )
-                MTVs_ij_Euclidean = torch.norm(MTVs_ji, dim=2)
+                MTVs_ji_Euclidean_positive = torch.norm(MTVs_ji_positive, dim=2)
+                overlap_i = torch.min(max_ii, max_ji) - torch.max(min_ii, min_ji)
+
+                MTVs_ji_Euclidean_negative = -overlap_i.min(dim=1)[0].unsqueeze(-1) * (
+                    (projection_ji > min_ii.unsqueeze(1))
+                    * (projection_ji < max_ii.unsqueeze(1))
+                ).all(dim=-1)
 
                 # The distance from rectangle j to rectangle i is calculated as the Euclidean distance of the two lengths of the MTVs on the two axes of rectangle i
                 distance_ji, _ = torch.min(
-                    torch.hstack((MTVs_ij_Euclidean, MTVs_ij_Euclidean)), dim=1
+                    torch.hstack(
+                        (MTVs_ij_Euclidean_positive, MTVs_ji_Euclidean_positive)
+                    ),
+                    dim=1,
                 )
+                is_negative_distance = (MTVs_ij_Euclidean_negative.abs() > 0).any(
+                    dim=-1
+                ) | (MTVs_ji_Euclidean_negative.abs() > 0).any(dim=-1)
+                distance_ji[is_negative_distance] = -torch.min(
+                    overlap_j.min(dim=1)[0], overlap_i.min(dim=1)[0]
+                )[is_negative_distance]
 
-                # Check rectangles are overlapping
-                is_projection_overlapping = torch.hstack(
-                    (
-                        (max_ii >= min_ji) & (min_ii <= max_ji),
-                        (max_jj >= min_ij) & (min_jj <= max_ij),
-                    )
-                )
-                is_overlapping = torch.all(is_projection_overlapping, dim=1)
-                distance_ji[is_overlapping] = 0  # Rectangles are overlapping
+                # # Check rectangles are overlapping
+                # is_projection_overlapping = torch.hstack(
+                #     (
+                #         (max_ii >= min_ji) & (min_ii <= max_ji),
+                #         (max_jj >= min_ij) & (min_jj <= max_ij),
+                #     )
+                # )
+                # is_overlapping = torch.all(is_projection_overlapping, dim=1)
+                # distance_ji[is_overlapping] = 0  # Rectangles are overlapping
 
                 mutual_distances[
                     :, i, j
