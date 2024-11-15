@@ -27,7 +27,6 @@ from torchrl.envs.utils import (
     set_exploration_type,
     _terminated_or_truncated,
     step_mdp,
-    _convert_exploration_type,
     ExplorationType,
 )
 from torchrl.envs.common import EnvBase
@@ -78,6 +77,15 @@ def get_model_name(parameters):
     model_name = f"reward{parameters.episode_reward_mean_current:.2f}"
 
     return model_name
+
+
+##################################################
+## Legacy TorchRL code
+##################################################
+def _convert_exploration_type(*, exploration_mode, exploration_type):
+    if exploration_mode is not None:
+        return ExplorationType.from_str(exploration_mode)
+    return exploration_type
 
 
 ##################################################
