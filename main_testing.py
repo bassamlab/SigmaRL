@@ -14,8 +14,7 @@ from sigmarl.ppo_goal_reaching import ppo_goal_reaching
 
 from sigmarl.constants import SCENARIOS
 
-path = "outputs/test_tmp/"
-# path = "checkpoints/itsc24/M0 (our)"
+path = "checkpoints/itsc24/M0 (our)"
 
 try:
     path_to_json_file = next(

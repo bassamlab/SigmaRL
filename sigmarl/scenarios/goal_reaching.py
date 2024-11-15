@@ -5,7 +5,7 @@
 
 # Add project root to system path
 import time
-from termcolor import colored, cprint
+from termcolor import colored
 
 import torch
 from torch import Tensor
@@ -13,9 +13,6 @@ import torch.nn.functional as F
 from typing import Dict
 
 from vmas.simulator import rendering
-
-# Enable anomaly detection
-# torch.autograd.set_detect_anomaly(True)
 
 import matplotlib.pyplot as plt
 
@@ -35,21 +32,14 @@ from sigmarl.helper_scenario import (
     Normalizers,
     Observations,
     Penalties,
-    ReferencePathsAgentRelated,
-    ReferencePathsMapRelated,
     Rewards,
     Thresholds,
     Timer,
     Constants,
     StateBuffer,
-    exponential_decreasing_fcn,
-    get_distances_between_agents,
     get_perpendicular_distances,
     get_rectangle_vertices,
-    get_short_term_reference_path,
-    interX,
     angle_eliminate_two_pi,
-    transform_from_global_to_local_coordinate,
 )
 
 from sigmarl.constants import SCENARIOS, AGENTS
@@ -817,7 +807,7 @@ class GoalReaching(BaseScenario):
                     short-term reference path
         """
         # Define the probability of perturbation
-        possibility_perturbation = 0.02
+        possibility_perturbation = 0.0
 
         # Determine which environments should be perturbed
         env_idx = (

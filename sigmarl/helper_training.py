@@ -880,7 +880,6 @@ class WorldCustom(World):
     """
 
     def step(self):
-        self
         for entity in self.entities:
             # if entity.movable:
             # Model drag coefficient
