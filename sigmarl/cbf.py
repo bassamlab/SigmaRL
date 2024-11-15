@@ -1832,7 +1832,7 @@ class CBF:
             ls="--",
             label=r"$\Phi_{2}$ (CBF condition 2)",
         )
-        ax1.legend(loc="upper right", fontsize=self.font_size_video)
+        ax1.legend(loc="upper left", fontsize=self.font_size_video)
         ax2.legend(loc="upper right", fontsize=self.font_size_video)
 
         self.fig = fig

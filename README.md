@@ -72,7 +72,7 @@ SigmaRL is a decentralized MARL framework designed for motion planning of CAVs. 
 Figure 1: Demonstrating the *generalization* of SigmaRL (speed x2). Only the intersection part of the CPM scenario (the middle part in Fig. 1(a)) is used for training. All other scenarios are completely unseen. See our [SigmaRL paper](#1-sigmarl) for more details.
 
 <figure>
-  <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/xp-marl.gif?raw=true" width="400" />
+  <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/xp-marl.gif?raw=true" width="300" />
   <!-- <figcaption>Figure 2:.</figcaption> -->
 </figure>
 
@@ -120,7 +120,7 @@ Figure 2: We use an auxiliary MARL to learn dynamic priority assignments to addr
   <!-- <figcaption>Figure 1.</figcaption> -->
 </figure>
 
-Figure 3: Demonstrating the *safety* and *reduced conservatism* of our MTV-based safety margin. Note that in the overtaking scenario, the slow-moving vehicle $j$ purposely obstructs vehicle $i$ three times to prevent it from overtaking. See our [CBF-MARL paper](#3-cbf-marl) for more details.
+Figure 3: Demonstrating the safety and reduced conservatism of our MTV-based safety margin. In the overtaking scenario, while the traditional approach fails to overtake due to excessive conservatism (see (a)), ours succeeds (see (b)). Note that in the overtaking scenario, the slow-moving vehicle $j$ purposely obstructs vehicle $i$ three times to prevent it from overtaking. In the bypassing scenario, while the traditional approach requires a large lateral space due to excessive conservatism (see (c)), ours requires a smaller one (see (d)). See our [CBF-MARL paper](#3-cbf-marl) for more details.
 
 ## Install
 Ensure you have Python 3.9 or 3.10 installed. Other versions may also work well. This repository works well on Windows, macOS, and Ubuntu. It's recommended to use a virtual environment (optional):
@@ -130,20 +130,20 @@ Ensure you have Python 3.9 or 3.10 installed. Other versions may also work well.
   ```
 Two options are available to install `sigmarl`:
 ### 1. Installing via pip
-You can use pip to install the latest release:
+You can use pip to install the latest release (may not have the latest features):
   ```bash
   pip install sigmarl
   ```
 
 ### 2. Installing from Source
-If you want to install the current version, you can do:
+If you want to install the latest features, you can do:
 - Clone the repository
   ```bash
   git clone https://github.com/bassamlab/SigmaRL.git
   cd SigmaRL
   pip install -e .
   ```
-- Verifying the Installation by first launching the Python 3 interpreter in terminal:
+- (Optional) Verifying the Installation by first launching the Python 3 interpreter in terminal:
   ```bash
   python3
   ```
@@ -242,7 +242,7 @@ Jianye Xu, Omar Sobhy, and Bassam Alrifaee, "XP-MARL: Auxiliary Prioritization i
 <div>
 Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin," <i>arXiv preprint arXiv:2411.08999</i>, 2024.
 
-<a href="https://doi.org/10.48550/arXiv.2411.08999" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> <a href="https://github.com/bassamlab/SigmaRL/tree/1.3.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+<a href="https://doi.org/10.48550/arXiv.2411.08999" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a>
 </div>
 
 - **BibTeX**
@@ -257,7 +257,7 @@ Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Pro
 
 - **Reproduce Experimental Results in the Paper:**
 
-  - Git checkout to the corresponding tag using `git checkout 1.3.0`
+  <!-- - Git checkout to the corresponding tag using `git checkout 1.3.0` TODO -->
   - Go to [this page](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/ecc25.zip) and download the zip file `ecc25.zip`. Unzip it, copy and paste the whole folder to the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/ecc25/`.
   - Run `sigmarl/evaluation_ecc25.py`.
 
