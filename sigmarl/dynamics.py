@@ -1,3 +1,8 @@
+# Copyright (c) 2024, Chair of Embedded Software (Informatik 11) - RWTH Aachen University.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
 import torch
 from torchdiffeq import odeint
 from vmas.simulator.dynamics.common import Dynamics
@@ -87,12 +92,12 @@ class KinematicBicycleModel(Dynamics):
             is_batch_size_none = False
 
         # Apply state limits
-        x[:, 3] = torch.clamp(x[:, 3], self.min_speed, self.max_speed)
-        x[:, 4] = torch.clamp(x[:, 4], self.min_steering, self.max_steering)
+        # x[:, 3] = torch.clamp(x[:, 3], self.min_speed, self.max_speed)
+        # x[:, 4] = torch.clamp(x[:, 4], self.min_steering, self.max_steering)
 
         # Apply action limits
-        u[:, 0] = torch.clamp(u[:, 0], self.min_acc, self.max_acc)
-        u[:, 1] = torch.clamp(u[:, 1], self.min_steering_rate, self.max_steering_rate)
+        # u[:, 0] = torch.clamp(u[:, 0], self.min_acc, self.max_acc)
+        # u[:, 1] = torch.clamp(u[:, 1], self.min_steering_rate, self.max_steering_rate)
 
         # Calculate parameters
         beta = torch.atan(self.l_r / self.l_wb * torch.tan(x[:, 4]))
