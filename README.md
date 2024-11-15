@@ -72,7 +72,7 @@ SigmaRL is a decentralized MARL framework designed for motion planning of CAVs. 
 Figure 1: Demonstrating the *generalization* of SigmaRL (speed x2). Only the intersection part of the CPM scenario (the middle part in Fig. 1(a)) is used for training. All other scenarios are completely unseen. See our [SigmaRL paper](#1-sigmarl) for more details.
 
 <figure>
-  <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/xp-marl.gif?raw=true" width="300" />
+  <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/xp-marl.gif?raw=true" width="400" />
   <!-- <figcaption>Figure 2:.</figcaption> -->
 </figure>
 
