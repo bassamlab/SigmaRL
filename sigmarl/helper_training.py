@@ -1027,6 +1027,8 @@ class Parameters:
         is_communication_noise: str = False,  # Whether to inject communication noise to propagated actions
         noise_level: float = 0.1,  # Noise is modeled by a normal distribution. `noise_level` defines the variance of the normal distribution.
         is_using_cbf: bool = False,  # Whether to use Control Barrier Function (CBF)
+        experiment_type: str = "simulation",  # One of {"simulation", "lab"}. If you only use simulation, you do not need to worry about "lab".
+        is_obs_steering: bool = False,  # Whether to observe the steering angle of other agents
     ):
 
         self.n_agents = n_agents
@@ -1111,6 +1113,8 @@ class Parameters:
         self.noise_level = noise_level
 
         self.is_using_cbf = is_using_cbf
+        self.experiment_type = experiment_type
+        self.is_obs_steering = is_obs_steering
 
         if (model_name is None) and (scenario_name is not None):
             self.model_name = get_model_name(self)

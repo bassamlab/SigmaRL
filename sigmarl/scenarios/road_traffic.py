@@ -13,9 +13,6 @@ from typing import Dict
 
 from vmas.simulator import rendering
 
-# Enable anomaly detection
-# torch.autograd.set_detect_anomaly(True)
-
 import matplotlib.pyplot as plt
 
 from vmas import render_interactively
@@ -1232,7 +1229,6 @@ class ScenarioRoadTraffic(BaseScenario):
         are feasible and do not collide with other agents.
         """
         if self.parameters.experiment_type.lower() == "simulation":
-            print("[Simulation] Reset initial states")
             if is_use_state_buffer:
                 path_id = initial_state[
                     i_agent, self.initial_state_buffer.idx_path
@@ -1242,8 +1238,7 @@ class ScenarioRoadTraffic(BaseScenario):
                 agents[i_agent].set_pos(initial_state[i_agent, 0:2], batch_index=env_i)
                 agents[i_agent].set_rot(initial_state[i_agent, 2], batch_index=env_i)
                 agents[i_agent].set_vel(initial_state[i_agent, 3:5], batch_index=env_i)
-                # TODO Add steering to state buffer
-
+                # TODO Add steering to state buffer (this may be unnecessary since steering is not observed)
             else:
                 is_feasible_initial_position_found = False
                 random_count = 0
