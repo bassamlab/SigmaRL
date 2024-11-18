@@ -123,10 +123,10 @@ Figure 2: We use an auxiliary MARL to learn dynamic priority assignments to addr
 Figure 3: Demonstrating the safety and reduced conservatism of our MTV-based safety margin. In the overtaking scenario, while the traditional approach fails to overtake due to excessive conservatism (see (a)), ours succeeds (see (b)). Note that in the overtaking scenario, the slow-moving vehicle $j$ purposely obstructs vehicle $i$ three times to prevent it from overtaking. In the bypassing scenario, while the traditional approach requires a large lateral space due to excessive conservatism (see (c)), ours requires a smaller one (see (d)). See our [CBF-MARL paper](#3-cbf-marl) for more details.
 
 ## Install
-Ensure you have Python 3.9 or 3.10 installed. Other versions may also work well. This repository works well on Windows, macOS, and Ubuntu. It's recommended to use a virtual environment (optional):
+SigmaRL supports Python versions from 3.9 to 3.12 and is also OS independent (Windows/macOS/Linux). It's recommended to use a virtual environment. For example, if you are using [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html):
   ```bash
-  python3 -m venv .sigmarl-env
-  source .sigmarl-env/bin/activate
+  conda create -n sigmarl python=3.10
+  conda activate sigmarl
   ```
 Two options are available to install `sigmarl`:
 ### 1. Installing via pip
@@ -143,9 +143,9 @@ If you want to install the latest features, you can do:
   cd SigmaRL
   pip install -e .
   ```
-- (Optional) Verifying the Installation by first launching the Python 3 interpreter in terminal:
+- (Optional) Verifying the Installation by first launching your Python interpreter in terminal:
   ```bash
-  python3
+  python
   ```
   Then run the following lines, which should show the version of the installed `sigmarl`:
   ```bash

@@ -27,7 +27,6 @@ from torchrl.envs.utils import (
     set_exploration_type,
     _terminated_or_truncated,
     step_mdp,
-    _convert_exploration_type,
     ExplorationType,
 )
 from torchrl.envs.common import EnvBase
@@ -78,6 +77,15 @@ def get_model_name(parameters):
     model_name = f"reward{parameters.episode_reward_mean_current:.2f}"
 
     return model_name
+
+
+##################################################
+## Legacy TorchRL code
+##################################################
+def _convert_exploration_type(*, exploration_mode, exploration_type):
+    if exploration_mode is not None:
+        return ExplorationType.from_str(exploration_mode)
+    return exploration_type
 
 
 ##################################################
@@ -371,6 +379,8 @@ class SyncDataCollectorCustom(SyncDataCollector):
         total_frames: int,
         device: DEVICE_TYPING = None,
         storing_device: DEVICE_TYPING = None,
+        env_device: DEVICE_TYPING = None,
+        policy_device: DEVICE_TYPING = None,
         create_env_kwargs: Union[Dict, None] = None,  # Changed from dict | None
         max_frames_per_traj: Union[int, None] = None,  # Changed from int | None
         init_random_frames: Union[int, None] = None,  # Changed from int | None
@@ -406,19 +416,6 @@ class SyncDataCollectorCustom(SyncDataCollector):
                     )
                 env.update_kwargs(create_env_kwargs)
 
-        if storing_device is None:
-            if device is not None:
-                storing_device = device
-            elif policy is not None:
-                try:
-                    policy_device = next(policy.parameters()).device
-                except (AttributeError, StopIteration):
-                    policy_device = torch.device("cpu")
-                storing_device = policy_device
-            else:
-                storing_device = torch.device("cpu")
-
-        self.storing_device = torch.device(storing_device)
         self.env: EnvBase = env
         self.closed = False
         if not reset_when_done:
@@ -426,9 +423,8 @@ class SyncDataCollectorCustom(SyncDataCollector):
         self.reset_when_done = reset_when_done
         self.n_env = self.env.batch_size.numel()
 
-        (self.policy, self.device, self.get_weights_fn,) = self._get_policy_and_device(
+        (self.policy, self.get_weights_fn,) = self._get_policy_and_device(
             policy=policy,
-            device=device,
             observation_spec=self.env.observation_spec,
         )
 
@@ -632,7 +628,7 @@ class SyncDataCollectorCustom(SyncDataCollector):
         **kwargs,
     ):
         self.priority_module = priority_module
-
+        super().__init__(env, policy, **kwargs)
         self.helper_init(env, policy, **kwargs)
 
     @torch.no_grad()
@@ -1208,8 +1204,8 @@ class DecisionMakingModule:
             out_keys=[env.action_key],
             distribution_class=TanhNormal,
             distribution_kwargs={
-                "min": env.unbatched_action_spec[env.action_key].space.low,
-                "max": env.unbatched_action_spec[env.action_key].space.high,
+                "low": env.unbatched_action_spec[env.action_key].space.low,
+                "high": env.unbatched_action_spec[env.action_key].space.high,
             },
             return_log_prob=True,
             log_prob_key=(
