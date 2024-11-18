@@ -9,5 +9,6 @@ typing_extensions==4.8.0
 vmas==1.4.3
 matplotlib==3.9.2
 termcolor==2.5.0
-SciencePlots==2.1.1
 pre-commit==4.0.1
+cvxpy==1.5.3
+scikit-learn==1.5.2
