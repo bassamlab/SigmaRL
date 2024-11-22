@@ -39,9 +39,7 @@ try:
         else:
             parameters.num_vmas_envs = 1
 
-        parameters.scenario_type = (
-            "CPM_mixed"  # on_ramp_1, roundabout_1, intersection_1/2/3, CPM_mixed
-        )
+        parameters.scenario_type = "CPM_entire"  # One of "CPM_mixed", "CPM_entire", "intersection_1", "on_ramp_1", "roundabout_1", "goal_reaching_1", etc. See sigmarl/constants.py for more scenario types
         parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
 
         parameters.is_save_simulation_video = False
@@ -49,8 +47,12 @@ try:
         parameters.is_visualize_lane_boundary = False
         parameters.is_visualize_extra_info = True
 
-        # env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
-        env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
+        if parameters.scenario_type.lower() == "goal_reaching_1":
+            env, policy, priority_module, parameters = ppo_goal_reaching(
+                parameters=parameters
+            )
+        else:
+            env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
 
         out_td, frame_list = env.rollout(
             max_steps=parameters.max_steps - 1,
