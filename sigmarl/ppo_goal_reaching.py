@@ -219,12 +219,17 @@ class PPOGoalReaching:
     def _load_final_model(self, decision_making_module, priority_module):
         """Load the final model."""
         decision_making_module.policy.load_state_dict(
-            torch.load(self.parameters.where_to_save + "final_policy.pth")
+            torch.load(
+                self.parameters.where_to_save + "final_policy.pth", weights_only=True
+            )
         )
         cprint("[INFO] Loaded the final model", "red")
         if priority_module and self.parameters.prioritization_method.lower() == "marl":
             priority_module.policy.load_state_dict(
-                torch.load(self.parameters.where_to_save + "final_priority_policy.pth")
+                torch.load(
+                    self.parameters.where_to_save + "final_priority_policy.pth",
+                    weights_only=True,
+                )
             )
             cprint("[INFO] Loaded the final priority model", "red")
 
@@ -243,11 +248,15 @@ class PPOGoalReaching:
         else:
             PATH_POLICY, PATH_CRITIC, PATH_FIG, PATH_JSON = paths
 
-        decision_making_module.policy.load_state_dict(torch.load(PATH_POLICY))
+        decision_making_module.policy.load_state_dict(
+            torch.load(PATH_POLICY, weights_only=True)
+        )
         cprint(f"[INFO] Loaded the intermediate model '{PATH_POLICY}'", "blue")
 
         if priority_module and self.parameters.prioritization_method.lower() == "marl":
-            priority_module.policy.load_state_dict(torch.load(PATH_PRIORITY_POLICY))
+            priority_module.policy.load_state_dict(
+                torch.load(PATH_PRIORITY_POLICY, weights_only=True)
+            )
             cprint(
                 f"[INFO] Loaded the intermediate priority model '{PATH_PRIORITY_POLICY}'",
                 "blue",
@@ -255,12 +264,16 @@ class PPOGoalReaching:
 
         if self.parameters.is_continue_train:
             cprint("[INFO] Training will continue with the loaded model.", "red")
-            decision_making_module.critic.load_state_dict(torch.load(PATH_CRITIC))
+            decision_making_module.critic.load_state_dict(
+                torch.load(PATH_CRITIC, weights_only=True)
+            )
             if (
                 priority_module
                 and self.parameters.prioritization_method.lower() == "marl"
             ):
-                priority_module.critic.load_state_dict(torch.load(PATH_PRIORITY_CRITIC))
+                priority_module.critic.load_state_dict(
+                    torch.load(PATH_PRIORITY_CRITIC, weights_only=True)
+                )
 
     def _setup_data_collector(self, env, decision_making_module, priority_module):
         """Set up the data collector for gathering experience."""
@@ -315,8 +328,8 @@ class PPOGoalReaching:
         with torch.no_grad():
             decision_making_module.GAE(
                 tensordict_data,
-                params=decision_making_module.loss_module.critic_params,
-                target_params=decision_making_module.loss_module.target_critic_params,
+                params=decision_making_module.loss_module.critic_network_params,
+                target_params=decision_making_module.loss_module.target_critic_network_params,
             )
             if (
                 priority_module
@@ -324,8 +337,8 @@ class PPOGoalReaching:
             ):
                 priority_module.GAE(
                     tensordict_data,
-                    params=priority_module.loss_module.critic_params,
-                    target_params=priority_module.loss_module.target_critic_params,
+                    params=priority_module.loss_module.critic_network_params,
+                    target_params=priority_module.loss_module.target_critic_network_params,
                 )
 
     def _update_priorities(self, tensordict_data):
@@ -382,8 +395,8 @@ class PPOGoalReaching:
         with torch.no_grad():
             decision_making_module.GAE(
                 mini_batch_data,
-                params=decision_making_module.loss_module.critic_params,
-                target_params=decision_making_module.loss_module.target_critic_params,
+                params=decision_making_module.loss_module.critic_network_params,
+                target_params=decision_making_module.loss_module.target_critic_network_params,
             )
             if (
                 priority_module
@@ -391,8 +404,8 @@ class PPOGoalReaching:
             ):
                 priority_module.GAE(
                     mini_batch_data,
-                    params=priority_module.loss_module.critic_params,
-                    target_params=priority_module.loss_module.target_critic_params,
+                    params=priority_module.loss_module.critic_network_params,
+                    target_params=priority_module.loss_module.target_critic_network_params,
                 )
         new_td_errors = compute_td_error(mini_batch_data, gamma=0.9)
         mini_batch_data.set("td_error", new_td_errors)
