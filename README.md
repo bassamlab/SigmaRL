@@ -1,11 +1,14 @@
 # SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning
 <!-- icons from https://simpleicons.org/ -->
+![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![arXiv](https://img.shields.io/badge/arXiv-2408.07644-b31b1b.svg)](https://doi.org/10.48550/arXiv.2408.07644)
+[![arXiv](https://img.shields.io/badge/arXiv-2409.11852-b31b1b.svg)](https://doi.org/10.48550/arXiv.2409.11852)
+[![arXiv](https://img.shields.io/badge/arXiv-2411.08999-b31b1b.svg)](https://doi.org/10.48550/arXiv.2411.08999)
 
 - [SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning](#sigmarl-a-sample-efficient-and-generalizable-multi-agent-reinforcement-learning-framework-for-motion-planning)
   - [Welcome to SigmaRL!](#welcome-to-sigmarl)
   - [Install](#install)
-    - [1. Installing via pip](#1-installing-via-pip)
-    - [2. Installing from Source](#2-installing-from-source)
   - [How to Use](#how-to-use)
     - [Training](#training)
     - [Testing](#testing)
@@ -125,18 +128,10 @@ Figure 3: Demonstrating the safety and reduced conservatism of our MTV-based saf
 ## Install
 SigmaRL supports Python versions from 3.9 to 3.12 and is also OS independent (Windows/macOS/Linux). It's recommended to use a virtual environment. For example, if you are using [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html):
   ```bash
-  conda create -n sigmarl python=3.10
+  conda create -n sigmarl python=3.12
   conda activate sigmarl
   ```
-Two options are available to install `sigmarl`:
-### 1. Installing via pip
-You can use pip to install the latest release (may not have the latest features):
-  ```bash
-  pip install sigmarl
-  ```
-
-### 2. Installing from Source
-If you want to install the latest features, you can do:
+We recommend installing `sigmarl` from source:
 - Clone the repository
   ```bash
   git clone https://github.com/bassamlab/SigmaRL.git
