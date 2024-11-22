@@ -131,8 +131,11 @@ class CBF:
 
         self.is_save_video = kwargs.get("is_save_video", False)
         self.is_visu_ref_path = kwargs.get("is_visu_ref_path", False)
+        self.is_visu_footprint = kwargs.get("is_visu_footprint", True)
         self.is_visu_nominal_action = kwargs.get("is_visu_nominal_action", False)
         self.is_visu_cbf_action = kwargs.get("is_visu_cbf_action", False)
+        self.is_visu_time = kwargs.get("is_visu_time", True)
+        self.is_visu_cost = kwargs.get("is_visu_cost", False)
         self.is_save_eval_result = kwargs.get("is_save_eval_result", True)
 
         self.font_size_video = 16
@@ -234,17 +237,17 @@ class CBF:
                 # Overtaking & C2C
                 self.total_time = 7.0  # Total simulation time
                 self.lambda_cbf = 2  # Design parameter for CBF
-                self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 1  # Weight for steering rate in QP
+                self.w_acc = 0.1  # Weight for acceleration in QP
+                self.w_steer = 0.1  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
             else:
                 # Overtaking & MTV
                 self.total_time = 7.0  # Total simulation time
-                self.lambda_cbf = 2.0  # Design parameter for CBF
-                self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 1  # Weight for steering rate in QP
+                self.lambda_cbf = 2  # Design parameter for CBF
+                self.w_acc = 0.1  # Weight for acceleration in QP
+                self.w_steer = 0.1  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
@@ -311,6 +314,10 @@ class CBF:
         self.color_psi_1 = "tab:orange"  # CBF condition 1
         self.color_psi_2 = "tab:green"  # CBF condition 2
 
+        self.color_cost_acc = "tab:blue"
+        self.color_cost_steer = "tab:orange"
+        self.color_cost_total = "tab:green"
+
         # RL policy
         self.rl_policy_path = "checkpoints/ecc25/nominal_controller.pth"
         self.rl_observation_key = ("agents", "observation")
@@ -346,6 +353,11 @@ class CBF:
         self.list_rectangles_j = []
 
         self.list_opt_duration = []
+
+        self.list_cost_acc = []
+        self.list_cost_steer = []
+        self.list_cost_total = []
+        self.list_is_solve_success = []
 
         self.step = 0  # Simulation step counter
 
@@ -421,7 +433,7 @@ class CBF:
         )  # we'll need the log-prob for the PPO loss
 
         if os.path.exists(self.rl_policy_path):
-            policy.load_state_dict(torch.load(self.rl_policy_path))
+            policy.load_state_dict(torch.load(self.rl_policy_path, weights_only=True))
         else:
             raise FileNotFoundError(
                 f"Model file at {self.rl_policy_path} not found. See README.md for more details regarding where you can download the pre-trained model."
@@ -488,15 +500,15 @@ class CBF:
         dx = x_target - x_ego
         dy = y_target - y_ego
         psi_relative = psi_target - psi_ego  # Relative heading
-        psi_relative = (psi_relative + np.pi) % (
-            2 * np.pi
-        ) - np.pi  # Normalize psi_relative to [-pi, pi]
+        psi_relative = (psi_relative + torch.pi) % (
+            2 * torch.pi
+        ) - torch.pi  # Normalize psi_relative to [-pi, pi]
 
         # Transform to vehicle i's coordinate system
-        distance = np.sqrt(dx**2 + dy**2)
-        psi_relative_coordinate = np.arctan2(dy, dx) - psi_ego
-        x_relative = distance * np.cos(psi_relative_coordinate)
-        y_relative = distance * np.sin(psi_relative_coordinate)
+        distance = torch.sqrt(dx**2 + dy**2)
+        psi_relative_coordinate = torch.atan2(dy, dx) - psi_ego
+        x_relative = distance * torch.cos(psi_relative_coordinate)
+        y_relative = distance * torch.sin(psi_relative_coordinate)
 
         # return dx, dy, psi_relative, distance
         return x_relative, y_relative, psi_relative, distance
@@ -753,64 +765,73 @@ class CBF:
             u_j, self.state_j, self.dstate_time_j
         )
 
+        [dx_ji_global, dy_ji_global, dpsi_ji_global] = dstate_time_ji_global
         # Compute relative second derivatives
-        ddx_ji = ddx_j - ddx_i
-        ddy_ji = ddy_j - ddy_i
-        ddpsi_ji = ddpsi_j - ddpsi_i
-
-        # Compute second derivatives for vehicle i
-        # Extract control inputs
-        ddstate_time_ji_global = [ddx_ji, ddy_ji, ddpsi_ji]
+        ddx_ji_global = ddx_j - ddx_i
+        ddy_ji_global = ddy_j - ddy_i
+        ddpsi_ji_global = ddpsi_j - ddpsi_i
 
         # Convert from the global coordinate system to the ego coordinate system
-        cos_psi = np.cos(self.state_i[2].item())
-        sin_psi = np.sin(self.state_i[2].item())
+        cos_psi_i = np.cos(self.state_i[2].item())
+        sin_psi_i = np.sin(self.state_i[2].item())
+
+        d_psi_i = self.dstate_time_i[2]
 
         x_ji_global, y_ji_global, psi_ji_global = (
             self.state_j[0:3] - self.state_i[0:3]
         ).numpy()
 
-        [dx_ji_global, dy_ji_global, dpsi_ji_global] = dstate_time_ji_global
-        [ddx_ji_global, ddy_ji_global, ddpsi_ji_global] = ddstate_time_ji_global
+        # Relative states in the ego coordinate system
+        x_ji_ego = cos_psi_i * x_ji_global + sin_psi_i * y_ji_global  # Eq. (1)
+        y_ji_ego = -sin_psi_i * x_ji_global + cos_psi_i * y_ji_global  # Eq. (2)
 
+        # Take time derivatives of Eq. (1)
         dx_ji_ego = (
-            cos_psi * dx_ji_global
-            - x_ji_global * sin_psi * dpsi_ji_global
-            + sin_psi * dy_ji_global
-            + y_ji_global * cos_psi * dpsi_ji_global
-        )
-        ddx_ji_ego = (
-            cos_psi * ddx_ji_global
-            - 2 * dx_ji_global * sin_psi * dpsi_ji_global
-            - x_ji_global * cos_psi * dpsi_ji_global**2
-            - x_ji_global * sin_psi * ddpsi_ji_global
-            + sin_psi * ddy_ji_global
-            + 2 * dy_ji_global * cos_psi * dpsi_ji_global
-            - y_ji_global * sin_psi * dpsi_ji_global**2
-            + y_ji_global * cos_psi * ddpsi_ji_global
-        )
+            cos_psi_i * dx_ji_global
+            - x_ji_global * sin_psi_i * d_psi_i
+            + sin_psi_i * dy_ji_global
+            + y_ji_global * cos_psi_i * d_psi_i
+        )  # Eq. (3)
+
+        # Take time derivatives of Eq. (2)
         dy_ji_ego = (
-            cos_psi * dy_ji_global
-            - y_ji_global * sin_psi * dpsi_ji_global
-            - sin_psi * dx_ji_global
-            - x_ji_global * cos_psi * dpsi_ji_global
-        )
+            cos_psi_i * dy_ji_global
+            - y_ji_global * sin_psi_i * d_psi_i
+            - sin_psi_i * dx_ji_global
+            - x_ji_global * cos_psi_i * d_psi_i
+        )  # Eq. (4)
+
+        # Take time derivatives of Eq. (3)
+        ddx_ji_ego = (
+            cos_psi_i * ddx_ji_global
+            - 2 * dx_ji_global * sin_psi_i * d_psi_i
+            - x_ji_global * cos_psi_i * d_psi_i**2
+            - x_ji_global * sin_psi_i * ddpsi_i
+            + sin_psi_i * ddy_ji_global
+            + 2 * dy_ji_global * cos_psi_i * d_psi_i
+            - y_ji_global * sin_psi_i * d_psi_i**2
+            + y_ji_global * cos_psi_i * ddpsi_i
+        )  # Eq. (5)
+
+        # Take time derivatives of Eq. (4)
         ddy_ji_ego = (
-            cos_psi * ddy_ji_global
-            - 2 * dy_ji_global * sin_psi * dpsi_ji_global
-            - y_ji_global * cos_psi * dpsi_ji_global**2
-            - y_ji_global * sin_psi * ddpsi_ji_global
-            - sin_psi * ddx_ji_global
-            - 2 * dx_ji_global * cos_psi * dpsi_ji_global
-            + x_ji_global * sin_psi * dpsi_ji_global**2
-            - x_ji_global * cos_psi * ddpsi_ji_global
-        )
+            cos_psi_i * ddy_ji_global
+            - 2 * dy_ji_global * sin_psi_i * d_psi_i
+            - y_ji_global * cos_psi_i * d_psi_i**2
+            - y_ji_global * sin_psi_i * ddpsi_i
+            - sin_psi_i * ddx_ji_global
+            - 2 * dx_ji_global * cos_psi_i * d_psi_i
+            + x_ji_global * sin_psi_i * d_psi_i**2
+            - x_ji_global * cos_psi_i * ddpsi_i
+        )  # Eq. (6)
+
         dpsi_ji_ego = dpsi_ji_global
         ddpsi_ji_ego = ddpsi_ji_global
 
         dstate_time_ji_ego = np.array([dx_ji_ego, dy_ji_ego, dpsi_ji_ego])
         ddstate_time_ji_ego = [ddx_ji_ego, ddy_ji_ego, ddpsi_ji_ego]
 
+        # Add negative sign to get the time derivatives of the relative states in another vehicle's ego perspective
         dstate_time_ij_ego = -dstate_time_ji_ego
         ddstate_time_ij_ego = [-expr for expr in ddstate_time_ji_ego]
 
@@ -1182,6 +1203,7 @@ class CBF:
             eps_rel=1e-5,
             max_iter=1000,
         )
+
         opt_duration = time.time() - t_start
         self.list_opt_duration.append(opt_duration)
 
@@ -1285,6 +1307,18 @@ class CBF:
             assert dot_h_ij_opt == dot_h_ij
             assert cbf_condition_1_ij_opt == cbf_condition_1_ij
 
+        u_1_cost = (u_i_opt[0] - u_nominal_i[0]) ** 2 * self.Q[0, 0]
+        u_2_cost = (u_i_opt[1] - u_nominal_i[1]) ** 2 * self.Q[1, 1]
+        self.list_cost_acc.append(u_1_cost)
+        self.list_cost_steer.append(u_2_cost)
+        self.list_cost_total.append(u_1_cost + u_2_cost)
+
+        if prob.status == cp.OPTIMAL:
+            self.list_is_solve_success.append(1)  # 1: success
+            assert abs(prob.value - (u_1_cost + u_2_cost)) < 1e-3
+        else:
+            self.list_is_solve_success.append(0)  # 0: fail
+
         # Save for later plotting
         self.target_v_i = self.state_i[3].item() + u_i_opt[0] * self.dt
         self.target_rotation_i = (
@@ -1335,8 +1369,8 @@ class CBF:
             self.ax2,
             self.vehicle_i_rect,
             self.vehicle_j_rect,
-            self.line_i,
-            self.line_j,
+            self.visu_footprint_i,
+            self.visu_footprint_j,
             self.ref_line_i,
             self.ref_line_j,
             self.visu_ref_points_i,
@@ -1589,10 +1623,16 @@ class CBF:
             self.plot_x_max - self.plot_x_min
         )
 
-        x_fig_size = 20
-        fig, (ax1, ax2) = plt.subplots(
-            2, 1, figsize=(x_fig_size, x_fig_size * xy_ratio + 5)
-        )
+        if self.is_visu_cost:
+            # The first figure for vehicles' movements, the second figure for CBF values, and the third figure for cost values
+            x_fig_size = 20
+            y_fig_size = 12
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(x_fig_size, y_fig_size))
+        else:
+            # The first figure for vehicles' movements, and the second figure for CBF values
+            x_fig_size = 20
+            y_fig_size = 8
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(x_fig_size, y_fig_size))
 
         ax1.set_xlim(self.plot_x_min, self.plot_x_max)
         ax1.set_ylim(self.plot_y_min, self.plot_y_max)
@@ -1620,6 +1660,18 @@ class CBF:
             y=self.y_lane_top_bound, color="k", linestyle="-", lw=1.0
         )  # Top lane boundary
 
+        # Initialize time
+        if self.is_visu_time:
+            visu_time = ax1.text(
+                (self.plot_x_min + self.plot_x_max) / 2,
+                self.plot_y_max - 0.05,
+                f"Step: {self.step:.0f} (Time: {self.step*self.dt:.2f} s)",
+                fontsize=self.font_size_video,
+                ha="center",
+            )
+        else:
+            visu_time = None
+
         # Initialize vehicle rectangles
         vehicle_i_rect = Rectangle(
             (self.state_i[0].item(), self.state_i[1].item()),
@@ -1643,7 +1695,7 @@ class CBF:
         ax1.add_patch(vehicle_j_rect)
 
         # Initialize path lines
-        (line_i,) = ax1.plot(
+        (visu_footprint_i,) = ax1.plot(
             [],
             [],
             color=self.color_i,
@@ -1651,7 +1703,7 @@ class CBF:
             lw=1.0,
             # label=r"Footprint $i$",
         )
-        (line_j,) = ax1.plot(
+        (visu_footprint_j,) = ax1.plot(
             [],
             [],
             color=self.color_j,
@@ -1660,16 +1712,15 @@ class CBF:
             # label=r"Footprint $j$",
         )
 
-        # Initialize polyline for short-term reference path
-        (ref_line_i,) = ax1.plot(
-            [], [], color=self.color_i, linestyle="-", lw=0.5, alpha=0.5
-        )
-        (ref_line_j,) = ax1.plot(
-            [], [], color=self.color_j, linestyle="-", lw=0.5, alpha=0.5
-        )
-
         # Initialize points for short-term reference path
         if self.is_visu_ref_path:
+            # Initialize polyline for short-term reference path
+            (ref_line_i,) = ax1.plot(
+                [], [], color=self.color_i, linestyle="-", lw=0.5, alpha=0.5
+            )
+            (ref_line_j,) = ax1.plot(
+                [], [], color=self.color_j, linestyle="-", lw=0.5, alpha=0.5
+            )
             (visu_ref_points_i,) = ax1.plot(
                 [],
                 [],
@@ -1687,6 +1738,8 @@ class CBF:
                 label=r"Short-term ref. points $j$",
             )
         else:
+            ref_line_i = None
+            ref_line_j = None
             visu_ref_points_i = None
             visu_ref_points_j = None
 
@@ -1795,6 +1848,7 @@ class CBF:
         ax1.add_patch(visu_circle_i)
         ax1.add_patch(visu_circle_j)
 
+        # Subfigure 2: CBF values
         ax2.set_xlabel(r"$t$ [s]", fontsize=self.font_size_video)
         ax2.set_ylabel("CBF and CBF conditions", fontsize=self.font_size_video)
         ax2.tick_params(axis="x", labelsize=self.font_size_video)
@@ -1835,13 +1889,66 @@ class CBF:
         ax1.legend(loc="upper left", fontsize=self.font_size_video)
         ax2.legend(loc="upper right", fontsize=self.font_size_video)
 
+        # Subfigure 3: Cost values
+        if self.is_visu_cost:
+            ax3.set_xlabel(r"$t$ [s]", fontsize=self.font_size_video)
+            ax3.set_ylabel("Cost", fontsize=self.font_size_video)
+            ax3.tick_params(axis="x", labelsize=self.font_size_video)
+            ax3.tick_params(axis="y", labelsize=self.font_size_video)
+            ax3.grid(True)
+            ax3.set_xlim(0, self.total_time)
+            # ax3.set_ylim((-2, 50.0))
+            plt.tight_layout()
+
+            (visu_cost_acc,) = ax3.plot(
+                [],
+                [],
+                color=self.color_cost_acc,
+                lw=1.5,
+                ls="--",
+                label="Perturbation cost of nominal acceleration",
+            )
+            (visu_cost_steer,) = ax3.plot(
+                [],
+                [],
+                color=self.color_cost_steer,
+                lw=1.5,
+                ls="-.",
+                label="Perturbation cost of nominal steering rate",
+            )
+            (visu_cost_total,) = ax3.plot(
+                [],
+                [],
+                color=self.color_cost_total,
+                lw=1.5,
+                ls="-",
+                label="Total cost",
+            )
+            visu_is_solve_success = ax3.scatter(
+                [],
+                [],
+                color="black",
+                marker="x",
+                label="Solver failed",
+            )
+            ax3.legend(loc="upper right", fontsize=self.font_size_video)
+            ax3.set_ylim([-1.2, 50])
+        else:
+            ax3 = None
+            visu_cost_acc = None
+            visu_cost_steer = None
+            visu_cost_total = None
+            visu_is_solve_success = None
+
         self.fig = fig
         self.ax1 = ax1
         self.ax2 = ax2
+        self.ax3 = ax3
+        self.visu_time = visu_time
         self.vehicle_i_rect = vehicle_i_rect
         self.vehicle_j_rect = vehicle_j_rect
-        self.line_i = line_i
-        self.line_j = line_j
+        self.visu_footprint_i = visu_footprint_i
+        self.visu_footprint_j = visu_footprint_j
         self.ref_line_i = ref_line_i
         self.ref_line_j = ref_line_j
         self.visu_ref_points_i = visu_ref_points_i
@@ -1857,11 +1964,21 @@ class CBF:
         self.visu_psi_0 = visu_psi_0
         self.visu_psi_1 = visu_psi_1
         self.visu_psi_2 = visu_psi_2
+        self.visu_cost_acc = visu_cost_acc
+        self.visu_cost_steer = visu_cost_steer
+        self.visu_cost_total = visu_cost_total
+        self.visu_is_solve_success = visu_is_solve_success
 
     def update_plot_elements(self):
         """
         Update the live plot elements.
         """
+        # Update time
+        if self.is_visu_time:
+            self.visu_time.set_text(
+                f"Step: {self.step:.0f} (Time: {self.step*self.dt:.2f} s)"
+            )
+
         # Update vehicle rectangles
         for rect, state in zip(
             [self.vehicle_i_rect, self.vehicle_j_rect], [self.state_i, self.state_j]
@@ -1878,12 +1995,12 @@ class CBF:
             rect.set_xy((bottom_left_x, bottom_left_y))
             rect.angle = np.degrees(psi)
 
-        # Update path lines
-        if self.is_visu_ref_path:
-            self.line_i.set_data(
+        # Update footprints
+        if self.is_visu_footprint:
+            self.visu_footprint_i.set_data(
                 [s[0] for s in self.list_state_i], [s[1] for s in self.list_state_i]
             )
-            self.line_j.set_data(
+            self.visu_footprint_j.set_data(
                 [s[0] for s in self.list_state_j], [s[1] for s in self.list_state_j]
             )
 
@@ -1910,8 +2027,8 @@ class CBF:
 
         # Update nominal action arrow
         if self.is_visu_nominal_action:
-            arrow_length_i = self.rl_actions_i[0] / 10
-            arror_angle_i = self.state_i[2].item() + self.rl_actions_i[1]
+            arrow_length_i = self.rl_actions_i[0].item() / 10
+            arror_angle_i = self.state_i[2].item() + self.rl_actions_i[1].item()
             self.nominal_action_arrow_i.set_positions(
                 posA=(self.state_i[0].item(), self.state_i[1].item()),
                 posB=(
@@ -1920,8 +2037,8 @@ class CBF:
                 ),
             )
 
-            arrow_length_j = self.rl_actions_j[0] / 8
-            arror_angle_j = self.state_j[2].item() + self.rl_actions_j[1]
+            arrow_length_j = self.rl_actions_j[0].item() / 8
+            arror_angle_j = self.state_j[2].item() + self.rl_actions_j[1].item()
             self.nominal_action_arrow_j.set_positions(
                 posA=(self.state_j[0].item(), self.state_j[1].item()),
                 posB=(
@@ -1964,6 +2081,18 @@ class CBF:
         self.visu_psi_0.set_data(self.list_time, self.list_h_ji)
         self.visu_psi_1.set_data(self.list_time, self.list_cbf_condition_1_ji)
         self.visu_psi_2.set_data(self.list_time, self.list_cbf_condition_2_ji)
+
+        if self.is_visu_cost:
+            self.visu_cost_acc.set_data(self.list_time, self.list_cost_acc)
+            self.visu_cost_steer.set_data(self.list_time, self.list_cost_steer)
+            self.visu_cost_total.set_data(self.list_time, self.list_cost_total)
+            # Plot only the time steps where the solve failed
+            zero_indices = [
+                i for i, val in enumerate(self.list_is_solve_success) if val == 0
+            ]
+            zero_times = [self.list_time[i] for i in zero_indices]
+            zero_values = [self.list_is_solve_success[i] for i in zero_indices]
+            self.visu_is_solve_success.set_offsets(np.c_[zero_times, zero_values])
 
     def plot_cbf_curve(self):
         """
@@ -2255,6 +2384,9 @@ def main(
     is_visu_ref_path: bool = False,
     is_visu_nominal_action: bool = True,
     is_visu_cbf_action: bool = True,
+    is_visu_footprint: bool = True,
+    is_visu_time: bool = True,
+    is_visu_cost: bool = False,
     is_save_eval_result: bool = False,
 ):
     simulation = CBF(
@@ -2264,6 +2396,9 @@ def main(
         is_visu_ref_path=is_visu_ref_path,
         is_visu_nominal_action=is_visu_nominal_action,
         is_visu_cbf_action=is_visu_cbf_action,
+        is_visu_footprint=is_visu_footprint,
+        is_visu_time=is_visu_time,
+        is_visu_cost=is_visu_cost,
         is_save_eval_result=is_save_eval_result,
     )
     simulation.run()
@@ -2274,9 +2409,12 @@ if __name__ == "__main__":
     main(
         scenario_type="overtaking",  # One of "overtaking" and "bypassing"
         sm_type="mtv",  # One of "c2c" and "mtv"
-        is_save_video=False,
-        is_visu_ref_path=False,
+        is_save_video=False,  # If True, video will be saved without live visualization
+        is_visu_ref_path=True,
+        is_visu_footprint=True,
         is_visu_nominal_action=True,
         is_visu_cbf_action=True,
+        is_visu_time=True,
+        is_visu_cost=True,
         is_save_eval_result=True,
     )
