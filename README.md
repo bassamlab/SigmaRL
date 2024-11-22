@@ -1,7 +1,7 @@
 # SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning
 <!-- icons from https://simpleicons.org/ -->
 ![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue.svg)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/bassamlab/SigmaRL/blob/main/LICENSE.txt)
 [![arXiv](https://img.shields.io/badge/arXiv-2408.07644-b31b1b.svg)](https://doi.org/10.48550/arXiv.2408.07644)
 [![arXiv](https://img.shields.io/badge/arXiv-2409.11852-b31b1b.svg)](https://doi.org/10.48550/arXiv.2409.11852)
 [![arXiv](https://img.shields.io/badge/arXiv-2411.08999-b31b1b.svg)](https://doi.org/10.48550/arXiv.2411.08999)

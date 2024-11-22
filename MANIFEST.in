@@ -4,6 +4,7 @@ include README.md
 include LICENSE
 include CITATION.cff
 include sigmarl/config.json
+include sigmarl/config_goal_reaching.json
 
 recursive-include sigmarl/assets *
 recursive-include sigmarl/scenarios *

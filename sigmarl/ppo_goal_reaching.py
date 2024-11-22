@@ -510,6 +510,6 @@ def ppo_goal_reaching(parameters: Parameters):
 
 
 if __name__ == "__main__":
-    config_file = "sigmarl/config.json"
+    config_file = "sigmarl/config_goal_reaching.json"
     parameters = Parameters.from_json(config_file)
     env, policy, priority_module, parameters = ppo_goal_reaching(parameters=parameters)
