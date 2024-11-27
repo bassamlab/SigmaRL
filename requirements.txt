@@ -1,3 +1,5 @@
+numpy==1.26.1
+matplotlib==3.8.2
 gym==0.26.2
 tensordict==0.2.1
 torch==2.1.0
@@ -8,5 +10,5 @@ typing_extensions==4.8.0
 vmas==1.4.1
 termcolor==2.4.0
 pre-commit==3.7.1
-numpy
-matplotlib
+cvxpy==1.5.3
+scikit-learn==1.5.2
