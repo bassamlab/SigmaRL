@@ -1,11 +1,14 @@
 # SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning
 <!-- icons from https://simpleicons.org/ -->
+![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10-blue.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/bassamlab/SigmaRL/blob/main/LICENSE.txt)
+[![arXiv](https://img.shields.io/badge/arXiv-2408.07644-b31b1b.svg)](https://doi.org/10.48550/arXiv.2408.07644)
+[![arXiv](https://img.shields.io/badge/arXiv-2409.11852-b31b1b.svg)](https://doi.org/10.48550/arXiv.2409.11852)
+[![arXiv](https://img.shields.io/badge/arXiv-2411.08999-b31b1b.svg)](https://doi.org/10.48550/arXiv.2411.08999)
 
 - [SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning](#sigmarl-a-sample-efficient-and-generalizable-multi-agent-reinforcement-learning-framework-for-motion-planning)
   - [Welcome to SigmaRL!](#welcome-to-sigmarl)
   - [Install](#install)
-    - [1. Installing via pip](#1-installing-via-pip)
-    - [2. Installing from Source](#2-installing-from-source)
   - [How to Use](#how-to-use)
     - [Training](#training)
     - [Testing](#testing)
@@ -123,29 +126,21 @@ Figure 2: We use an auxiliary MARL to learn dynamic priority assignments to addr
 Figure 3: Demonstrating the safety and reduced conservatism of our MTV-based safety margin. In the overtaking scenario, while the traditional approach fails to overtake due to excessive conservatism (see (a)), ours succeeds (see (b)). Note that in the overtaking scenario, the slow-moving vehicle $j$ purposely obstructs vehicle $i$ three times to prevent it from overtaking. In the bypassing scenario, while the traditional approach requires a large lateral space due to excessive conservatism (see (c)), ours requires a smaller one (see (d)). See our [CBF-MARL paper](#3-cbf-marl) for more details.
 
 ## Install
-Ensure you have Python 3.9 or 3.10 installed. Other versions may also work well. This repository works well on Windows, macOS, and Ubuntu. It's recommended to use a virtual environment (optional):
+Currently, `SigmaRL` supports Python versions 3.9 and 3.10 and is also OS independent (Windows/macOS/Linux). It's recommended to use a virtual environment. For example, if you are using [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html):
   ```bash
-  python3 -m venv .sigmarl-env
-  source .sigmarl-env/bin/activate
+  conda create -n sigmarl python=3.10
+  conda activate sigmarl
   ```
-Two options are available to install `sigmarl`:
-### 1. Installing via pip
-You can use pip to install the latest release (may not have the latest features):
-  ```bash
-  pip install sigmarl
-  ```
-
-### 2. Installing from Source
-If you want to install the latest features, you can do:
+We recommend installing `sigmarl` from source:
 - Clone the repository
   ```bash
   git clone https://github.com/bassamlab/SigmaRL.git
   cd SigmaRL
   pip install -e .
   ```
-- (Optional) Verifying the Installation by first launching the Python 3 interpreter in terminal:
+- (Optional) Verifying the Installation by first launching your Python interpreter in terminal:
   ```bash
-  python3
+  python
   ```
   Then run the following lines, which should show the version of the installed `sigmarl`:
   ```bash
