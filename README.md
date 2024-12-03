@@ -263,7 +263,7 @@ Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Pro
   - [ ] Attention mechanism
 - Improve safety
   - [ ] Integrating Control Barrier Functions (CBFs)
-    - [x] Proof of concept with two agents
+    - [x] Proof of concept with two agents (see the CBF-MARL paper [here](#3-cbf-marl))
   - [ ] Integrating Model Predictive Control (MPC)
 - Address non-stationarity
   - [x] Integrating prioritization (see the XP-MARL paper [here](#2-xp-marl))
