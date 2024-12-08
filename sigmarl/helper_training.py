@@ -1603,22 +1603,28 @@ class CBFModule:
 def get_path_to_save_model(parameters: Parameters):
     parameters.model_name = get_model_name(parameters=parameters)
 
-    PATH_POLICY = parameters.where_to_save + parameters.model_name + "_policy.pth"
-    PATH_CRITIC = parameters.where_to_save + parameters.model_name + "_critic.pth"
-    PATH_FIG = (
-        parameters.where_to_save + parameters.model_name + "_training_process.pdf"
+    PATH_POLICY = os.path.join(
+        parameters.where_to_save, parameters.model_name + "_policy.pth"
     )
-    PATH_JSON = parameters.where_to_save + parameters.model_name + "_data.json"
+    PATH_CRITIC = os.path.join(
+        parameters.where_to_save, parameters.model_name + "_critic.pth"
+    )
+    PATH_FIG = os.path.join(
+        parameters.where_to_save, parameters.model_name + "_training_process.pdf"
+    )
+    PATH_JSON = os.path.join(
+        parameters.where_to_save, parameters.model_name + "_data.json"
+    )
 
     if (
         parameters.is_using_prioritized_marl
         and parameters.prioritization_method.lower() == "marl"
     ):
-        PATH_PRIORITY_POLICY = (
-            parameters.where_to_save + parameters.model_name + "_priority_policy.pth"
+        PATH_PRIORITY_POLICY = os.path.join(
+            parameters.where_to_save, parameters.model_name + "_priority_policy.pth"
         )
-        PATH_PRIORITY_CRITIC = (
-            parameters.where_to_save + parameters.model_name + "_priority_critic.pth"
+        PATH_PRIORITY_CRITIC = os.path.join(
+            parameters.where_to_save, parameters.model_name + "_priority_critic.pth"
         )
 
         return (

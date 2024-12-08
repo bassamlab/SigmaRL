@@ -450,11 +450,11 @@ class MAPPOCAVs:
         """Save the final trained model."""
         torch.save(
             decision_making_module.policy.state_dict(),
-            self.parameters.where_to_save + "final_policy.pth",
+            os.path.join(self.parameters.where_to_save, "final_policy.pth"),
         )
         torch.save(
             decision_making_module.critic.state_dict(),
-            self.parameters.where_to_save + "final_critic.pth",
+            os.path.join(self.parameters.where_to_save, "final_critic.pth"),
         )
 
         if (
@@ -463,11 +463,15 @@ class MAPPOCAVs:
         ):
             torch.save(
                 priority_module.policy.state_dict(),
-                self.parameters.where_to_save + "final_priority_policy.pth",
+                os.path.join(
+                    self.parameters.where_to_save, "final_priority_policy.pth"
+                ),
             )
             torch.save(
                 priority_module.critic.state_dict(),
-                self.parameters.where_to_save + "final_priority_critic.pth",
+                os.path.join(
+                    self.parameters.where_to_save, "final_priority_critic.pth"
+                ),
             )
 
         print(
