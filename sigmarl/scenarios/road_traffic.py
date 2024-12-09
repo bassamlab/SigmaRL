@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import time
+import os
 from termcolor import colored, cprint
 
 import torch
@@ -11,7 +12,10 @@ from torch import Tensor
 import torch.nn.functional as F
 from typing import Dict
 
-from vmas.simulator import rendering
+cicd_testing = os.getenv("CICD_TESTING", "false").lower() == "true"
+if not cicd_testing:
+    # During CI/CD testing, the OpenGL library is missing in the Docker container, so we need to import the rendering module conditionally
+    from vmas.simulator import rendering
 
 import matplotlib.pyplot as plt
 
@@ -2809,7 +2813,10 @@ class ScenarioRoadTraffic(BaseScenario):
         return info
 
     def extra_render(self, env_index: int = 0):
-        time.sleep(0.1)
+        if cicd_testing:
+            # Rendering is not needed during CI/CD testing
+            return []
+
         if self.parameters.is_real_time_rendering:
             if self.timer.step[0] == 0:
                 pause_duration = 0  # Not sure how long should the simulation be paused at time step 0, so rather 0

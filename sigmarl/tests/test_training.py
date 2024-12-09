@@ -5,13 +5,14 @@ from sigmarl.ppo_goal_reaching import ppo_goal_reaching
 from sigmarl.helper_training import Parameters
 from sigmarl.constants import SCENARIOS
 
+
 def test_training():
     scenarios_to_test = ["goal_reaching_1", "CPM_mixed"]
     output_dir = "outputs/tmp_cicd/"
 
     for scenario in scenarios_to_test:
         print(f"Testing scenario: {scenario}")
-        
+
         if scenario.lower() == "goal_reaching_1":
             config_file = "sigmarl/config_goal_reaching.json"
         else:
@@ -30,7 +31,9 @@ def test_training():
 
         # Run training for the scenario
         if parameters.scenario_type.lower() == "goal_reaching_1":
-            env, policy, priority_module, parameters = ppo_goal_reaching(parameters=parameters)
+            env, policy, priority_module, parameters = ppo_goal_reaching(
+                parameters=parameters
+            )
         else:
             env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
 
