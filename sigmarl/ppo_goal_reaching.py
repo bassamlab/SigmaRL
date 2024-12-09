@@ -43,7 +43,7 @@ import matplotlib
 # Set up font
 matplotlib.rcParams["pdf.fonttype"] = 42  # Use Type 1 fonts (vector fonts)
 matplotlib.rcParams["font.family"] = "serif"
-matplotlib.rcParams["font.serif"] = ["Times New Roman"]
+matplotlib.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif", "Georgia"]
 matplotlib.rcParams.update({"font.size": 11})  # Set global font size
 
 from torchrl.envs.libs.vmas import VmasEnv

@@ -28,9 +28,9 @@ from matplotlib.patches import FancyArrowPatch
 # Set up font
 matplotlib.rcParams["pdf.fonttype"] = 42  # Use Type 1 fonts (vector fonts)
 matplotlib.rcParams["font.family"] = "serif"
-matplotlib.rcParams["font.serif"] = ["Times New Roman"]
+matplotlib.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif", "Georgia"]
 matplotlib.rcParams.update({"font.size": 11})  # Set global font size
-plt.rcParams["text.usetex"] = True
+# plt.rcParams["text.usetex"] = True
 
 from sigmarl.mtv_based_sm_predictor import SafetyMarginEstimatorModule
 
