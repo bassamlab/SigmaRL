@@ -8,8 +8,6 @@ test_job:
     - pip install -r requirements.txt
   script:
     - python -m unittest discover -s sigmarl/tests -p "*.py"
-  only:
-    - merge_requests
-    - main
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
