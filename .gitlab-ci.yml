@@ -9,6 +9,7 @@ test_job:
   before_script:
     - pip install -r requirements.txt
   script:
+    - ls -R sigmarl/tests
     - python -m unittest discover -s sigmarl/tests -p "*.py"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'

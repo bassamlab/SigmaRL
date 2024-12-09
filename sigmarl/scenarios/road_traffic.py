@@ -356,7 +356,7 @@ class ScenarioRoadTraffic(BaseScenario):
             device=device,
         )
 
-        cprint("[INFO] Map parsed.", "blue")
+        cprint(f"[INFO] Map of {self.parameters.scenario_type} parsed.", "blue")
         # Determine the maximum number of points on the reference path
         if "CPM_mixed" in self.parameters.scenario_type:
             # Mixed scenarios including intersection, merge in, and merge out
