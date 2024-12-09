@@ -1,0 +1,15 @@
+stages:
+  - test
+
+test_job:
+  stage: test
+  image: python:3.12
+  before_script:
+    - pip install -r requirements.txt
+  script:
+    - python -m unittest discover -s sigmarl/tests -p "*.py"
+  only:
+    - merge_requests
+    - main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_PIPELINE_SOURCE == "merge_request_event"'
