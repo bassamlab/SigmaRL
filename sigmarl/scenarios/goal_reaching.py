@@ -10,7 +10,6 @@ from termcolor import colored
 
 import torch
 from torch import Tensor
-import torch.nn.functional as F
 from typing import Dict
 
 cicd_testing = os.getenv("CICD_TESTING", "false").lower() == "true"
@@ -88,12 +87,12 @@ class GoalReaching(BaseScenario):
             kwargs.pop("reward_vel", 5) / r_p_normalizer
         )  # Reward for moving in high velocities.
         reward_reach_goal = (
-            kwargs.pop("reward_reach_goal", 100) / r_p_normalizer
+            kwargs.pop("reward_reach_goal", 0) / r_p_normalizer
         )  # Goal-reaching reward
 
         # Penalty
         penalty_deviate_from_ref_path = kwargs.pop(
-            "penalty_deviate_from_ref_path", -2 / r_p_normalizer
+            "penalty_deviate_from_ref_path", -8 / r_p_normalizer
         )  # Penalty for deviating from reference paths
         penalty_time = kwargs.pop(
             "penalty_time", 0 / r_p_normalizer
@@ -224,13 +223,15 @@ class GoalReaching(BaseScenario):
             dtype=torch.float32,
         )
 
+        self.list_perturbation_idx = torch.zeros(
+            (batch_dim, self.parameters.max_steps), device=device, dtype=torch.bool
+        )  # Record the indices of environments that are perturbed
+
         # Timer for the first env
         self.timer = Timer(
             start=time.time(),
             end=0,
-            step=torch.zeros(
-                batch_dim, device=device, dtype=torch.int32
-            ),  # Each environment has its own time step
+            step=0,  # All environments share the same time step
             step_duration=torch.zeros(
                 self.parameters.max_steps, device=device, dtype=torch.float32
             ),
@@ -496,7 +497,9 @@ class GoalReaching(BaseScenario):
         self.timer.start = time.time()
         self.timer.step_begin = time.time()
         self.timer.end = 0
-        self.timer.step[env_index_2] = 0
+
+        if self.timer.step == self.parameters.max_steps - 1:
+            self.timer.step = 0  # Reset the step counter
 
         if env_index is None:
             batch_size = self.world.batch_dim
@@ -615,7 +618,8 @@ class GoalReaching(BaseScenario):
             self.goal[env_idx][1] - initial_pos[1],
             self.goal[env_idx][0] - initial_pos[0],
         )
-        initial_rot = direction_to_goal + (torch.rand(1).item() - 0.5) * torch.pi * 0.5
+        initial_rot = direction_to_goal
+        # initial_rot = direction_to_goal + (torch.rand(1).item() - 0.5) * torch.pi * 0.5
         # initial_rot = (torch.rand(1).squeeze(0) - 0.5) * torch.pi * 2  # Random rotation
 
         return initial_pos, initial_rot
@@ -778,7 +782,6 @@ class GoalReaching(BaseScenario):
             time.time()
         )  # Set to the current time as the begin of the current time step
         self.timer.step += 1  # Increment step by 1
-        # print(self.timer.step)
 
         self.vertices[:, 0] = get_rectangle_vertices(
             center=agent.state.pos,
@@ -811,13 +814,17 @@ class GoalReaching(BaseScenario):
                     short-term reference path
         """
         # Define the probability of perturbation
-        possibility_perturbation = 0.0
+        possibility_perturbation = 0.1
 
         # Determine which environments should be perturbed
-        env_idx = (
+        env_perturb_idx = (
             torch.rand(self.world.batch_dim, device=self.world.device)
             < possibility_perturbation
         )
+        # Avoid perturbing the same environment twice in a simulation
+        env_already_perturbed = self.list_perturbation_idx.any(dim=-1)
+        env_perturb_idx = env_perturb_idx & ~env_already_perturbed
+        self.list_perturbation_idx[:, self.timer.step] = env_perturb_idx
 
         # Generate random perturbations for x and y directions
         perturbation_x = (
@@ -829,8 +836,8 @@ class GoalReaching(BaseScenario):
 
         # Apply perturbations only to the selected environments
         new_pos = agent.state.pos.clone()
-        new_pos[env_idx, 0] += perturbation_x[env_idx]
-        new_pos[env_idx, 1] += perturbation_y[env_idx]
+        new_pos[env_perturb_idx, 0] += perturbation_x[env_perturb_idx]
+        new_pos[env_perturb_idx, 1] += perturbation_y[env_perturb_idx]
 
         # Inject the new positions back into the agent's state
         agent.set_pos(new_pos, batch_index=None)
@@ -901,7 +908,12 @@ class GoalReaching(BaseScenario):
 
         is_max_steps_reached = self.timer.step == (self.parameters.max_steps - 1)
 
-        is_done = is_max_steps_reached
+        is_done = torch.tensor(
+            is_max_steps_reached, device=self.world.device, dtype=torch.bool
+        )
+        # If is_done is a scalar, repeat it to match the batch dimension
+        if is_done.ndim == 0:
+            is_done = is_done.repeat(self.world.batch_dim)
 
         # Reset agents that reach their respective goal
         distance_to_goal = (self.goal - self.world.agents[0].state.pos).norm(dim=-1)
@@ -981,7 +993,7 @@ class GoalReaching(BaseScenario):
             return []
 
         if self.parameters.is_real_time_rendering:
-            if self.timer.step[0] == 0:
+            if self.timer.step == 0:
                 pause_duration = 0  # Not sure how long should the simulation be paused at time step 0, so rather 0
             else:
                 pause_duration = self.world.dt - (time.time() - self.timer.render_begin)
@@ -1064,7 +1076,7 @@ class GoalReaching(BaseScenario):
 
             # Time and time step
             geom = rendering.TextLine(
-                text=f"t: {self.timer.step[0]*self.parameters.dt:.2f} sec",
+                text=f"t: {self.timer.step*self.parameters.dt:.2f} sec",
                 x=0.05 * self.resolution_factor,
                 y=(self.world.y_semidim + hight_b) * self.resolution_factor,
                 font_size=14,
@@ -1074,7 +1086,7 @@ class GoalReaching(BaseScenario):
             geoms.append(geom)
 
             geom = rendering.TextLine(
-                text=f"n: {self.timer.step[0]}",
+                text=f"n: {self.timer.step}",
                 x=0.05 * self.resolution_factor,
                 y=(self.world.y_semidim + hight_c) * self.resolution_factor,
                 font_size=14,

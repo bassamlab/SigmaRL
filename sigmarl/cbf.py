@@ -129,7 +129,7 @@ class CBF:
 
         self.lane_width = self.width * 1.8  # Lane width
 
-        self.is_using_slack_variable = kwargs.get("is_using_slack_variable", False)
+        self.is_relax_cbf = kwargs.get("is_relax_cbf", False)
 
         self.is_save_video = kwargs.get("is_save_video", False)
         self.is_save_eval_result = kwargs.get("is_save_eval_result", True)
@@ -1150,7 +1150,7 @@ class CBF:
 
         penalty_s_veh = 20000
         penalty_s_boundary = 20000
-        if self.is_using_slack_variable:
+        if self.is_relax_cbf:
             s_h_veh = cp.Variable(name="s_h_veh", nonneg=True)
             s_h_boundary_top_i = cp.Variable(name="s_h_boundary_top_i", nonneg=True)
             s_h_boundary_bottom_i = cp.Variable(
@@ -1186,7 +1186,7 @@ class CBF:
 
         # Predict the value of psi_0 at the next time step
         psi_0_predict = h_ji + dot_h_ji * self.dt + 1 / 2 * ddot_h_ji * self.dt**2
-        if self.is_using_slack_variable:
+        if self.is_relax_cbf:
             scale_factor = 18  # The vehicles are 1:18 scaled
             speed_related_offset = max(
                 1.8 / scale_factor * self.state_i[3].numpy(), 0
@@ -1277,7 +1277,7 @@ class CBF:
         if self.scenario_type.lower() == "overtaking":
             # Objective: Minimize weighted squared deviation from nominal control inputs
             # and the slack variable to ensure it remains small
-            if self.is_using_slack_variable:
+            if self.is_relax_cbf:
                 objective = cp.Minimize(
                     cp.quad_form(
                         u_i - u_nominal_i, self.Q
@@ -1308,7 +1308,7 @@ class CBF:
             ]
         else:
             # Objective: Minimize weighted squared deviation from nominal control inputs
-            if self.is_using_slack_variable:
+            if self.is_relax_cbf:
                 objective = cp.Minimize(
                     cp.quad_form(
                         u_i - u_nominal_i, self.Q
@@ -1353,7 +1353,7 @@ class CBF:
                 u_j[1] <= self.steering_rate_max,
             ]
 
-        if self.is_using_slack_variable:
+        if self.is_relax_cbf:
             constraints += [
                 s_h_veh <= default_veh_d_offset,
                 s_h_boundary_top_i <= default_boundary_d_offset,
@@ -1403,7 +1403,7 @@ class CBF:
                 u_j_opt = u_j.value
 
         # Store slack variable for later plotting
-        if self.is_using_slack_variable and prob.status == cp.OPTIMAL:
+        if self.is_relax_cbf and prob.status == cp.OPTIMAL:
             s_h_veh_opt = s_h_veh.value
         else:
             s_h_veh_opt = 0
@@ -1472,7 +1472,7 @@ class CBF:
         # Store cost for later plotting
         u_1_cost = (u_i_opt[0] - u_nominal_i[0]) ** 2 * self.Q[0, 0]
         u_2_cost = (u_i_opt[1] - u_nominal_i[1]) ** 2 * self.Q[1, 1]
-        if self.is_using_slack_variable:
+        if self.is_relax_cbf:
             cost_s_h_veh = penalty_s_veh * s_h_veh_opt
         else:
             cost_s_h_veh = 0
@@ -2248,7 +2248,7 @@ class CBF:
             label=r"$\Phi_{2}$ (CBF condition 2)",
         )
 
-        if self.is_using_slack_variable:
+        if self.is_relax_cbf:
             (visu_psi_0_predict,) = ax2.plot(
                 [],
                 [],
@@ -2308,7 +2308,7 @@ class CBF:
                 ls="-.",
                 label="Cost for nominal steering rate",
             )
-            if self.is_using_slack_variable:
+            if self.is_relax_cbf:
                 (visu_cost_slack_variable,) = ax3.plot(
                     [],
                     [],
@@ -2487,7 +2487,7 @@ class CBF:
 
         self.visu_psi_1.set_data(self.list_time, self.list_cbf_condition_1_ji)
 
-        if self.is_using_slack_variable:
+        if self.is_relax_cbf:
             self.visu_psi_0_predict.set_data(self.list_time, self.list_psi_0_predict)
             self.visu_slack_variable.set_data(self.list_time, self.list_s_h_veh)
 
@@ -2804,7 +2804,7 @@ class CBF:
 def main(
     scenario_type: str,
     sm_type: str,
-    is_using_slack_variable: bool = True,
+    is_relax_cbf: bool = True,
     is_save_video: bool = False,
     is_save_eval_result: bool = False,
     is_visu_ref_path: bool = False,
@@ -2818,7 +2818,7 @@ def main(
     simulation = CBF(
         scenario_type=scenario_type,
         sm_type=sm_type,
-        is_using_slack_variable=is_using_slack_variable,
+        is_relax_cbf=is_relax_cbf,
         is_save_video=is_save_video,
         is_save_eval_result=is_save_eval_result,
         is_visu_ref_path=is_visu_ref_path,
@@ -2843,7 +2843,7 @@ if __name__ == "__main__":
     main(
         scenario_type="overtaking",  # One of "overtaking" and "bypassing"
         sm_type="mtv",  # One of "c2c" and "mtv"
-        is_using_slack_variable=True,
+        is_relax_cbf=True,
         is_save_video=False,  # If True, video will be saved without live visualization
         is_save_eval_result=True,
         is_visu_ref_path=True,

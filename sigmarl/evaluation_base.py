@@ -8,6 +8,8 @@ import torch
 import numpy as np
 from termcolor import colored, cprint
 
+from vmas.simulator.utils import save_video
+
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import matplotlib
