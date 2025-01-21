@@ -5,7 +5,7 @@
 
 import os
 import numpy as np
-from termcolor import cprint
+from termcolor import cprint, colored
 import torch
 from torch import Tensor
 
@@ -129,14 +129,17 @@ class CBF:
 
         self.lane_width = self.width * 1.8  # Lane width
 
+        self.is_using_slack_variable = kwargs.get("is_using_slack_variable", False)
+
         self.is_save_video = kwargs.get("is_save_video", False)
+        self.is_save_eval_result = kwargs.get("is_save_eval_result", True)
         self.is_visu_ref_path = kwargs.get("is_visu_ref_path", False)
         self.is_visu_footprint = kwargs.get("is_visu_footprint", True)
         self.is_visu_nominal_action = kwargs.get("is_visu_nominal_action", False)
         self.is_visu_cbf_action = kwargs.get("is_visu_cbf_action", False)
         self.is_visu_time = kwargs.get("is_visu_time", True)
         self.is_visu_cost = kwargs.get("is_visu_cost", False)
-        self.is_save_eval_result = kwargs.get("is_save_eval_result", True)
+        self.is_visu_actual_sm = kwargs.get("is_visu_actual_sm", False)
 
         self.font_size_video = 16
 
@@ -158,18 +161,15 @@ class CBF:
         self.is_overtake = False  # Whether agent i is overtaking agent j
         self.list_is_overtake = [self.is_overtake]
 
-        self.is_obstructe = False  # Whether agent j is obstructing agent i
-        self.list_is_obstructe = [self.is_obstructe]
-        self.obstructe_times_max = 3  # Number of times agent j obstructes agent i
-        self.n_success_obstructe = (
-            0  # Number of times agent j successfully obstructes agent i
+        self.is_obstruct = False  # Whether agent j is obstructing agent i
+        self.list_is_obstruct = [self.is_obstruct]
+        self.obstruct_times_max = 3  # Number of times agent j obstructs agent i
+        self.n_success_obstruct = (
+            0  # Number of times agent j successfully obstructs agent i
         )
 
-        self.safety_buffer = 0
-        self.add_longitudinal_safety_buffer = False
-
         self.overtake_target_lane = None  # Agent 1's target lane for overtaking
-        self.obstructe_target_lane = None  # Agent 2's target lane for bypassing
+        self.obstruct_target_lane = None  # Agent 2's target lane for bypassing
 
         # y-coordinate of lane boundaries
         self.y_lane_top_bound = self.lane_width
@@ -188,9 +188,9 @@ class CBF:
             3 * self.length
         )  # If agents' longitudinal distance is less than this value, one agent will overtake another agent, given they are within the same lane
 
-        self.threshold_obstructe = (
-            2 * self.length
-        )  # If agents' longitudinal distance is less than this value, agent j will obstructe agent i
+        self.threshold_obstruct = (
+            3 * self.length
+        )  # If agents' longitudinal distance is less than this value, agent j will obstruct agent i
 
         # Two scenarios are available:
         # (1) overtaking: the ego agent, controlled by a greedy RL policy with CBF verification,
@@ -236,7 +236,7 @@ class CBF:
             if self.sm_type.lower() == "c2c":
                 # Overtaking & C2C
                 self.total_time = 7.0  # Total simulation time
-                self.lambda_cbf = 2  # Design parameter for CBF
+                self.alpha_cbf = 2  # Design parameter for CBF
                 self.w_acc = 0.1  # Weight for acceleration in QP
                 self.w_steer = 0.1  # Weight for steering rate in QP
                 self.Q = np.diag(
@@ -245,7 +245,7 @@ class CBF:
             else:
                 # Overtaking & MTV
                 self.total_time = 7.0  # Total simulation time
-                self.lambda_cbf = 2  # Design parameter for CBF
+                self.alpha_cbf = 2  # Design parameter for CBF
                 self.w_acc = 0.1  # Weight for acceleration in QP
                 self.w_steer = 0.1  # Weight for steering rate in QP
                 self.Q = np.diag(
@@ -277,13 +277,13 @@ class CBF:
                 # Bypassing & C2C
                 self.total_time = 3.8  # Total simulation time
 
-                self.lambda_cbf = 3  # Design parameter for CBF
-                self.evasion_step_start = 10
-                self.evasion_step_end = 50
-                self.evasive_offset = self.radius * 1.3
+                self.alpha_cbf = 2  # Design parameter for CBF
+                self.evasion_step_start = 0
+                self.evasion_step_end = 30
+                self.evasive_offset = self.radius * 1.8
 
-                self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 1  # Weight for steering rate in QP
+                self.w_acc = 0.1  # Weight for acceleration in QP
+                self.w_steer = 0.1  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
@@ -291,13 +291,13 @@ class CBF:
                 # Bypassing & MTV
                 self.total_time = 3.0  # Total simulation time
 
-                self.lambda_cbf = 6  # Design parameter for CBF
-                self.evasion_step_start = 15
-                self.evasion_step_end = 40
-                self.evasive_offset = 0.5 * self.lane_width
+                self.alpha_cbf = 2  # Design parameter for CBF
+                self.evasion_step_start = 0
+                self.evasion_step_end = 30
+                self.evasive_offset = 0.6 * self.lane_width
 
-                self.w_acc = 1  # Weight for acceleration in QP
-                self.w_steer = 1  # Weight for steering rate in QP
+                self.w_acc = 0.1  # Weight for acceleration in QP
+                self.w_steer = 0.1  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
@@ -314,9 +314,9 @@ class CBF:
         self.color_psi_1 = "tab:orange"  # CBF condition 1
         self.color_psi_2 = "tab:green"  # CBF condition 2
 
+        self.color_cost_total = "tab:orange"
         self.color_cost_acc = "tab:blue"
-        self.color_cost_steer = "tab:orange"
-        self.color_cost_total = "tab:green"
+        self.color_cost_steer = "tab:green"
 
         # RL policy
         self.rl_policy_path = "checkpoints/ecc25/nominal_controller.pth"
@@ -347,15 +347,21 @@ class CBF:
         self.list_cbf_condition_1_ij = []
         self.list_cbf_condition_2_ij = []
 
+        self.list_s_h_veh = []
+        self.list_psi_0_predict = []
+
         self.list_time = []
 
         self.list_rectangles_i = []
         self.list_rectangles_j = []
 
+        self.list_actual_sm = []
+
         self.list_opt_duration = []
 
         self.list_cost_acc = []
         self.list_cost_steer = []
+        self.list_cost_slack_variable = []
         self.list_cost_total = []
         self.list_is_solve_success = []
 
@@ -713,7 +719,10 @@ class CBF:
         Returns:
             tuple: h, dot_h, ddot_h, cbf_condition_1, cbf_condition_2
         """
-        h = sm - self.safety_buffer
+        if self.sm_type.lower() == "mtv":
+            h = sm - self.SME.error_upper_bound
+        else:
+            h = sm
 
         # Compute dot_h
         dot_h = grad_sm @ dstate_time
@@ -722,12 +731,10 @@ class CBF:
         ddot_h = grad_sm @ ddstate_time + dstate_time.T @ hessian_sm @ dstate_time
 
         # First-order CBF condition
-        cbf_condition_1 = dot_h + self.lambda_cbf * h
+        cbf_condition_1 = dot_h + self.alpha_cbf * h
 
         # Second-order CBF condition
-        cbf_condition_2 = (
-            ddot_h + 2 * self.lambda_cbf * dot_h + self.lambda_cbf**2 * h
-        )
+        cbf_condition_2 = ddot_h + 2 * self.alpha_cbf * dot_h + self.alpha_cbf**2 * h
 
         if self.step == 1:
             # The first-order CBF condition and the CBF value at the first step should be greater than 0 to use the forward invariance property of CBF
@@ -761,9 +768,12 @@ class CBF:
         ddx_i, ddy_i, ddpsi_i = self.compute_dstate_2nd_time(
             u_i, self.state_i, self.dstate_time_i
         )
+        self.ddstate_time_i = [ddx_i, ddy_i, ddpsi_i]
+
         ddx_j, ddy_j, ddpsi_j = self.compute_dstate_2nd_time(
             u_j, self.state_j, self.dstate_time_j
         )
+        self.ddstate_time_j = [ddx_j, ddy_j, ddpsi_j]
 
         [dx_ji_global, dy_ji_global, dpsi_ji_global] = dstate_time_ji_global
         # Compute relative second derivatives
@@ -955,12 +965,12 @@ class CBF:
                     + torch.arange(1, self.rl_n_points_ref + 1, device=self.device)
                     * self.rl_distance_between_points_ref_path
                 )
-                if self.is_obstructe:
+                if self.is_obstruct:
                     print("Agent j is obstructing agent i!")
                     # Switch to the target lane of agent i
                     ref_points_y = (
                         self.y_lane_1
-                        if self.obstructe_target_lane == "1"
+                        if self.obstruct_target_lane == "1"
                         else self.y_lane_2
                     )
                 else:
@@ -1044,11 +1054,10 @@ class CBF:
         Returns:
             list: Updated plot elements.
         """
-        self.list_time.append(self.step * self.dt)
-        self.step += 1
         print(
             f"------------Step: {self.step}--Time: {frame * self.dt:.2f}s------------"
         )
+        self.list_time.append(self.step * self.dt)
 
         if self.scenario_type.lower() == "overtaking":
             # Update flags such as lane, overtaking, obstructing, etc., for the overtaking scenario
@@ -1139,57 +1148,223 @@ class CBF:
             dstate_time_ji, ddstate_time_ji, sm_ji, grad_sm_ji, hessian_sm_ji
         )
 
+        penalty_s_veh = 20000
+        penalty_s_boundary = 20000
+        if self.is_using_slack_variable:
+            s_h_veh = cp.Variable(name="s_h_veh", nonneg=True)
+            s_h_boundary_top_i = cp.Variable(name="s_h_boundary_top_i", nonneg=True)
+            s_h_boundary_bottom_i = cp.Variable(
+                name="s_h_boundary_bottom_i", nonneg=True
+            )
+
+            if self.scenario_type.lower() == "bypassing":
+                s_h_boundary_top_j = cp.Variable(name="s_h_boundary_top_j", nonneg=True)
+                s_h_boundary_bottom_j = cp.Variable(
+                    name="s_h_boundary_bottom_j", nonneg=True
+                )
+        else:
+            s_h_veh = 0
+            s_h_boundary_top_i = 0
+            s_h_boundary_bottom_i = 0
+            s_h_boundary_top_j = 0
+            s_h_boundary_bottom_j = 0
+
+        D_long = self.compute_long_lat_relation(
+            self.state_i[0],
+            self.state_i[1],
+            self.state_i[2],
+            self.state_j[0],
+            self.state_j[1],
+            self.state_j[2],
+            kappa=20,
+        )
+
+        # Adapt the penalty of the slack variable based on the degree of longitudinal relation
+        # The penalty should be higher when the vehicles are more aligned longitudinally to discourage the solver from using slack variable
+        # The penalty should be lower when the vehicles are more aligned laterally to encourage the solver to use slack variable
+        penalty_s_veh *= D_long
+
+        # Predict the value of psi_0 at the next time step
+        psi_0_predict = h_ji + dot_h_ji * self.dt + 1 / 2 * ddot_h_ji * self.dt**2
+        if self.is_using_slack_variable:
+            scale_factor = 18  # The vehicles are 1:18 scaled
+            speed_related_offset = max(
+                1.8 / scale_factor * self.state_i[3].numpy(), 0
+            )  # 1.8 is the commonly used headway. The offset is scaled by the scale of the vehicles. Max is used to ensure the offset is non-negative.
+            constant_offset = (
+                self.length
+            )  # A constant distance offset for low speed cases
+            default_veh_d_offset = (
+                speed_related_offset + constant_offset
+            )  # A default distance offset that encourage a larger safety distance, especially useful for maintaining a safe longitudinal distance; the slack variable will be introduced to enable overtaking
+            default_boundary_d_offset = (
+                self.width / 10
+            )  # A default distance offset for the boundary
+        else:
+            default_veh_d_offset = 0
+            default_boundary_d_offset = 0
+
+        # Vehicle i's distance to road top boundary
+        (
+            distance_road_top_i,
+            gradient_road_top_i,
+            hessian_road_top_i,
+        ) = self.compute_distance_gradient_hessian(
+            self.state_i[0], self.state_i[1], self.state_i[2], which_boundary="top"
+        )
+        h_road_top_predict_i = self.predict_h_next(
+            distance_road_top_i,
+            gradient_road_top_i,
+            hessian_road_top_i,
+            self.dstate_time_i[0:3].numpy(),
+            self.ddstate_time_i,
+            self.dt,
+        )
+        # Vehicle i's distance to road bottom boundary
+        (
+            distance_road_bottom_i,
+            gradient_road_bottom_i,
+            hessian_road_bottom_i,
+        ) = self.compute_distance_gradient_hessian(
+            self.state_i[0], self.state_i[1], self.state_i[2], which_boundary="bottom"
+        )
+        h_road_bottom_predict_i = self.predict_h_next(
+            distance_road_bottom_i,
+            gradient_road_bottom_i,
+            hessian_road_bottom_i,
+            self.dstate_time_i[0:3].numpy(),
+            self.ddstate_time_i,
+            self.dt,
+        )
+
+        if self.scenario_type.lower() == "bypassing":
+            # Vehicle j's distance to road top boundary
+            (
+                distance_road_top_j,
+                gradient_road_top_j,
+                hessian_road_top_j,
+            ) = self.compute_distance_gradient_hessian(
+                self.state_j[0], self.state_j[1], self.state_j[2], which_boundary="top"
+            )
+            h_road_top_predict_j = self.predict_h_next(
+                distance_road_top_j,
+                gradient_road_top_j,
+                hessian_road_top_j,
+                self.dstate_time_j[0:3].numpy(),
+                self.ddstate_time_j,
+                self.dt,
+            )
+            # Vehicle j's distance to road bottom boundary
+            (
+                distance_road_bottom_j,
+                gradient_road_bottom_j,
+                hessian_road_bottom_j,
+            ) = self.compute_distance_gradient_hessian(
+                self.state_j[0],
+                self.state_j[1],
+                self.state_j[2],
+                which_boundary="bottom",
+            )
+            h_road_bottom_predict_j = self.predict_h_next(
+                distance_road_bottom_j,
+                gradient_road_bottom_j,
+                hessian_road_bottom_j,
+                self.dstate_time_j[0:3].numpy(),
+                self.ddstate_time_j,
+                self.dt,
+            )
+
         if self.scenario_type.lower() == "overtaking":
             # Objective: Minimize weighted squared deviation from nominal control inputs
-            objective = cp.Minimize(cp.quad_form(u_i - u_nominal_i, self.Q))
+            # and the slack variable to ensure it remains small
+            if self.is_using_slack_variable:
+                objective = cp.Minimize(
+                    cp.quad_form(
+                        u_i - u_nominal_i, self.Q
+                    )  # Penalize the deviation from nominal control inputs
+                    + penalty_s_veh * cp.square(s_h_veh)
+                    + penalty_s_boundary * cp.square(s_h_boundary_top_i)
+                    + penalty_s_boundary * cp.square(s_h_boundary_bottom_i)
+                )
+            else:
+                objective = cp.Minimize(
+                    cp.quad_form(
+                        u_i - u_nominal_i, self.Q
+                    )  # Penalize the deviation from nominal control inputs
+                )
+
             constraints = [
-                cbf_condition_2_ji >= 0,
+                # Avoid collisions with the other vehicle
+                psi_0_predict >= default_veh_d_offset - s_h_veh,
+                # Avoid collisions with road boundaries
+                h_road_top_predict_i >= default_boundary_d_offset - s_h_boundary_top_i,
+                h_road_bottom_predict_i
+                >= default_boundary_d_offset - s_h_boundary_bottom_i,
+                # Control input constraints for vehicle i
                 self.a_min <= u_i[0],
                 u_i[0] <= self.a_max,
                 self.steering_rate_min <= u_i[1],
                 u_i[1] <= self.steering_rate_max,
             ]
-
         else:
-            x_ij, y_ij, psi_ij, _ = self.compute_relative_poses(
-                self.state_j[0],
-                self.state_j[1],
-                self.state_j[2],
-                self.state_i[0],
-                self.state_i[1],
-                self.state_i[2],
-                self.sm_type,
-            )
-            sm_ij, grad_sm_ij, hessian_sm_ij = self.estimate_safety_margin(
-                x_ij, y_ij, psi_ij
-            )
-            (
-                h_ij,
-                dot_h_ij,
-                ddot_h_ij,
-                cbf_condition_1_ij,
-                cbf_condition_2_ij,
-            ) = self.compute_cbf_conditions(
-                dstate_time_ij, ddstate_time_ij, sm_ij, grad_sm_ij, hessian_sm_ij
-            )
-
             # Objective: Minimize weighted squared deviation from nominal control inputs
-            objective = cp.Minimize(
-                cp.quad_form(u_i - u_nominal_i, self.Q)
-                + cp.quad_form(u_j - u_nominal_j, self.Q)
-            )
+            if self.is_using_slack_variable:
+                objective = cp.Minimize(
+                    cp.quad_form(
+                        u_i - u_nominal_i, self.Q
+                    )  # Penalize the deviation from nominal control inputs
+                    + cp.quad_form(
+                        u_j - u_nominal_j, self.Q
+                    )  # Penalize the deviation from nominal control inputs
+                    + penalty_s_veh * cp.square(s_h_veh)
+                    + penalty_s_boundary * cp.square(s_h_boundary_top_i)
+                    + penalty_s_boundary * cp.square(s_h_boundary_bottom_i)
+                    + penalty_s_boundary * cp.square(s_h_boundary_top_j)
+                    + penalty_s_boundary * cp.square(s_h_boundary_bottom_j)
+                )
+            else:
+                objective = cp.Minimize(
+                    cp.quad_form(
+                        u_i - u_nominal_i, self.Q
+                    )  # Penalize the deviation from nominal control inputs
+                    + cp.quad_form(
+                        u_j - u_nominal_j, self.Q
+                    )  # Penalize the deviation from nominal control inputs
+                )
             constraints = [
-                cbf_condition_2_ji >= 0,
+                # Avoid collisions with the other vehicle
+                psi_0_predict >= default_veh_d_offset - s_h_veh,
+                # Avoid collisions with road boundaries
+                h_road_top_predict_i >= default_boundary_d_offset - s_h_boundary_top_i,
+                h_road_bottom_predict_i
+                >= default_boundary_d_offset - s_h_boundary_bottom_i,
+                h_road_top_predict_j >= default_boundary_d_offset - s_h_boundary_top_j,
+                h_road_bottom_predict_j
+                >= default_boundary_d_offset - s_h_boundary_bottom_j,
+                # Control input constraints for vehicle i
                 self.a_min <= u_i[0],
                 u_i[0] <= self.a_max,
                 self.steering_rate_min <= u_i[1],
                 u_i[1] <= self.steering_rate_max,
-                # cbf_condition_2_ij >= 0,  # This is unnecessary because it is the same as cbf_condition_2_ji
+                # Control input constraints for vehicle j
                 self.a_min <= u_j[0],
                 u_j[0] <= self.a_max,
                 self.steering_rate_min <= u_j[1],
                 u_j[1] <= self.steering_rate_max,
             ]
+
+        if self.is_using_slack_variable:
+            constraints += [
+                s_h_veh <= default_veh_d_offset,
+                s_h_boundary_top_i <= default_boundary_d_offset,
+                s_h_boundary_bottom_i <= default_boundary_d_offset,
+            ]
+
+            if self.scenario_type.lower() == "bypassing":
+                constraints += [
+                    s_h_boundary_top_j <= default_boundary_d_offset,
+                    s_h_boundary_bottom_j <= default_boundary_d_offset,
+                ]
 
         # Solve QP to get optimal control inputs for vehicle i
         # Formulate and solve the QP with custom solver settings
@@ -1199,56 +1374,25 @@ class CBF:
         prob.solve(
             solver=cp.OSQP,  # DCP, DQCP
             verbose=False,  # Set to True for solver details
-            eps_abs=1e-5,
-            eps_rel=1e-5,
+            eps_abs=1e-3,
+            eps_rel=1e-3,
             max_iter=1000,
         )
+
+        assert prob.is_dcp()  # Check if the problem is convex
 
         opt_duration = time.time() - t_start
         self.list_opt_duration.append(opt_duration)
 
         # print(f"Cost: {prob.value:.4f}")
+
         if self.scenario_type.lower() == "overtaking":
             if prob.status != cp.OPTIMAL:
                 print(f"Warning: QP not solved optimally. Status: {prob.status}")
                 u_i_opt = u_nominal_i
             else:
                 u_i_opt = u_i.value
-
             u_j_opt = u_nominal_j
-            (
-                dstate_time_ji_opt,
-                ddstate_time_ji_opt,
-                _,
-                _,
-            ) = self.compute_state_time_derivatives(u_i_opt, u_j_opt)
-
-            # Recompute CBF conditions with actual control actions (just for debugging)
-            (
-                h_ji_opt,
-                dot_h_ji_opt,
-                ddot_h_ji_opt,
-                cbf_condition_1_ji_opt,
-                cbf_condition_2_ji_opt,
-            ) = self.eval_cbf_conditions(
-                dstate_time_ji_opt, ddstate_time_ji_opt, x_ji, y_ji, psi_ji
-            )
-
-            # Append to lists
-            if self.add_longitudinal_safety_buffer:
-                self.list_h_ji.append(h_ji_opt + self.length / 4)
-            else:
-                self.list_h_ji.append(h_ji_opt)
-            self.list_dot_h_ji.append(dot_h_ji_opt)
-            self.list_ddot_h_ji.append(ddot_h_ji_opt)
-            self.list_cbf_condition_1_ji.append(cbf_condition_1_ji_opt)
-            self.list_cbf_condition_2_ji.append(cbf_condition_2_ji_opt)
-
-            # The variables on the left side should be the same as the ones on the right side as they do not depend on the control actions
-            assert h_ji_opt == h_ji
-            assert dot_h_ji_opt == dot_h_ji
-            assert cbf_condition_1_ji_opt == cbf_condition_1_ji
-
         else:
             if prob.status != cp.OPTIMAL:
                 print(f"Warning: QP not solved optimally. Status: {prob.status}")
@@ -1258,64 +1402,88 @@ class CBF:
                 u_i_opt = u_i.value
                 u_j_opt = u_j.value
 
-            # Recompute CBF conditions with actual control actions
-            (
-                dstate_time_ji_opt,
-                ddstate_time_ji_opt,
-                dstate_time_ij_opt,
-                ddstate_time_ij_opt,
-            ) = self.compute_state_time_derivatives(u_i_opt, u_j_opt)
+        # Store slack variable for later plotting
+        if self.is_using_slack_variable and prob.status == cp.OPTIMAL:
+            s_h_veh_opt = s_h_veh.value
+        else:
+            s_h_veh_opt = 0
+        self.list_s_h_veh.append(s_h_veh_opt)
 
-            # Recompute CBF conditions with actual control actions
-            (
-                h_ji_opt,
-                dot_h_ji_opt,
-                ddot_h_ji_opt,
-                cbf_condition_1_ji_opt,
-                cbf_condition_2_ji_opt,
-            ) = self.eval_cbf_conditions(
-                dstate_time_ji_opt, ddstate_time_ji_opt, x_ji, y_ji, psi_ji
-            )
-            (
-                h_ij_opt,
-                dot_h_ij_opt,
-                ddot_h_ij_opt,
-                cbf_condition_1_ij_opt,
-                cbf_condition_2_ij_opt,
-            ) = self.eval_cbf_conditions(
-                dstate_time_ij_opt, ddstate_time_ij_opt, x_ij, y_ij, psi_ij
-            )
+        # Recompute CBF conditions with actual control actions
+        (
+            dstate_time_ji_opt,
+            ddstate_time_ji_opt,
+            dstate_time_ij_opt,
+            ddstate_time_ij_opt,
+        ) = self.compute_state_time_derivatives(u_i_opt, u_j_opt)
 
-            # Append to lists for later plotting
-            self.list_h_ji.append(h_ji_opt)
-            self.list_dot_h_ji.append(dot_h_ji_opt)
-            self.list_ddot_h_ji.append(ddot_h_ji_opt)
-            self.list_cbf_condition_1_ji.append(cbf_condition_1_ji_opt)
-            self.list_cbf_condition_2_ji.append(cbf_condition_2_ji_opt)
-            self.list_h_ij.append(h_ij_opt)
-            self.list_dot_h_ij.append(dot_h_ij_opt)
-            self.list_ddot_h_ij.append(ddot_h_ij_opt)
-            self.list_cbf_condition_1_ij.append(cbf_condition_1_ij_opt)
-            self.list_cbf_condition_2_ij.append(cbf_condition_2_ij_opt)
+        # Recompute CBF conditions with actual control actions
+        (
+            h_ji_opt,
+            dot_h_ji_opt,
+            ddot_h_ji_opt,
+            cbf_condition_1_ji_opt,
+            cbf_condition_2_ji_opt,
+        ) = self.eval_cbf_conditions(
+            dstate_time_ji_opt, ddstate_time_ji_opt, x_ji, y_ji, psi_ji
+        )
 
-            # The variables on the left side should be the same as the ones on the right side as they do not depend on the control actions
-            assert h_ji_opt == h_ji
-            assert dot_h_ji_opt == dot_h_ji
-            assert cbf_condition_1_ji_opt == cbf_condition_1_ji
+        h_road_top_predict_opt_i = self.predict_h_next(
+            distance_road_top_i,
+            gradient_road_top_i,
+            hessian_road_top_i,
+            self.dstate_time_i[0:3].numpy(),
+            self.ddstate_time_i,
+            self.dt,
+        )
+        h_road_bottom_predict_opt_i = self.predict_h_next(
+            distance_road_bottom_i,
+            gradient_road_bottom_i,
+            hessian_road_bottom_i,
+            self.dstate_time_i[0:3].numpy(),
+            self.ddstate_time_i,
+            self.dt,
+        )
 
-            assert h_ij_opt == h_ij
-            assert dot_h_ij_opt == dot_h_ij
-            assert cbf_condition_1_ij_opt == cbf_condition_1_ij
+        print(f"distance_road_top_i: {distance_road_top_i}")
+        print(f"h_road_top_predict_opt_i: {h_road_top_predict_opt_i}")
+        print(f"distance_road_bottom_i: {distance_road_bottom_i}")
+        print(f"h_road_bottom_predict_opt_i: {h_road_bottom_predict_opt_i}")
 
+        # Append to lists
+        self.list_h_ji.append(h_ji_opt)
+        self.list_dot_h_ji.append(dot_h_ji_opt)
+        self.list_ddot_h_ji.append(ddot_h_ji_opt)
+        self.list_cbf_condition_1_ji.append(cbf_condition_1_ji_opt)
+        self.list_cbf_condition_2_ji.append(cbf_condition_2_ji_opt)
+
+        # The variables on the left side should be the same as the ones on the right side as they do not depend on the control actions
+        assert h_ji_opt == h_ji
+        assert dot_h_ji_opt == dot_h_ji
+        assert cbf_condition_1_ji_opt == cbf_condition_1_ji
+
+        # Use Taylor expansion to predict the value of psi_0 at the next time step
+        # psi_0_predict_opt = k_0 * h_ji_opt + k_1 * cbf_condition_1_ji_opt + 1 / 2 * self.dt**2 * cbf_condition_2_ji_opt
+        psi_0_predict_opt = (
+            h_ji_opt + dot_h_ji_opt * self.dt + 1 / 2 * ddot_h_ji_opt * self.dt**2
+        )
+        self.list_psi_0_predict.append(psi_0_predict_opt)
+
+        # Store cost for later plotting
         u_1_cost = (u_i_opt[0] - u_nominal_i[0]) ** 2 * self.Q[0, 0]
         u_2_cost = (u_i_opt[1] - u_nominal_i[1]) ** 2 * self.Q[1, 1]
+        if self.is_using_slack_variable:
+            cost_s_h_veh = penalty_s_veh * s_h_veh_opt
+        else:
+            cost_s_h_veh = 0
         self.list_cost_acc.append(u_1_cost)
         self.list_cost_steer.append(u_2_cost)
-        self.list_cost_total.append(u_1_cost + u_2_cost)
+        self.list_cost_slack_variable.append(cost_s_h_veh)
+        self.list_cost_total.append(u_1_cost + u_2_cost + cost_s_h_veh)
 
         if prob.status == cp.OPTIMAL:
             self.list_is_solve_success.append(1)  # 1: success
-            assert abs(prob.value - (u_1_cost + u_2_cost)) < 1e-3
+            # assert abs(prob.value - (u_1_cost + u_2_cost)) < 1e-3
         else:
             self.list_is_solve_success.append(0)  # 0: fail
 
@@ -1334,6 +1502,9 @@ class CBF:
         self.target_rotation_j = (self.target_rotation_j + np.pi) % (
             2 * np.pi
         ) - np.pi  # Normalize to [-pi, pi]
+
+        # Update plot elements (before updating agent states)
+        self.update_plot_elements()
 
         # Update state
         self.state_i, _, _ = self.kbm.step(
@@ -1357,11 +1528,10 @@ class CBF:
         if self.scenario_type.lower() == "overtaking":
             self.update_flags_posterior()
 
-        # Update plot elements including arrows
-        self.update_plot_elements()
-
         if (self.step == self.num_steps + 1) and not self.is_save_video:
-            print("Close the plot window to continue:")
+            print("Close the plot window to continue...")
+
+        self.step += 1
 
         return [
             self.fig,
@@ -1418,11 +1588,12 @@ class CBF:
                 lane == "2" for lane in self.list_lane_j[-self.within_lane_threshold :]
             )
 
-        # Agent i will contibue overtaking if it was previously in an overtaking state, or it starts overtaking if the following conditions are satisfied
+        # Agent i will continue overtaking if it was previously in an overtaking state, or it starts overtaking if the following conditions are satisfied
         # Condition 1: both agents are within same lane
         self.overtake_condition_1 = (within_lane_1_i and within_lane_1_j) or (
             within_lane_2_i and within_lane_2_j
         )
+        self.within_same_lane = self.overtake_condition_1
         # Condition 2: longitudinal distance is less than a threshold
         self.overtake_condition_2 = (
             self.state_i[0] - self.state_j[0]
@@ -1438,41 +1609,27 @@ class CBF:
                 "2" if (within_lane_1_i and within_lane_1_j) else "1"
             )
 
-        # Before actual overtaking, purposely use a larger safety buffer to ensure enough longitudinal distance; when actual overtaking, switch to a smaller safety buffer, which equals the upper bound of the safety margin estimation error
-        if (
-            self.scenario_type.lower() == "overtaking"
-            and self.sm_type.lower() == "mtv"
-            and self.n_success_obstructe < self.obstructe_times_max
-        ):
-            self.safety_buffer = self.SME.error_upper_bound + self.length / 4
-            self.add_longitudinal_safety_buffer = True
-        else:
-            self.safety_buffer = self.SME.error_upper_bound
-            self.add_longitudinal_safety_buffer = False
-
         # Agent i will continue obstructing agent j if it was previously in an obstructing state, or it starts obstructing if the following conditions are satisfied
         # Condition 1: agent i is on an overtaking
-        obstructe_condition_1 = self.is_overtake
-        # Condition 2: agent j will not obstructe agent i if it has obstructed agent i for more than a certain number of times
-        if self.n_success_obstructe >= self.obstructe_times_max:
-            obstructe_condition_2 = False
+        obstruct_condition_1 = self.is_overtake
+        # Condition 2: agent j will not obstruct agent i if it has obstructd agent i for more than a certain number of times
+        if self.n_success_obstruct >= self.obstruct_times_max:
+            obstruct_condition_2 = False
         else:
-            obstructe_condition_2 = True
+            obstruct_condition_2 = True
         # Condition 3: their longitudinal distance is less than a threshold
-        obstructe_condition_3 = (
+        obstruct_condition_3 = (
             self.state_i[0] - self.state_j[0]
-        ).abs().item() < self.threshold_obstructe
-        if self.list_is_obstructe[-1]:
+        ).abs().item() < self.threshold_obstruct
+        if self.list_is_obstruct[-1]:
             # Continue obstructing
-            self.is_obstructe = True
+            self.is_obstruct = True
         else:
-            self.is_obstructe = (
-                obstructe_condition_1
-                and obstructe_condition_2
-                and obstructe_condition_3
+            self.is_obstruct = (
+                obstruct_condition_1 and obstruct_condition_2 and obstruct_condition_3
             )
-        if self.obstructe_target_lane is None:
-            self.obstructe_target_lane = self.overtake_target_lane
+        if self.obstruct_target_lane is None:
+            self.obstruct_target_lane = self.overtake_target_lane
 
         print(f"Lane of agent i: {self.lane_i}; Lane of agent j: {self.lane_j}")
 
@@ -1489,9 +1646,9 @@ class CBF:
             print("Agent i successfully overtakes agent j!")
             self.fail_overtake = False
             self.is_overtake = False
-            self.is_obstructe = False
+            self.is_obstruct = False
             self.overtake_target_lane = None
-            self.obstructe_target_lane = None
+            self.obstruct_target_lane = None
         else:
             # Agent i fails to overtake if the following conditions are satisfied
             # Condition 1: it used to be in an overtaking state at least for a certain duration
@@ -1499,7 +1656,7 @@ class CBF:
                 self.list_is_overtake[-10:]
             )
             # Condition 2: It is (again) on the same lane as agent j
-            fail_condition_2 = self.overtake_condition_1
+            fail_condition_2 = self.within_same_lane
             self.fail_overtake = fail_condition_1 and fail_condition_2
 
             # Reset overtaking and obstructing flags if agent i fails
@@ -1507,13 +1664,13 @@ class CBF:
                 print("Agent i fails to overtake agent j!")
                 self.success_overtake = False
                 self.is_overtake = False
-                self.is_obstructe = False
+                self.is_obstruct = False
                 self.overtake_target_lane = None
-                self.obstructe_target_lane = None
-                self.n_success_obstructe += 1
+                self.obstruct_target_lane = None
+                self.n_success_obstruct += 1
 
         self.list_is_overtake.append(self.is_overtake)
-        self.list_is_obstructe.append(self.is_obstructe)
+        self.list_is_obstruct.append(self.is_obstruct)
 
     def compute_rectangles(self):
         """
@@ -1542,6 +1699,7 @@ class CBF:
         actual_sm = get_distances_between_agents(
             vertices, distance_type="mtv", is_set_diagonal=False
         )[0, 0, 1].item()
+        self.list_actual_sm.append(actual_sm)
 
         # Append for later plotting
         self.list_rectangles_i.append(rect_i_vertices)
@@ -1609,6 +1767,196 @@ class CBF:
 
         return u_nominal
 
+    @staticmethod
+    def predict_h_next(h_0, gradient_0, hessian_0, dstate_time, ddstate_time, dt):
+        dot_h_0 = gradient_0 @ dstate_time
+        ddot_h_0 = gradient_0 @ ddstate_time + dstate_time.T @ hessian_0 @ dstate_time
+        h_predict = h_0 + dot_h_0 * dt + 1 / 2 * ddot_h_0 * dt**2
+        return h_predict
+
+    def distance_to_road_top_boundary(self, x, y, rot):
+        """
+        Compute the distance to the road top boundary at a given point (x, y) with a given rotation (rot)
+        """
+        return self.y_lane_top_bound - y - self.width / 2
+
+    def distance_to_road_bottom_boundary(self, x, y, rot):
+        """
+        Compute the distance to the road bottom boundary at a given point (x, y) with a given rotation (rot)
+        """
+        return y - self.y_lane_bottom_bound - self.width / 2
+
+    def compute_distance_gradient_hessian(
+        self,
+        x_center: float,
+        y_center: float,
+        rot_center: float,
+        num_points_x: int = 5,
+        num_points_y: int = 5,
+        num_points_rot: int = 5,
+        step_x: float = 0.04,
+        step_y: float = 0.04,
+        step_rot: float = 15.0,
+        which_boundary: str = "top",
+    ):
+        """
+        Generate a 3D grid map around the input rectangle state (x_center, y_center, rot_center).
+        Compute the distance of each grid point to the road boundary, then compute the gradient
+        and Hessian matrix of the distance only at the center grid point (x_center, y_center, rot_center).
+
+        Args:
+            x_center (float): Center position in the x dimension.
+            y_center (float): Center position in the y dimension.
+            rot_center (float): Center rotation in degrees.
+            num_points_x (int): Number of discrete points along the x dimension (must be odd).
+            num_points_y (int): Number of discrete points along the y dimension (must be odd).
+            num_points_rot (int): Number of discrete points along the rotation dimension (must be odd).
+            step_x (float): Spacing in meters along the x dimension.
+            step_y (float): Spacing in meters along the y dimension.
+            step_rot (float): Spacing in degrees along the rotation dimension.
+            which_boundary (str): One of "top" and "bottom".
+
+        Returns:
+            tuple:
+                - distances (np.ndarray): 3D array of shape (num_points_x, num_points_y, num_points_rot).
+                Each entry is the distance to the road boundary for that point.
+                - center_gradient (np.ndarray): 1D array of shape (3,) which is the gradient at the
+                center point [df/dx, df/dy, df/drot].
+                - center_hessian (np.ndarray): 2D array of shape (3, 3) which is the Hessian matrix
+                at the center point.
+        """
+        # Create arrays to store the distance for each grid point
+        distances = np.zeros((num_points_x, num_points_y, num_points_rot))
+
+        # Compute the index offsets so that the center is at index num_points_x//2, etc.
+        x_indices = np.arange(num_points_x) - (num_points_x // 2)
+        y_indices = np.arange(num_points_y) - (num_points_y // 2)
+        rot_indices = np.arange(num_points_rot) - (num_points_rot // 2)
+
+        # Precompute the actual x, y, and rot values for each index
+        x_values = x_center + x_indices * step_x
+        y_values = y_center + y_indices * step_y
+        rot_values = rot_center + rot_indices * step_rot
+
+        # Populate the distances array by calling the placeholder function
+        for i in range(num_points_x):
+            for j in range(num_points_y):
+                for k in range(num_points_rot):
+                    if which_boundary == "top":
+                        distances[i, j, k] = self.distance_to_road_top_boundary(
+                            x_values[i], y_values[j], rot_values[k]
+                        )
+                    elif which_boundary == "bottom":
+                        distances[i, j, k] = self.distance_to_road_bottom_boundary(
+                            x_values[i], y_values[j], rot_values[k]
+                        )
+                    else:
+                        raise ValueError(
+                            f"Invalid boundary type: {which_boundary}. Expected: 'top' or 'bottom', got {which_boundary}."
+                        )
+
+        # Identify the center index in each dimension
+        ic = num_points_x // 2
+        jc = num_points_y // 2
+        kc = num_points_rot // 2
+
+        f_c = distances[ic, jc, kc]
+
+        f_xp = distances[ic + 1, jc, kc]  # plus one point in x direction
+        f_xm = distances[ic - 1, jc, kc]  # minus one point in x direction
+        f_yp = distances[ic, jc + 1, kc]  # plus one point in y direction
+        f_ym = distances[ic, jc - 1, kc]  # minus one point in y direction
+        f_rp = distances[ic, jc, kc + 1]  # plus one point in rot direction
+        f_rm = distances[ic, jc, kc - 1]  # minus one point in rot direction
+
+        # First derivatives (central difference)
+        df_dx = (f_xp - f_xm) / (2.0 * step_x)
+        df_dy = (f_yp - f_ym) / (2.0 * step_y)
+        df_drot = (f_rp - f_rm) / (2.0 * step_rot)
+
+        # Second partial derivatives.
+        f_xx = (f_xp - 2.0 * f_c + f_xm) / (step_x**2)
+        f_yy = (f_yp - 2.0 * f_c + f_ym) / (step_y**2)
+        f_rr = (f_rp - 2.0 * f_c + f_rm) / (step_rot**2)
+
+        # Mixed partials
+        # For mixed partials, we need distances at corners of the plane in each dimension pair
+        f_xp_yp = distances[ic + 1, jc + 1, kc]
+        f_xp_ym = distances[ic + 1, jc - 1, kc]
+        f_xm_yp = distances[ic - 1, jc + 1, kc]
+        f_xm_ym = distances[ic - 1, jc - 1, kc]
+
+        f_xp_rp = distances[ic + 1, jc, kc + 1]
+        f_xp_rm = distances[ic + 1, jc, kc - 1]
+        f_xm_rp = distances[ic - 1, jc, kc + 1]
+        f_xm_rm = distances[ic - 1, jc, kc - 1]
+
+        f_yp_rp = distances[ic, jc + 1, kc + 1]
+        f_yp_rm = distances[ic, jc + 1, kc - 1]
+        f_ym_rp = distances[ic, jc - 1, kc + 1]
+        f_ym_rm = distances[ic, jc - 1, kc - 1]
+
+        f_xy = (f_xp_yp - f_xp_ym - f_xm_yp + f_xm_ym) / (4.0 * step_x * step_y)
+        f_xr = (f_xp_rp - f_xp_rm - f_xm_rp + f_xm_rm) / (4.0 * step_x * step_rot)
+        f_yr = (f_yp_rp - f_yp_rm - f_ym_rp + f_ym_rm) / (4.0 * step_y * step_rot)
+
+        # Pack the gradient and Hessian
+        center_gradient = np.array([df_dx, df_dy, df_drot])
+
+        center_hessian = np.array(
+            [[f_xx, f_xy, f_xr], [f_xy, f_yy, f_yr], [f_xr, f_yr, f_rr]]
+        )
+
+        return f_c, center_gradient, center_hessian
+
+    @staticmethod
+    def compute_long_lat_relation(x1, y1, rot1, x2, y2, rot2, kappa):
+        """
+        Compute the generalized power mean of the longitudinal relation between two vehicles
+        based on their positions and orientations in a 2D plane.
+
+        Parameters:
+        - x1, y1: float
+            Coordinates of the vehicle 1.
+        - rot1: float
+            Orientation of the vehicle 1 in radians.
+        - x2, y2: float
+            Coordinates of the vehicle 2.
+        - rot2: float
+            Orientation of the vehicle 2 in radians.
+        - kappa: float
+            Power mean parameter controlling the balance between longitudinal and lateral relation.
+            - kappa < 1: favors longitudinal relation more.
+            - kappa = 1: equally balances longitudinal and lateral relations.
+            - kappa > 1: favors lateral relation more.
+
+        Returns:
+        - D_longitudinal: float
+            Generalized power mean of the longitudinal relation between the two vehicles.
+        """
+
+        # Heading vectors (normalized)
+        v1 = np.array([np.cos(rot1), np.sin(rot1)])
+        v2 = np.array([np.cos(rot2), np.sin(rot2)])
+
+        # Relative position vector
+        r_12 = np.array([x2 - x1, y2 - y1])
+        r_12_norm = np.linalg.norm(r_12)
+
+        # Prevent division by zero if vehicles overlap
+        if r_12_norm == 0:
+            print("Warning: Vehicles overlap, return 0")
+            return 0
+
+        # Project heading vectors onto the relative position vector (normalized)
+        v1_project_norm = np.dot(r_12, v1) / r_12_norm
+        v2_project_norm = np.dot(r_12, v2) / r_12_norm
+
+        # Compute the generalized power mean for longitudinal relation
+        D_longitudinal = (v1_project_norm**kappa + v2_project_norm**kappa) / 2
+
+        return D_longitudinal
+
     def setup_plot(self):
         """
         Set up the matplotlib figure and plot elements for visualization.
@@ -1619,6 +1967,7 @@ class CBF:
         Returns:
             tuple: Tuple containing figure, axes, vehicle rectangles, path lines, and quivers.
         """
+        print("[DEBUG] setup_plot")
         xy_ratio = (self.plot_y_max - self.plot_y_min) / (
             self.plot_x_max - self.plot_x_min
         )
@@ -1858,7 +2207,7 @@ class CBF:
         if self.scenario_type.lower() == "overtaking":
             ax2.set_ylim((-0.2, 2.0))
         else:
-            ax2.set_ylim((-0.2, 5.0))
+            ax2.set_ylim((-0.2, 3.0))
         plt.tight_layout()
 
         # Visualize CBF values
@@ -1866,15 +2215,27 @@ class CBF:
             [],
             [],
             color=self.color_psi_0,
-            lw=1.5,
+            lw=1.0,
             ls="-",
             label=r"$\Phi_{0}$ (safety margin)",
         )
+        if self.is_visu_actual_sm:
+            (visu_actual_sm,) = ax2.plot(
+                [],
+                [],
+                color="black",
+                lw=1.0,
+                ls="-.",
+                label="Actual safety margin",
+            )
+        else:
+            visu_actual_sm = None
+
         (visu_psi_1,) = ax2.plot(
             [],
             [],
             color=self.color_psi_1,
-            lw=1.5,
+            lw=1.0,
             ls="-.",
             label=r"$\Phi_{1}$ (CBF condition 1)",
         )
@@ -1882,10 +2243,32 @@ class CBF:
             [],
             [],
             color=self.color_psi_2,
-            lw=1.5,
+            lw=1.0,
             ls="--",
             label=r"$\Phi_{2}$ (CBF condition 2)",
         )
+
+        if self.is_using_slack_variable:
+            (visu_psi_0_predict,) = ax2.plot(
+                [],
+                [],
+                color="black",
+                lw=1.0,
+                ls="-.",
+                label=r"$\hat{\Phi}_{0}$ (Predicted safety margin)",
+            )
+            (visu_slack_variable,) = ax2.plot(
+                [],
+                [],
+                color="c",
+                lw=1.0,
+                ls="-.",
+                label="Slack variable",
+            )
+        else:
+            visu_psi_0_predict = None
+            visu_slack_variable = None
+
         ax1.legend(loc="upper left", fontsize=self.font_size_video)
         ax2.legend(loc="upper right", fontsize=self.font_size_video)
 
@@ -1900,30 +2283,43 @@ class CBF:
             # ax3.set_ylim((-2, 50.0))
             plt.tight_layout()
 
+            (visu_cost_total,) = ax3.plot(
+                [],
+                [],
+                color=self.color_cost_total,
+                lw=1.0,
+                ls="-",
+                alpha=0.5,
+                label="Total cost",
+            )
             (visu_cost_acc,) = ax3.plot(
                 [],
                 [],
                 color=self.color_cost_acc,
-                lw=1.5,
+                lw=1.0,
                 ls="--",
-                label="Perturbation cost of nominal acceleration",
+                label="Cost for nominal acceleration",
             )
             (visu_cost_steer,) = ax3.plot(
                 [],
                 [],
                 color=self.color_cost_steer,
-                lw=1.5,
+                lw=1.0,
                 ls="-.",
-                label="Perturbation cost of nominal steering rate",
+                label="Cost for nominal steering rate",
             )
-            (visu_cost_total,) = ax3.plot(
-                [],
-                [],
-                color=self.color_cost_total,
-                lw=1.5,
-                ls="-",
-                label="Total cost",
-            )
+            if self.is_using_slack_variable:
+                (visu_cost_slack_variable,) = ax3.plot(
+                    [],
+                    [],
+                    color="black",
+                    lw=1.0,
+                    ls="-.",
+                    label="Cost for slack variable",
+                )
+            else:
+                visu_cost_slack_variable = None
+
             visu_is_solve_success = ax3.scatter(
                 [],
                 [],
@@ -1937,6 +2333,7 @@ class CBF:
             ax3 = None
             visu_cost_acc = None
             visu_cost_steer = None
+            visu_cost_slack_variable = None
             visu_cost_total = None
             visu_is_solve_success = None
 
@@ -1961,12 +2358,16 @@ class CBF:
         self.visu_goal_point_j = visu_goal_point_j
         self.visu_circle_i = visu_circle_i
         self.visu_circle_j = visu_circle_j
+        self.visu_actual_sm = visu_actual_sm
         self.visu_psi_0 = visu_psi_0
         self.visu_psi_1 = visu_psi_1
         self.visu_psi_2 = visu_psi_2
+        self.visu_psi_0_predict = visu_psi_0_predict
+        self.visu_slack_variable = visu_slack_variable
+        self.visu_cost_slack_variable = visu_cost_slack_variable
+        self.visu_cost_total = visu_cost_total
         self.visu_cost_acc = visu_cost_acc
         self.visu_cost_steer = visu_cost_steer
-        self.visu_cost_total = visu_cost_total
         self.visu_is_solve_success = visu_is_solve_success
 
     def update_plot_elements(self):
@@ -2078,14 +2479,25 @@ class CBF:
         self.visu_circle_i.center = (self.state_i[0].item(), self.state_i[1].item())
         self.visu_circle_j.center = (self.state_j[0].item(), self.state_j[1].item())
 
+        if self.is_visu_actual_sm:
+            self.visu_actual_sm.set_data(self.list_time, self.list_actual_sm)
+
         self.visu_psi_0.set_data(self.list_time, self.list_h_ji)
-        self.visu_psi_1.set_data(self.list_time, self.list_cbf_condition_1_ji)
         self.visu_psi_2.set_data(self.list_time, self.list_cbf_condition_2_ji)
 
+        self.visu_psi_1.set_data(self.list_time, self.list_cbf_condition_1_ji)
+
+        if self.is_using_slack_variable:
+            self.visu_psi_0_predict.set_data(self.list_time, self.list_psi_0_predict)
+            self.visu_slack_variable.set_data(self.list_time, self.list_s_h_veh)
+
         if self.is_visu_cost:
+            self.visu_cost_total.set_data(self.list_time, self.list_cost_total)
+            self.visu_cost_slack_variable.set_data(
+                self.list_time, self.list_cost_slack_variable
+            )
             self.visu_cost_acc.set_data(self.list_time, self.list_cost_acc)
             self.visu_cost_steer.set_data(self.list_time, self.list_cost_steer)
-            self.visu_cost_total.set_data(self.list_time, self.list_cost_total)
             # Plot only the time steps where the solve failed
             zero_indices = [
                 i for i, val in enumerate(self.list_is_solve_success) if val == 0
@@ -2327,7 +2739,7 @@ class CBF:
                 max_deviation_i = max(abs(np.array(y_i) - self.y_lane_center_line))
                 max_deviation_j = max(abs(np.array(y_j) - self.y_lane_center_line))
                 print_str = (
-                    f"Maximum deviation in y-direction with {self.sm_type.upper()}-based safety margin:"
+                    f"Maximum evasion in y-direction (also in percentage of agent width):"
                     f" Vehicle i: {max_deviation_i:.4f} m ({max_deviation_i / self.width * 100:.2f}%); "
                     f"Vehicle j: {max_deviation_j:.4f} m ({max_deviation_j / self.width * 100:.2f}%); "
                     f"Mean: {(max_deviation_i + max_deviation_j) / 2:.4f} m ({((max_deviation_i + max_deviation_j) / 2 / self.width * 100):.2f}%)"
@@ -2337,13 +2749,19 @@ class CBF:
                 with open(file_name, "w") as file:
                     file.write(print_str + "\n")
                     file.write(opt_time_str + "\n")
-                print(f"A text file has been saved to {file_name}.")
+                print(
+                    colored(f"A text file has been saved to ", "black"),
+                    colored(f"{file_name}", "blue"),
+                )
             else:
                 # Save optimization time to file
                 file_name = f"eval_cbf_overtaking_{self.sm_type}.txt"
                 with open(file_name, "w") as file:
                     file.write(opt_time_str + "\n")
-                print(f"A text file has been saved to {file_name}.")
+                print(
+                    colored(f"A text file has been saved to ", "black"),
+                    colored(f"{file_name}", "blue"),
+                )
 
         # Adjust layout and save
         plt.tight_layout(rect=[0, 0, 1, 1])
@@ -2351,7 +2769,10 @@ class CBF:
         if self.is_save_eval_result:
             fig_name = f"eva_cbf_{self.scenario_type}_{self.sm_type}.pdf"
             plt.savefig(fig_name, bbox_inches="tight", dpi=450)
-            print(f"A figure has been saved to {fig_name}.")
+            print(
+                colored(f"A figure has been saved to ", "black"),
+                colored(f"{fig_name}", "blue"),
+            )
         else:
             plt.show()
 
@@ -2364,15 +2785,18 @@ class CBF:
             self.update,
             frames=self.num_steps,
             blit=False,  # Set to True to optimize the rendering by updating only parts of the frame that have changed (may rely heavily on the capabilities of the underlying GUI backend and the system’s graphical stack)
-            interval=self.dt,
+            interval=self.dt * 100,
             repeat=False,
-        )
+        )  # setup_plot() --> update() --> update_plot_elements() --> update()
 
         if self.is_save_video:
             # Save the animation as a video file
             video_name = f"eva_cbf_{self.scenario_type}_{self.sm_type}.mp4"
             ani.save(video_name, writer="ffmpeg", fps=30)
-            print(f"A video has been saved to {video_name}.")
+            print(
+                colored(f"A video has been saved to ", "black"),
+                colored(f"{video_name}", "blue"),
+            )
         else:
             plt.show()
 
@@ -2380,41 +2804,53 @@ class CBF:
 def main(
     scenario_type: str,
     sm_type: str,
+    is_using_slack_variable: bool = True,
     is_save_video: bool = False,
+    is_save_eval_result: bool = False,
     is_visu_ref_path: bool = False,
     is_visu_nominal_action: bool = True,
     is_visu_cbf_action: bool = True,
     is_visu_footprint: bool = True,
     is_visu_time: bool = True,
     is_visu_cost: bool = False,
-    is_save_eval_result: bool = False,
+    is_visu_actual_sm: bool = True,
 ):
     simulation = CBF(
         scenario_type=scenario_type,
         sm_type=sm_type,
+        is_using_slack_variable=is_using_slack_variable,
         is_save_video=is_save_video,
+        is_save_eval_result=is_save_eval_result,
         is_visu_ref_path=is_visu_ref_path,
         is_visu_nominal_action=is_visu_nominal_action,
         is_visu_cbf_action=is_visu_cbf_action,
         is_visu_footprint=is_visu_footprint,
         is_visu_time=is_visu_time,
         is_visu_cost=is_visu_cost,
-        is_save_eval_result=is_save_eval_result,
+        is_visu_actual_sm=is_visu_actual_sm,
     )
-    simulation.run()
-    simulation.plot_cbf_curve()
+
+    # Try to run simulation.run. Only run simulation.plot_cbf_curve() if simulation.run() is successful
+    try:
+        simulation.run()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    else:
+        simulation.plot_cbf_curve()
 
 
 if __name__ == "__main__":
     main(
         scenario_type="overtaking",  # One of "overtaking" and "bypassing"
         sm_type="mtv",  # One of "c2c" and "mtv"
+        is_using_slack_variable=True,
         is_save_video=False,  # If True, video will be saved without live visualization
+        is_save_eval_result=True,
         is_visu_ref_path=True,
         is_visu_footprint=True,
         is_visu_nominal_action=True,
         is_visu_cbf_action=True,
         is_visu_time=True,
         is_visu_cost=True,
-        is_save_eval_result=True,
+        is_visu_actual_sm=False,
     )
