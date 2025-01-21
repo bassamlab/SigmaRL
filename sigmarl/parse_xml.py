@@ -10,8 +10,6 @@ import torch
 import matplotlib.pyplot as plt
 import numpy as np
 
-import sigmarl.assets
-import sigmarl.assets.maps
 from sigmarl.parse_map_base import ParseMapBase
 
 from sigmarl.colors import Color
@@ -55,7 +53,7 @@ class ParseXML(ParseMapBase):
             self.visualize_map()
 
     def _parse_map_file(self):
-        with resources.path("sigmarl.assets.maps", self._map_path) as map_path:
+        with resources.path("sigmarl.scenarios.assets.maps", self._map_path) as map_path:
             tree = ET.parse(map_path)
         root = tree.getroot()
         lanelets = []
