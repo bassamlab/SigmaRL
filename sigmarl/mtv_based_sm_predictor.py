@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import matplotlib
 import time
+
 matplotlib.rcParams.update({"font.size": 14})  # Set global font size
 
 from sigmarl.helper_scenario import get_distances_between_agents
@@ -687,7 +688,6 @@ def main(load_model_flag, is_run_testing, path_nn):
             print(f"Model file at {path_nn} not found. Training a new model instead.")
         features, labels = SME.generate_training_data()
         SME.net = SME.train_model(features, labels)
-
 
     if is_run_testing:
         SME.test_model(SME.net)

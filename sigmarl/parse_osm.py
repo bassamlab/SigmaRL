@@ -61,7 +61,9 @@ class ParseOSM(ParseMapBase):
 
     def _parse_map_file(self):
         """Parse the OSM file and extract bounds, nodes, and ways."""
-        with resources.open_binary("sigmarl.scenarios.assets.maps", self._map_path) as map_file:
+        with resources.open_binary(
+            "sigmarl.scenarios.assets.maps", self._map_path
+        ) as map_file:
             tree = ET.parse(map_file)
         root = tree.getroot()
 

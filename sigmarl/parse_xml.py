@@ -53,7 +53,9 @@ class ParseXML(ParseMapBase):
             self.visualize_map()
 
     def _parse_map_file(self):
-        with resources.path("sigmarl.scenarios.assets.maps", self._map_path) as map_path:
+        with resources.path(
+            "sigmarl.scenarios.assets.maps", self._map_path
+        ) as map_path:
             tree = ET.parse(map_path)
         root = tree.getroot()
         lanelets = []

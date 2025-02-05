@@ -546,7 +546,11 @@ class Noise:
 ## Helper Functions
 ##################################################
 def get_rectangle_vertices(
-    center: torch.Tensor, yaw, width, length, is_close_shape: bool = True
+    center: torch.Tensor,
+    yaw: torch.Tensor,
+    width: float,
+    length: float,
+    is_close_shape: bool = True,
 ):
     """Compute the vertices of rectangles for a batch of agents given their centers, yaws (rotations),
     widths, and lengths, using PyTorch tensors.
