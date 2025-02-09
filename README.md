@@ -150,11 +150,11 @@ We recommend installing `sigmarl` from source:
 
 ## How to Use
 ### Training
-Run `/main_training.py`. During training, all the intermediate models that have higher performance than the saved one will be automatically saved. You are also allowed to retrain or refine a trained model by setting the parameter `is_continue_train` in the file `sigmarl/config.json` to `true`. The saved model will be loaded for a new training process.
+Run `main_training.py`. During training, all the intermediate models that have higher performance than the saved one will be automatically saved. You are also allowed to retrain or refine a trained model by setting the parameter `is_continue_train` in the file `sigmarl/config.json` to `true`. The saved model will be loaded for a new training process.
 
-`/sigmarl/scenarios/road_traffic.py` defines the RL environment, such as the observation function and reward function. Besides, it provides an interactive interface, which also visualizes the environment. To open the interface, simply run this file. You can use `arrow keys` to control agents and use the `tab key` to switch between agents. Adjust the parameter `scenario_type` to choose a scenario. All available scenarios are listed in the variable `SCENARIOS` in `sigmarl/constants.py`. Before training, it is recommended to use the interactive interface to check if the environment is as expected.
+`sigmarl/scenarios/road_traffic.py` defines the RL environment, such as the observation function and reward function. Besides, it provides an interactive interface, which also visualizes the environment. To open the interface, simply run this file. You can use `arrow keys` to control agents and use the `tab key` to switch between agents. Adjust the parameter `scenario_type` to choose a scenario. All available scenarios are listed in the variable `SCENARIOS` in `sigmarl/constants.py`. Before training, it is recommended to use the interactive interface to check if the environment is as expected.
 ### Testing
-After training, run `/main_testing.py` to test your model. You may need to adjust the parameter `path` therein to tell which folder the target model was saved.
+After training, run `main_testing.py` to test your model. You may need to adjust the parameter `path` therein to tell which folder the target model was saved.
 *Note*: If the path to a saved model changes, you need to update the value of `where_to_save` in the corresponding JSON file as well.
 
 ## Customize Your Own Maps
@@ -204,7 +204,7 @@ Jianye Xu, Pan Hu, and Bassam Alrifaee, "SigmaRL: A Sample-Efficient and General
   - Go to [this page](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/itsc24.zip) and download the zip file `itsc24.zip`. Unzip it, copy and paste the whole folder to the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/itsc24/`.
   - Run `sigmarl/evaluation_itsc24.py`.
 
-  You can also run `/testing_mappo_cavs.py` to intuitively evaluate the trained models. Adjust the parameter `path` therein to specify which folder the target model was saved.
+  You can also run `testing_mappo_cavs.py` to intuitively evaluate the trained models. Adjust the parameter `path` therein to specify which folder the target model was saved.
   *Note*: The evaluation results you get may deviate from the paper since we have meticulously adjusted the performance metrics.
 
 
@@ -231,7 +231,7 @@ Jianye Xu, Omar Sobhy, and Bassam Alrifaee, "XP-MARL: Auxiliary Prioritization i
   - Go to [this page](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/icra25.zip) and download the zip file `icra25.zip`. Unzip it, copy and paste the whole folder to the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/icra25/`.
   - Run `sigmarl/evaluation_icra25.py`.
 
-  You can also run `/testing_mappo_cavs.py` to intuitively evaluate the trained models. Adjust the parameter `path` therein to specify which folder the target model was saved.
+  You can also run `testing_mappo_cavs.py` to intuitively evaluate the trained models. Adjust the parameter `path` therein to specify which folder the target model was saved.
 
 ### 3. CBF-MARL
 <div>
@@ -256,8 +256,6 @@ Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Pro
   - Go to [this page](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/ecc25.zip) and download the zip file `ecc25.zip`. Unzip it, copy and paste the whole folder to the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/ecc25/`.
   - Run `sigmarl/evaluation_ecc25.py`.
 
-  You can also run `/testing_mappo_cavs.py` to intuitively evaluate the trained models. Adjust the parameter `path` therein to specify which folder the target model was saved.
-
 ## TODOs
 - Effective observation design
   - [ ] Image-based representation of observations
@@ -265,13 +263,15 @@ Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Pro
   - [ ] Attention mechanism
 - Improve safety
   - [ ] Integrating Control Barrier Functions (CBFs)
-    - [x] Proof of concept with two agents
+    - [x] Proof of concept with two agents (see the CBF-MARL paper [here](#3-cbf-marl))
   - [ ] Integrating Model Predictive Control (MPC)
 - Address non-stationarity
   - [x] Integrating prioritization (see the XP-MARL paper [here](#2-xp-marl))
 - Misc
   - [x] OpenStreetMap support (see guidance [here](#customize-your-own-maps))
   - [x] Contribute our [CPM scenario](#fig-scenario-cpm) as an MARL benchmark scenario in VMAS (see news <a href="https://github.com/proroklab/VectorizedMultiAgentSimulator/releases/tag/1.4.2" target="_blank">here</a>)
+  - [x] Update to the latest versions of Torch, TorchRL, and VMAS
+  - [x] Support Python 3.11+
 
 ## Acknowledgments
 This research was supported by the Bundesministerium für Digitales und Verkehr (German Federal Ministry for Digital and Transport) within the project "Harmonizing Mobility" (grant number 19FS2035A).

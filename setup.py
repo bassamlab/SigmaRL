@@ -45,7 +45,7 @@ setup(
         "matplotlib==3.9.2",
         "termcolor==2.5.0",
         "pre-commit==4.0.1",
-        "cvxpy==1.5.3",  #
+        "cvxpy==1.5.3",
         "scikit-learn==1.5.2",
     ],
     extras_require={

@@ -192,7 +192,7 @@ class TransformedEnvCustom(TransformedEnv):
         if is_save_simulation_video:
             return out_td, frame_list  # Modification
         else:
-            return out_td
+            return out_td, None
 
     def _rollout_stop_early(
         self,
