@@ -1,4 +1,4 @@
-# Copyright (c) 2024, Chair of Embedded Software (Informatik 11) - RWTH Aachen University.
+# Copyright (c) 2025, Chair of Embedded Software (Informatik 11) - RWTH Aachen University.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
@@ -40,6 +40,7 @@ from sigmarl.helper_scenario import (
     Normalizers,
     get_perpendicular_distances,
     get_distances_between_agents,
+    get_rectangle_vertices,
 )
 
 from sigmarl.constants import AGENTS
@@ -101,7 +102,7 @@ class CBF:
         Initialize and return all simulation and vehicle parameters.
         """
         # General
-        self.device = "cpu"
+        self.device = torch.device("cpu")
         self.dt = 0.05  # Sample time (50 ms)
         self.length = AGENTS["length"]  # Length of each rectangle (m)
         self.width = AGENTS["width"]  # Width of each rectangle (m)
@@ -129,6 +130,13 @@ class CBF:
 
         self.lane_width = self.width * 1.8  # Lane width
 
+        self.safety_margin_road_boundary_hard = (
+            0.05 * self.width
+        )  # Hard safety margin to road boundary
+        self.safety_margin_vehicle_hard = (
+            0.1 * self.length
+        )  # Hard safety margin to vehicle
+
         self.is_relax_cbf = kwargs.get("is_relax_cbf", False)
 
         self.is_save_video = kwargs.get("is_save_video", False)
@@ -142,6 +150,17 @@ class CBF:
         self.is_visu_actual_sm = kwargs.get("is_visu_actual_sm", False)
 
         self.font_size_video = 16
+
+        # Compute the vertices of the rectangle at the origin
+        self.rec_vertices_0 = get_rectangle_vertices(
+            center=torch.zeros(2, device=self.device),
+            yaw=torch.zeros(1, device=self.device),
+            width=self.width,
+            length=self.length,
+            is_close_shape=True,
+            num_point_length_side=1,
+            num_point_width_side=1,
+        )
 
         # Safety margin
         # Radius of the circle that convers the vehicle
@@ -176,6 +195,19 @@ class CBF:
         self.y_lane_center_line = 0
         self.y_lane_bottom_bound = -self.lane_width
 
+        # Discretize the top and bottom lanes uniformly with a step size of agent width
+        self.lane_x_bounds = [-5, 15]  # Set x bound to sufficiently large
+        self.lane_x_discretization = np.arange(
+            self.lane_x_bounds[0], self.lane_x_bounds[1], self.lane_width
+        )
+        num_points = len(self.lane_x_discretization)
+        self.lane_top_polyline = np.column_stack(
+            (self.lane_x_discretization, np.ones(num_points) * self.y_lane_top_bound)
+        )
+        self.lane_bottom_polyline = np.column_stack(
+            (self.lane_x_discretization, np.ones(num_points) * self.y_lane_bottom_bound)
+        )
+
         self.y_lane_1 = (self.y_lane_center_line + self.y_lane_top_bound) / 2
         self.y_lane_2 = (self.y_lane_center_line + self.y_lane_bottom_bound) / 2
 
@@ -202,7 +234,7 @@ class CBF:
         )  # One of "overtaking" and "bypassing"
 
         # Two types of safety margin: center-center-based safety margin, Minimum Translation Vector (MTV)-based safety margin
-        self.sm_type = kwargs.get("sm_type", "mtv")  # One of "c2c" and "mtv"
+        self.sm_type = kwargs.get("sm_type", "mtv")
 
         # CBF
         if self.scenario_type.lower() == "overtaking":
@@ -242,8 +274,17 @@ class CBF:
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
-            else:
+            elif self.sm_type.lower() == "mtv":
                 # Overtaking & MTV
+                self.total_time = 7.0  # Total simulation time
+                self.alpha_cbf = 2  # Design parameter for CBF
+                self.w_acc = 0.1  # Weight for acceleration in QP
+                self.w_steer = 0.1  # Weight for steering rate in QP
+                self.Q = np.diag(
+                    [self.w_acc, self.w_steer]
+                )  # Weights for acceleration and steering rate
+            elif self.sm_type.lower() == "grid":
+                # Overtaking & Grid
                 self.total_time = 7.0  # Total simulation time
                 self.alpha_cbf = 2  # Design parameter for CBF
                 self.w_acc = 0.1  # Weight for acceleration in QP
@@ -280,17 +321,30 @@ class CBF:
                 self.alpha_cbf = 2  # Design parameter for CBF
                 self.evasion_step_start = 0
                 self.evasion_step_end = 30
-                self.evasive_offset = self.radius * 1.8
+                self.evasive_offset = self.radius * 2.5
 
                 self.w_acc = 0.1  # Weight for acceleration in QP
                 self.w_steer = 0.1  # Weight for steering rate in QP
                 self.Q = np.diag(
                     [self.w_acc, self.w_steer]
                 )  # Weights for acceleration and steering rate
-            else:
+            elif self.sm_type.lower() == "mtv":
                 # Bypassing & MTV
                 self.total_time = 3.0  # Total simulation time
 
+                self.alpha_cbf = 2  # Design parameter for CBF
+                self.evasion_step_start = 0
+                self.evasion_step_end = 30
+                self.evasive_offset = 0.6 * self.lane_width
+
+                self.w_acc = 0.1  # Weight for acceleration in QP
+                self.w_steer = 0.1  # Weight for steering rate in QP
+                self.Q = np.diag(
+                    [self.w_acc, self.w_steer]
+                )  # Weights for acceleration and steering rate
+            elif self.sm_type.lower() == "grid":
+                # Bypassing & Grid
+                self.total_time = 3.0  # Total simulation time
                 self.alpha_cbf = 2  # Design parameter for CBF
                 self.evasion_step_start = 0
                 self.evasion_step_end = 30
@@ -547,9 +601,21 @@ class CBF:
                 sm, grad, hessian = self.c2c_based_sm(
                     x_relative, y_relative, psi_relative
                 )
+        elif self.sm_type.lower() == "grid":
+            sm, grad, hessian = self.compute_grid_based_gradient_hessian(
+                x_center=x_relative,
+                y_center=y_relative,
+                rot_center=psi_relative,
+                length=self.length,
+                width=self.width,
+                num_point_length_side=1,
+                num_point_width_side=1,
+                polyline_static_obstacle=self.rec_vertices_0,
+                device=self.device,
+            )
         else:
             raise ValueError(
-                f"Safety margin must be one of 'c2c' and 'mtv'. Got: {self.sm_type}."
+                f"Safety margin must be one of 'c2c', 'mtv', and 'grid'. Got: {self.sm_type}."
             )
 
         return sm, grad, hessian
@@ -721,7 +787,9 @@ class CBF:
         """
         if self.sm_type.lower() == "mtv":
             h = sm - self.SME.error_upper_bound
-        else:
+        elif self.sm_type.lower() == "c2c":
+            h = sm
+        elif self.sm_type.lower() == "grid":
             h = sm
 
         # Compute dot_h
@@ -907,6 +975,7 @@ class CBF:
         sm_opt, grad_sm_opt, hessian_sm_opt = self.estimate_safety_margin(
             x_relative_opt, y_relative_opt, psi_relative_opt
         )
+
         (
             h_opt,
             dot_h_opt,
@@ -1148,7 +1217,7 @@ class CBF:
             dstate_time_ji, ddstate_time_ji, sm_ji, grad_sm_ji, hessian_sm_ji
         )
 
-        penalty_s_veh = 20000
+        penalty_s_veh = 10000
         penalty_s_boundary = 20000
         if self.is_relax_cbf:
             s_h_veh = cp.Variable(name="s_h_veh", nonneg=True)
@@ -1209,8 +1278,16 @@ class CBF:
             distance_road_top_i,
             gradient_road_top_i,
             hessian_road_top_i,
-        ) = self.compute_distance_gradient_hessian(
-            self.state_i[0], self.state_i[1], self.state_i[2], which_boundary="top"
+        ) = self.compute_grid_based_gradient_hessian(
+            x_center=self.state_i[0],
+            y_center=self.state_i[1],
+            rot_center=self.state_i[2],
+            length=self.length,
+            width=self.width,
+            num_point_length_side=1,
+            num_point_width_side=1,
+            polyline_static_obstacle=self.lane_top_polyline,
+            device=self.device,
         )
         h_road_top_predict_i = self.predict_h_next(
             distance_road_top_i,
@@ -1225,8 +1302,16 @@ class CBF:
             distance_road_bottom_i,
             gradient_road_bottom_i,
             hessian_road_bottom_i,
-        ) = self.compute_distance_gradient_hessian(
-            self.state_i[0], self.state_i[1], self.state_i[2], which_boundary="bottom"
+        ) = self.compute_grid_based_gradient_hessian(
+            x_center=self.state_i[0],
+            y_center=self.state_i[1],
+            rot_center=self.state_i[2],
+            length=self.length,
+            width=self.width,
+            num_point_length_side=1,
+            num_point_width_side=1,
+            polyline_static_obstacle=self.lane_bottom_polyline,
+            device=self.device,
         )
         h_road_bottom_predict_i = self.predict_h_next(
             distance_road_bottom_i,
@@ -1243,8 +1328,16 @@ class CBF:
                 distance_road_top_j,
                 gradient_road_top_j,
                 hessian_road_top_j,
-            ) = self.compute_distance_gradient_hessian(
-                self.state_j[0], self.state_j[1], self.state_j[2], which_boundary="top"
+            ) = self.compute_grid_based_gradient_hessian(
+                x_center=self.state_j[0],
+                y_center=self.state_j[1],
+                rot_center=self.state_j[2],
+                length=self.length,
+                width=self.width,
+                num_point_length_side=1,
+                num_point_width_side=1,
+                polyline_static_obstacle=self.lane_top_polyline,
+                device=self.device,
             )
             h_road_top_predict_j = self.predict_h_next(
                 distance_road_top_j,
@@ -1259,11 +1352,16 @@ class CBF:
                 distance_road_bottom_j,
                 gradient_road_bottom_j,
                 hessian_road_bottom_j,
-            ) = self.compute_distance_gradient_hessian(
-                self.state_j[0],
-                self.state_j[1],
-                self.state_j[2],
-                which_boundary="bottom",
+            ) = self.compute_grid_based_gradient_hessian(
+                x_center=self.state_j[0],
+                y_center=self.state_j[1],
+                rot_center=self.state_j[2],
+                length=self.length,
+                width=self.width,
+                num_point_length_side=1,
+                num_point_width_side=1,
+                polyline_static_obstacle=self.lane_bottom_polyline,
+                device=self.device,
             )
             h_road_bottom_predict_j = self.predict_h_next(
                 distance_road_bottom_j,
@@ -1295,11 +1393,17 @@ class CBF:
 
             constraints = [
                 # Avoid collisions with the other vehicle
-                psi_0_predict >= default_veh_d_offset - s_h_veh,
+                psi_0_predict
+                >= self.safety_margin_vehicle_hard + default_veh_d_offset - s_h_veh,
                 # Avoid collisions with road boundaries
-                h_road_top_predict_i >= default_boundary_d_offset - s_h_boundary_top_i,
+                h_road_top_predict_i
+                >= self.safety_margin_road_boundary_hard
+                + default_boundary_d_offset
+                - s_h_boundary_top_i,
                 h_road_bottom_predict_i
-                >= default_boundary_d_offset - s_h_boundary_bottom_i,
+                >= self.safety_margin_road_boundary_hard
+                + default_boundary_d_offset
+                - s_h_boundary_bottom_i,
                 # Control input constraints for vehicle i
                 self.a_min <= u_i[0],
                 u_i[0] <= self.a_max,
@@ -1333,14 +1437,25 @@ class CBF:
                 )
             constraints = [
                 # Avoid collisions with the other vehicle
-                psi_0_predict >= default_veh_d_offset - s_h_veh,
+                psi_0_predict
+                >= self.safety_margin_vehicle_hard + default_veh_d_offset - s_h_veh,
                 # Avoid collisions with road boundaries
-                h_road_top_predict_i >= default_boundary_d_offset - s_h_boundary_top_i,
+                h_road_top_predict_i
+                >= self.safety_margin_road_boundary_hard
+                + default_boundary_d_offset
+                - s_h_boundary_top_i,
                 h_road_bottom_predict_i
-                >= default_boundary_d_offset - s_h_boundary_bottom_i,
-                h_road_top_predict_j >= default_boundary_d_offset - s_h_boundary_top_j,
+                >= self.safety_margin_road_boundary_hard
+                + default_boundary_d_offset
+                - s_h_boundary_bottom_i,
+                h_road_top_predict_j
+                >= self.safety_margin_road_boundary_hard
+                + default_boundary_d_offset
+                - s_h_boundary_top_j,
                 h_road_bottom_predict_j
-                >= default_boundary_d_offset - s_h_boundary_bottom_j,
+                >= self.safety_margin_road_boundary_hard
+                + default_boundary_d_offset
+                - s_h_boundary_bottom_j,
                 # Control input constraints for vehicle i
                 self.a_min <= u_i[0],
                 u_i[0] <= self.a_max,
@@ -1676,24 +1791,24 @@ class CBF:
         """
         Compute the vertices of the rectangles for both agents.
         """
-        rect_i_vertices = torch.tensor(
-            self.SME.get_rectangle_vertices(
-                self.state_i[0].item(),
-                self.state_i[1].item(),
-                self.state_i[2].item(),
-            ),
-            device=self.device,
-            dtype=torch.float32,
-        )
-        rect_j_vertices = torch.tensor(
-            self.SME.get_rectangle_vertices(
-                self.state_j[0].item(),
-                self.state_j[1].item(),
-                self.state_j[2].item(),
-            ),
-            device=self.device,
-            dtype=torch.float32,
-        )
+        rect_i_vertices = get_rectangle_vertices(
+            self.state_i[0:2],
+            self.state_i[2],
+            self.width,
+            self.length,
+            is_close_shape=False,
+            num_point_length_side=0,
+            num_point_width_side=0,
+        ).squeeze(0)
+        rect_j_vertices = get_rectangle_vertices(
+            self.state_j[0:2],
+            self.state_j[2],
+            self.width,
+            self.length,
+            is_close_shape=False,
+            num_point_length_side=0,
+            num_point_width_side=0,
+        ).squeeze(0)
         vertices = torch.stack([rect_i_vertices, rect_j_vertices], dim=0).unsqueeze(0)
 
         actual_sm = get_distances_between_agents(
@@ -1786,35 +1901,44 @@ class CBF:
         """
         return y - self.y_lane_bottom_bound - self.width / 2
 
-    def compute_distance_gradient_hessian(
-        self,
+    @staticmethod
+    def compute_grid_based_gradient_hessian(
         x_center: float,
         y_center: float,
         rot_center: float,
-        num_points_x: int = 5,
-        num_points_y: int = 5,
-        num_points_rot: int = 5,
-        step_x: float = 0.04,
-        step_y: float = 0.04,
-        step_rot: float = 15.0,
-        which_boundary: str = "top",
+        length: float,
+        width: float,
+        num_point_length_side: int = 0,
+        num_point_width_side: int = 0,
+        polyline_static_obstacle: np.ndarray = None,
+        num_points_x: int = 3,
+        num_points_y: int = 3,
+        num_points_rot: int = 3,
+        step_x: float = 0.001,
+        step_y: float = 0.001,
+        step_rot: float = 1 / 180.0 * np.pi,
+        device: torch.device = torch.device("cpu"),
     ):
         """
         Generate a 3D grid map around the input rectangle state (x_center, y_center, rot_center).
-        Compute the distance of each grid point to the road boundary, then compute the gradient
-        and Hessian matrix of the distance only at the center grid point (x_center, y_center, rot_center).
+        Compute the distance of each grid point to the static obstacle such as a road boundary, then compute the gradient
+        and Hessian matrix of the distance at the current state of the input rectangle.
 
         Args:
             x_center (float): Center position in the x dimension.
             y_center (float): Center position in the y dimension.
             rot_center (float): Center rotation in degrees.
+            length (float): Length of the rectangle.
+            width (float): Width of the rectangle.
+            num_point_length_side (int): Number of intermediate points along the length side of the rectangle. Default is 0.
+            num_point_width_side (int): Number of intermediate points along the width side of the rectangle. Default is 0.
             num_points_x (int): Number of discrete points along the x dimension (must be odd).
             num_points_y (int): Number of discrete points along the y dimension (must be odd).
             num_points_rot (int): Number of discrete points along the rotation dimension (must be odd).
             step_x (float): Spacing in meters along the x dimension.
             step_y (float): Spacing in meters along the y dimension.
             step_rot (float): Spacing in degrees along the rotation dimension.
-            which_boundary (str): One of "top" and "bottom".
+            polyline (np.ndarray): Polyline representing a static obstacle such as a road boundary.
 
         Returns:
             tuple:
@@ -1824,36 +1948,71 @@ class CBF:
                 center point [df/dx, df/dy, df/drot].
                 - center_hessian (np.ndarray): 2D array of shape (3, 3) which is the Hessian matrix
                 at the center point.
+
+        Remark:
+            - The following condition must be satisfied:
+                - step_x * grad_max_x <= actual_distance_to_obstacle
+                - step_y * grad_max_y <= actual_distance_to_obstacle
+                - step_rot * grad_max_rot <= actual_distance_to_obstacle
+                where grad_max_x = 1, grad_max_y = 1, and grad_max_rot = sqrt(l^2 + w^2)/2 are the max. gradients of the distance w.r.t. x, y, and rot, respectively.
         """
-        # Create arrays to store the distance for each grid point
-        distances = np.zeros((num_points_x, num_points_y, num_points_rot))
+        # Convert the input to torch tensors
+        if not isinstance(x_center, torch.Tensor):
+            x_center = torch.tensor(x_center, device=device, dtype=torch.float32)
+        if not isinstance(y_center, torch.Tensor):
+            y_center = torch.tensor(y_center, device=device, dtype=torch.float32)
+        if not isinstance(rot_center, torch.Tensor):
+            rot_center = torch.tensor(rot_center, device=device, dtype=torch.float32)
+        if not isinstance(polyline_static_obstacle, torch.Tensor):
+            polyline_static_obstacle = torch.tensor(
+                polyline_static_obstacle, device=device, dtype=torch.float32
+            )
 
         # Compute the index offsets so that the center is at index num_points_x//2, etc.
-        x_indices = np.arange(num_points_x) - (num_points_x // 2)
-        y_indices = np.arange(num_points_y) - (num_points_y // 2)
-        rot_indices = np.arange(num_points_rot) - (num_points_rot // 2)
+        # Compute the index offsets so that the center is at index num_points_x//2, etc. using PyTorch
+        x_indices = torch.arange(num_points_x, device=device) - (num_points_x // 2)
+        y_indices = torch.arange(num_points_y, device=device) - (num_points_y // 2)
+        rot_indices = torch.arange(num_points_rot, device=device) - (
+            num_points_rot // 2
+        )
 
-        # Precompute the actual x, y, and rot values for each index
-        x_values = x_center + x_indices * step_x
-        y_values = y_center + y_indices * step_y
-        rot_values = rot_center + rot_indices * step_rot
+        # Create a 3D grid map based on x_center, y_center, and rot_center
+        x_values, y_values, rot_values = np.meshgrid(
+            x_center + x_indices * step_x,
+            y_center + y_indices * step_y,
+            rot_center + rot_indices * step_rot,
+            indexing="ij",
+        )
 
-        # Populate the distances array by calling the placeholder function
-        for i in range(num_points_x):
-            for j in range(num_points_y):
-                for k in range(num_points_rot):
-                    if which_boundary == "top":
-                        distances[i, j, k] = self.distance_to_road_top_boundary(
-                            x_values[i], y_values[j], rot_values[k]
-                        )
-                    elif which_boundary == "bottom":
-                        distances[i, j, k] = self.distance_to_road_bottom_boundary(
-                            x_values[i], y_values[j], rot_values[k]
-                        )
-                    else:
-                        raise ValueError(
-                            f"Invalid boundary type: {which_boundary}. Expected: 'top' or 'bottom', got {which_boundary}."
-                        )
+        # Flatten the meshgrid arrays
+        x_values_flat = torch.tensor(x_values.flatten())
+        y_values_flat = torch.tensor(y_values.flatten())
+        rot_values_flat = torch.tensor(rot_values.flatten()).unsqueeze(1)
+        num_grid_points = x_values_flat.shape[0]
+        # Put x_values and y_values into a two-column matrix
+        xy_grid_points = torch.stack([x_values_flat, y_values_flat], dim=1)
+
+        rec_vertices_grid = get_rectangle_vertices(
+            center=xy_grid_points,
+            yaw=rot_values_flat,
+            width=width,
+            length=length,
+            is_close_shape=False,
+            num_point_length_side=num_point_length_side,
+            num_point_width_side=num_point_width_side,
+        )
+
+        vertices_grid_flat = rec_vertices_grid.reshape(-1, 2)
+
+        distances_grid_flat, _ = get_perpendicular_distances(
+            point=vertices_grid_flat,
+            polyline=polyline_static_obstacle,
+        )
+        distances_grid = distances_grid_flat.reshape(num_grid_points, -1)
+        distances_grid_min = distances_grid.min(dim=1)[0]
+        distances = distances_grid_min.reshape(
+            num_points_x, num_points_y, num_points_rot
+        )
 
         # Identify the center index in each dimension
         ic = num_points_x // 2
@@ -1861,6 +2020,14 @@ class CBF:
         kc = num_points_rot // 2
 
         f_c = distances[ic, jc, kc]
+
+        # Check if the step size is too large
+        if step_x * 1 > f_c:
+            print("Warning: Step size x is too large!")
+        if step_y * 1 > f_c:
+            print("Warning: Step size y is too large!")
+        if step_rot * np.sqrt(length**2 + width**2) / 2 > f_c:
+            print("Warning: Step size rot is too large!")
 
         f_xp = distances[ic + 1, jc, kc]  # plus one point in x direction
         f_xm = distances[ic - 1, jc, kc]  # minus one point in x direction
@@ -1907,7 +2074,7 @@ class CBF:
             [[f_xx, f_xy, f_xr], [f_xy, f_yy, f_yr], [f_xr, f_yr, f_rr]]
         )
 
-        return f_c, center_gradient, center_hessian
+        return f_c.item(), center_gradient, center_hessian
 
     @staticmethod
     def compute_long_lat_relation(x1, y1, rot1, x2, y2, rot2, kappa):
@@ -2842,7 +3009,7 @@ def main(
 if __name__ == "__main__":
     main(
         scenario_type="overtaking",  # One of "overtaking" and "bypassing"
-        sm_type="mtv",  # One of "c2c" and "mtv"
+        sm_type="mtv",  # One of "c2c", "mtv", and "grid"
         is_relax_cbf=True,
         is_save_video=False,  # If True, video will be saved without live visualization
         is_save_eval_result=True,

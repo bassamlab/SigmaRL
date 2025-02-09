@@ -629,6 +629,140 @@ def get_rectangle_vertices(
     return vertices_global
 
 
+def get_rectangle_vertices(
+    center: torch.Tensor,
+    yaw: torch.Tensor,
+    width: float,
+    length: float,
+    is_close_shape: bool = True,
+    num_point_length_side: int = 0,
+    num_point_width_side: int = 0,
+):
+    """
+    Compute the vertices (and optionally intermediate points) of rectangles for a batch of agents
+    given their centers, yaws (rotations), widths, and lengths, using PyTorch tensors.
+    It can include uniformly distributed intermediate points along the length and width sides.
+
+    Args:
+        center: [batch_dim, 2] or [2] center positions of the rectangles. If [2], batch_dim is 1.
+        yaw: [batch_dim, 1] or [1] or [] Rotation angles in radians.
+        width: scalar width of the rectangles.
+        length: scalar length of the rectangles.
+        is_close_shape: if True, the returned vertices will close the shape by repeating the first vertex.
+        num_point_length_side: number of uniformly distributed intermediate points on each length side.
+        num_point_width_side: number of uniformly distributed intermediate points on each width side.
+
+    Returns:
+        Tensor of shape [batch_dim, N, 2] containing vertex (and intermediate) points of the rectangles
+        for each agent, where N depends on the number of requested intermediate points.
+    """
+
+    # Ensure center has batch dimension
+    if center.ndim == 1:
+        center = center.unsqueeze(0)
+
+    # Normalize yaw dimensions to [batch_dim, 1]
+    if yaw.ndim == 0:
+        yaw = yaw.unsqueeze(0).unsqueeze(0)
+    elif yaw.ndim == 1:
+        yaw = yaw.unsqueeze(0)
+
+    if num_point_length_side != 0 or num_point_width_side != 0:
+        # Closed shape is required for the intermediate points
+        is_close_shape = True
+
+    batch_dim = center.shape[0]
+    width_half = width / 2
+    length_half = length / 2
+
+    # Define base vertices relative to the center in local coordinates
+    if is_close_shape:
+        base_vertices = torch.tensor(
+            [
+                [length_half, width_half],
+                [length_half, -width_half],
+                [-length_half, -width_half],
+                [-length_half, width_half],
+                [length_half, width_half],  # repeat first to close the shape
+            ],
+            dtype=center.dtype,
+            device=center.device,
+        )
+    else:
+        base_vertices = torch.tensor(
+            [
+                [length_half, width_half],
+                [length_half, -width_half],
+                [-length_half, -width_half],
+                [-length_half, width_half],
+            ],
+            dtype=center.dtype,
+            device=center.device,
+        )
+
+    # If no intermediate points are requested, use original vertices
+    if num_point_length_side == 0 and num_point_width_side == 0:
+        vertices = base_vertices
+    else:
+        # List to collect sampled points along each edge
+        edge_points = []
+        # Iterate over each consecutive pair of vertices to sample points on edges
+        for i in range(len(base_vertices) - 1):
+            start = base_vertices[i]
+            end = base_vertices[i + 1]
+            # Determine if edge is horizontal or vertical in local frame
+            if torch.isclose(start[1], end[1]):  # horizontal edge: constant y, vary x
+                n_points = num_point_length_side + 2
+            elif torch.isclose(start[0], end[0]):  # vertical edge: constant x, vary y
+                n_points = num_point_width_side + 2
+            else:
+                # This should not happen for axis-aligned rectangle edges
+                n_points = 2
+
+            # Create linearly spaced points along the edge
+            # linspace returns points including both endpoints
+            t = torch.linspace(
+                0, 1, steps=n_points, device=center.device, dtype=center.dtype
+            ).unsqueeze(1)
+            pts = start + t * (end - start)
+
+            # Avoid duplicate vertices by dropping the first point after the first edge
+            if i > 0:
+                pts = pts[1:]
+            edge_points.append(pts)
+
+        # Concatenate all sampled points along edges to form the full set of vertices for one rectangle
+        vertices = torch.cat(edge_points, dim=0)
+
+    # Expand vertices to match batch size: shape becomes [batch_dim, num_vertices, 2]
+    vertices = vertices.unsqueeze(0).repeat(batch_dim, 1, 1)
+
+    # Create rotation matrices for each agent
+    # Squeeze yaw to shape [batch_dim] for trigonometric computations
+    cos_yaw = torch.cos(yaw).squeeze(-1)
+    sin_yaw = torch.sin(yaw).squeeze(-1)
+
+    # Build rotation matrices of shape [batch_dim, 2, 2]
+    rot_matrix = torch.stack(
+        [
+            torch.stack([cos_yaw, -sin_yaw], dim=-1),
+            torch.stack([sin_yaw, cos_yaw], dim=-1),
+        ],
+        dim=1,
+    )
+
+    # Apply rotation: use batch matrix multiplication
+    # vertices.transpose(1, 2) shape [batch_dim, 2, num_vertices], then multiply, then transpose back
+    vertices_rotated = torch.matmul(rot_matrix, vertices.transpose(1, 2)).transpose(
+        1, 2
+    )
+
+    # Add center positions to rotated vertices: broadcasting center to match vertices shape
+    vertices_global = vertices_rotated + center.unsqueeze(1)
+
+    return vertices_global
+
+
 def get_perpendicular_distances(
     point: torch.Tensor, polyline: torch.Tensor, n_points_long_term: torch.Tensor = None
 ):
