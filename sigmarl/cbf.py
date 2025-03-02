@@ -473,18 +473,18 @@ class CBF:
             in_keys=[("agents", "loc"), ("agents", "scale")],
             out_keys=[self.rl_action_key],
             distribution_class=TanhNormal,
-            distribution_kwargs={
-                "min": torch.tensor(
-                    [self.v_min, self.steering_min],
-                    device=self.device,
-                    dtype=torch.float32,
-                ),
-                "max": torch.tensor(
-                    [self.v_max, self.steering_max],
-                    device=self.device,
-                    dtype=torch.float32,
-                ),
-            },
+            # distribution_kwargs={  # Not supported
+            #     "min": torch.tensor(
+            #         [self.v_min, self.steering_min],
+            #         device=self.device,
+            #         dtype=torch.float32,
+            #     ),
+            #     "max": torch.tensor(
+            #         [self.v_max, self.steering_max],
+            #         device=self.device,
+            #         dtype=torch.float32,
+            #     ),
+            # },
             return_log_prob=True,
             log_prob_key=(
                 "agents",
