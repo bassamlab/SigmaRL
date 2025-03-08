@@ -68,8 +68,10 @@ v_target = 10.0  # Target speed
 
 x0 = -10.0  # m
 v0 = v_target  # m/s
-a0 = 0.0  # m/s
-y_const = 3.1  # m
+a0 = 0.0  # m/s^2
+j0 = 0.0  # m/s^3
+
+y_const = 3.01  # m
 
 v_min, v_max = -100, 100
 a_min, a_max = -100, 100
@@ -102,6 +104,7 @@ def run_simulation_own(
     x_current = x0
     v_current = v0
     a_current = a0
+    j_current = j0
 
     # CBF parameters
     cbf_safe_dist_sqr = (ra + ro) ** 2
@@ -129,25 +132,17 @@ def run_simulation_own(
                 dd_h = 2 * (v_current**2 + x_current * u_var)
                 # Second order Taylor approximation
                 cbf_cond_taylor = lambda_class_k * h + d_h * dt + 1 / 2 * dd_h * dt**2
-                # Store data
-                x_vals[k] = x_current
-                h_vals[k] = h
-
-                v_next = v_current + u_var * dt  # Virtual control input is acceleration
-
-                cost = cp.square(v_next - v_target)
+                # Predict the next speed
+                v_next_predict = (
+                    v_current + u_var * dt
+                )  # Virtual control input is acceleration
             else:
                 h = (x_current**2 + y_const**2) - cbf_safe_dist_sqr
                 d_h = 2 * x_current * u_var
                 # First order Taylor approximation
                 cbf_cond_taylor = lambda_class_k * h + d_h * dt
-                # Store data
-                x_vals[k] = x_current
-                h_vals[k] = h
-
-                v_next = u_var
-
-                cost = cp.square(v_next - v_target)
+                # Predict the next speed
+                v_next_predict = u_var  # Control input is speed
 
             constraints = [
                 cbf_cond_taylor >= 0,
@@ -155,36 +150,14 @@ def run_simulation_own(
                 # u_var <= v_max
             ]
 
-            # # Since the solution space in one dimension is an interval, we can find the bounds by solving two LPs.
-            # # Lower bound: minimize u_var subject to constraints
-            # prob_lower = cp.Problem(cp.Minimize(u_var), constraints)
-            # prob_lower.solve()
-            # u_lower = u_var.value
-
-            # # Upper bound: maximize u_var subject to constraints
-            # # Note: maximizing u_var is equivalent to minimizing -u_var
-            # prob_upper = cp.Problem(cp.Minimize(-u_var), constraints)
-            # prob_upper.solve()
-            # u_upper = u_var.value
-
-            # print("Feasible region for u_var is [{}, {}]".format(u_lower, u_upper))
-            # percentage = (u_upper - u_lower) / (v_max - v_min) * 100
-            # print("Percentage of feasible region: {:.2f}%".format(percentage))
-
         elif case_num == 2:  # Acceleration as control input
             h = (x_current**2 + y_const**2) - cbf_safe_dist_sqr
             d_h = 2 * x_current * v_current
             dd_h = 2 * (v_current**2 + x_current * u_var)
             # Second order Taylor approximation
             cbf_cond_taylor = lambda_class_k * h + d_h * dt + 1 / 2 * dd_h * dt**2
-            # Store data
-            x_vals[k] = x_current
-            v_vals[k] = v_current
-            h_vals[k] = h
-
-            v_next = v_current + dt * u_var
-
-            cost = cp.square(v_next - v_target)
+            # Predict the next speed
+            v_next_predict = v_current + u_var * dt  # Control input is acceleration
 
             constraints = [
                 cbf_cond_taylor >= 0,
@@ -207,17 +180,10 @@ def run_simulation_own(
                 + 1 / 2 * dd_h * dt**2
                 + 1 / 6 * ddd_h * dt**3
             )
-
-            # Store data
-            x_vals[k] = x_current
-            v_vals[k] = v_current
-            a_vals[k] = a_current
-            h_vals[k] = h
-
-            v_next = v_current + dt * a_current + 0.5 * (dt**2) * u_var
-            a_next = a_current + dt * u_var
-
-            cost = cp.square(v_next - v_target)
+            # Predict the next speed
+            v_next_predict = (
+                v_current + a_current * dt + 1 / 2 * u_var * dt**2
+            )  # Control input is jerk
 
             constraints = [
                 cbf_cond_taylor >= 0,
@@ -228,6 +194,8 @@ def run_simulation_own(
                 # u_var >= j_min,
                 # u_var <= j_max
             ]
+
+        cost = cp.square(v_next_predict - v_target)
 
         # Form and solve QP
         prob = cp.Problem(cp.Minimize(cost), constraints)
@@ -248,38 +216,77 @@ def run_simulation_own(
             )
             u_star = u_nominal
 
-        # Apply control input
+        if case_num == 2 and (k * dt >= 1.0):
+            print("DEBUG")
+
+        # Apply control input, store data, and update states
         if case_num == 1:
             if virtual_control_input:
-                # x_current = x_current + dt * v_current + 0.5 * dt**2 * u_star
-                # v_current = v_current + dt * u_star
-                v_next = v_current + dt * u_star  # Virtual state
-                x_current = x_current + dt * (v_current + v_next) / 2
+                # Store data
+                x_vals[k] = x_current
+                v_vals[k] = v_current
+                a_vals[k] = a_current
+                j_vals[k] = j_current
+                h_vals[k] = h
+                # Compute next states
+                a_next = u_star
+                v_next = v_current + dt * u_star
+                x_next = x_current + (v_current + v_next) / 2 * dt
+                # Update states
+                x_current = x_next
                 v_current = v_next
-                # Store data
-                a_vals[k] = u_star  # Virtual control input
-                u_star = v_next  # Actual control input
-                v_vals[k] = u_star
+                a_current = a_next
+                j_current = None
             else:
-                x_current = x_current + dt * u_star
                 # Store data
-                v_vals[k] = u_star
+                x_vals[k] = x_current
+                v_vals[k] = v_current
+                a_vals[k] = a_current
+                j_vals[k] = j_current
+                h_vals[k] = h
+                # Compute next states
+                v_next = u_star
+                x_next = x_current + (v_current + v_next) / 2 * dt
+                # Update states
+                x_current = x_next
+                v_current = v_next
+                a_current = None
+                j_current = None
         elif case_num == 2:
-            x_current = x_current + dt * v_current + 0.5 * dt**2 * u_star
-            v_current = v_current + dt * u_star
             # Store data
-            a_vals[k] = u_star
+            x_vals[k] = x_current
+            v_vals[k] = v_current
+            a_vals[k] = a_current
+            j_vals[k] = j_current
+            h_vals[k] = h
+            # Compute next states
+            a_next = u_star
+            v_next = v_current + dt * u_star
+            x_next = x_current + (v_current + v_next) / 2 * dt
+            # Update states
+            x_current = x_next
+            v_current = v_next
+            a_current = a_next
+            j_current = None
         elif case_num == 3:
-            x_current = (
-                x_current
-                + dt * v_current
-                + 0.5 * (dt**2) * a_current
-                + 0.25 * (dt**3) * u_star
-            )
-            v_current = v_current + dt * a_current + 0.5 * (dt**2) * u_star
-            a_current = a_current + dt * u_star
             # Store data
-            j_vals[k] = u_star
+            x_vals[k] = x_current
+            v_vals[k] = v_current
+            a_vals[k] = a_current
+            j_vals[k] = j_current
+            h_vals[k] = h
+            # Compute next states
+            j_next = u_star
+            a_next = a_current + dt * u_star
+            v_next = v_current + (a_current + a_next) / 2 * dt
+            x_next = x_current + (v_current + v_next) / 2 * dt
+            # Update states
+            x_current = x_next
+            v_current = v_next
+            a_current = a_next
+            j_current = j_next
+        else:
+            raise ValueError(f"Invalid case number: {case_num}")
 
     return time, x_vals, v_vals, a_vals, j_vals, h_vals
 
@@ -959,7 +966,7 @@ def run(SIM_DURATION=1.0, DT=0.05, lambda_class_k=1.0, is_plot=False):
         # axs[0].set_xlabel("Time (s)")
         axs[0].grid(True, linestyle=grid_ls, linewidth=grid_lw, alpha=grid_alpha)
         axs[0].set_ylabel(r"(a) Speed $v$ (m/s)")
-        axs[0].set_ylim([0, 11])
+        # axs[0].set_ylim([0, 11])
         axs[0].grid(True)
         axs[0].legend(loc="best")
 
@@ -1114,7 +1121,7 @@ def run(SIM_DURATION=1.0, DT=0.05, lambda_class_k=1.0, is_plot=False):
         plt.savefig(f"{fig_name}.jpeg", format="jpeg", dpi=300, bbox_inches="tight")
         print(f"Figure saved to {fig_name}.jpeg")
 
-        # plt.show()
+        plt.show()
 
     data = np.array(
         [
