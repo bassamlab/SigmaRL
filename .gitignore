@@ -16,6 +16,7 @@ tmp
 venv/
 *.pdf
 *.txt
+*.pkl
 
 # Distribution / packaging
 .Python

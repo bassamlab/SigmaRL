@@ -5,6 +5,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2408.07644-b31b1b.svg)](https://doi.org/10.48550/arXiv.2408.07644)
 [![arXiv](https://img.shields.io/badge/arXiv-2409.11852-b31b1b.svg)](https://doi.org/10.48550/arXiv.2409.11852)
 [![arXiv](https://img.shields.io/badge/arXiv-2411.08999-b31b1b.svg)](https://doi.org/10.48550/arXiv.2411.08999)
+[![arXiv](https://img.shields.io/badge/arXiv-2503.15014-b31b1b.svg)](https://doi.org/10.48550/arXiv.2503.15014)
 
 - [SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning](#sigmarl-a-sample-efficient-and-generalizable-multi-agent-reinforcement-learning-framework-for-motion-planning)
   - [Welcome to SigmaRL!](#welcome-to-sigmarl)
@@ -18,12 +19,14 @@
     - [1. SigmaRL](#1-sigmarl)
     - [2. XP-MARL](#2-xp-marl)
     - [3. CBF-MARL](#3-cbf-marl)
+    - [4. Truncated Taylor CBF (TTCBF)](#4-truncated-taylor-cbf-ttcbf)
   - [TODOs](#todos)
   - [Acknowledgments](#acknowledgments)
 
 > [!NOTE]
-> - Check out our recent work [CBF-MARL](#3-cbf-marl)! It uses a learning-based, *less conservative* distance metric to categorize safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL.
-> - Check out our recent work [XP-MARL](#2-xp-marl)! It augments MARL with learning-based au<ins>x</ins>iliary <ins>p</ins>rioritization to address *non-stationarity*.
+> - Check out our recent work [Truncated Taylor CBF](#4-truncated-taylor-cbf-ttcbf)! It proposes a new notion of high-order CBFs termed Truncated Taylor CBF (TTCBF). TTCBF can handle constraints with arbitrary relative degrees while using only one design parameter to facilitate control design.
+<!-- > - Check out our recent work [CBF-MARL](#3-cbf-marl)! It uses a learning-based, *less conservative* distance metric to categorize safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL. -->
+<!-- > - Check out our recent work [XP-MARL](#2-xp-marl)! It augments MARL with learning-based au<ins>x</ins>iliary <ins>p</ins>rioritization to address *non-stationarity*. -->
 
 ## Welcome to SigmaRL!
 This repository provides the full code of **SigmaRL**, a <ins>S</ins>ample eff<ins>i</ins>ciency and <ins>g</ins>eneralization <ins>m</ins>ulti-<ins>a</ins>gent <ins>R</ins>einforcement <ins>L</ins>earning (MARL) for motion planning of Connected and Automated Vehicles (CAVs).
@@ -125,6 +128,33 @@ Figure 2: We use an auxiliary MARL to learn dynamic priority assignments to addr
 
 Figure 3: Demonstrating the safety and reduced conservatism of our MTV-based safety margin. In the overtaking scenario, while the traditional approach fails to overtake due to excessive conservatism (see (a)), ours succeeds (see (b)). Note that in the overtaking scenario, the slow-moving vehicle $j$ purposely obstructs vehicle $i$ three times to prevent it from overtaking. In the bypassing scenario, while the traditional approach requires a large lateral space due to excessive conservatism (see (c)), ours requires a smaller one (see (d)). See our [CBF-MARL paper](#3-cbf-marl) for more details.
 
+<figure>
+  <table>
+    <tr>
+      <td>
+        <a id="fig-ttcbf-hocbf"></a>
+        <figure>
+          <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/ttcbf_experiment_hocbf.jpg?raw=true" width="800" />
+          <br>
+          <figcaption>(a) The standard HOCBF approach requires tuning two parameters (lambda_1 and lambda_2).</figcaption>
+        </figure>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <a id="fig-ttcbf-taylor"></a>
+        <figure>
+          <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/ttcbf_experiment_taylor.jpg?raw=true" width="800"/>
+          <br>
+          <figcaption>(b) Our TTCBF HOCBF approach requires tuning only one parameter (lambda_1).</figcaption>
+        </figure>
+      </td>
+    </tr>
+  </table>
+</figure>
+
+Figure 4: Our TTCBF approach reduces the number of parameters to tune when handling constraints with high relative degrees. See our [TTCBF paper](#4-truncated-taylor-cbf-ttcbf) for more details.
+
 ## Install
 SigmaRL supports Python versions from 3.9 to 3.12 and is also OS independent (Windows/macOS/Linux). It's recommended to use a virtual environment. For example, if you are using [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html):
   ```bash
@@ -170,7 +200,8 @@ We support maps customized in <a href="https://josm.openstreetmap.de/" target="_
 - Go to `sigmarl/parse_osm.py`. Adjust the parameters `scenario_type` and run it.
 
 ## News
-- [2024-11-15] Check out our recent work [CBF-MARL](#3-cbf-marl)! It uses a learning-based, *less conservative* distance metric to quantify safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL.
+- [2025-03-21] Check out our recent work [Truncated Taylor CBF](#4-truncated-taylor-cbf-ttcbf)! It proposes a new notion of high-order CBFs termed Truncated Taylor CBF (TTCBF). TTCBF can handle constraints with arbitrary relative degrees while using only one design parameter to facilitate control design.
+- [2025-03-10] Our work [CBF-MARL](#3-cbf-marl) was accepted by the 23rd European Control Conference (ECC 2025)! It uses a learning-based, *less conservative* distance metric to quantify safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL.
 - [2024-09-15] Check out our recent work [XP-MARL](#2-xp-marl)! It augments MARL with learning-based au<ins>x</ins>iliary <ins>p</ins>rioritization to address *non-stationarity*.
 - [2024-08-14] We support customized maps in OpenStreetMap now (see [here](#customize-your-own-maps))!
 - [2024-07-10] Our [CPM Scenario](#fig-scenario-cpm) is now available as an MARL benchmark scenario in VMAS (see <a href="https://github.com/proroklab/VectorizedMultiAgentSimulator/releases/tag/1.4.2" target="_blank">here</a>)!
@@ -242,11 +273,12 @@ Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Pro
 
 - **BibTeX**
   ```bibtex
-  @article{xu2024learning,
-    title={Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin},
-    author={Xu, Jianye and Alrifaee, Bassam},
-    journal={arXiv preprint arXiv:2411.08999},
-    year={2024},
+  @inproceedings{xu2024learningbased,
+    title = {Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin},
+    shorttitle = {Learning-Based Control Barrier Function with Provably Safe Guarantees},
+    booktitle = {European Control Conference (ECC), in Press},
+    author = {Xu, Jianye and Alrifaee, Bassam},
+    year = {2025},
   }
   ```
 
@@ -256,17 +288,40 @@ Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Pro
   - Go to [this page](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/ecc25.zip) and download the zip file `ecc25.zip`. Unzip it, copy and paste the whole folder to the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/ecc25/`.
   - Run `sigmarl/evaluation_ecc25.py`.
 
+### 4. Truncated Taylor CBF (TTCBF)
+<div>
+Jianye Xu and Bassam Alrifaee, "High-Order Control Barrier Functions: Insights and a Truncated Taylor-Based Formulation," <i>arXiv preprint arXiv:2503.15014</i>, 2025.
+
+<a href="https://doi.org/10.48550/arXiv.2503.15014" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a><a href="https://github.com/bassamlab/SigmaRL/tree/1.3.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+</div>
+
+- **BibTeX**
+  ```bibtex
+  @article{xu2025highorder,
+    title = {High-Order Control Barrier Functions: Insights and a Truncated Taylor-Based Formulation},
+    author = {Xu, Jianye and Alrifaee, Bassam},
+    journal = {arXiv preprint arXiv:2503.15014},
+    year = {2025},
+  }
+  ```
+
+- **Reproduce Experimental Results in the Paper:**
+  - Git checkout to the corresponding tag using `git checkout 1.3.0`
+  - Run `sigmarl/hocbf_taylor.py`.
+
+
 ## TODOs
+- Improve safety
+  - [ ] Integrating Control Barrier Functions (CBFs)
+    - [x] Proof of concept with two agents (see the CBF-MARL paper [here](#3-cbf-marl))
+    - [x] High-Order CBFs [here](#4-truncated-taylor-cbf)
+  - [ ] Integrating Model Predictive Control (MPC)
+- Address non-stationarity
+  - [x] Integrating prioritization (see the XP-MARL paper [here](#2-xp-marl))
 - Effective observation design
   - [ ] Image-based representation of observations
   - [ ] Historic observations
   - [ ] Attention mechanism
-- Improve safety
-  - [ ] Integrating Control Barrier Functions (CBFs)
-    - [x] Proof of concept with two agents (see the CBF-MARL paper [here](#3-cbf-marl))
-  - [ ] Integrating Model Predictive Control (MPC)
-- Address non-stationarity
-  - [x] Integrating prioritization (see the XP-MARL paper [here](#2-xp-marl))
 - Misc
   - [x] OpenStreetMap support (see guidance [here](#customize-your-own-maps))
   - [x] Contribute our [CPM scenario](#fig-scenario-cpm) as an MARL benchmark scenario in VMAS (see news <a href="https://github.com/proroklab/VectorizedMultiAgentSimulator/releases/tag/1.4.2" target="_blank">here</a>)

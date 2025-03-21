@@ -1,9 +1,9 @@
-from sigmarl.hocbf_taylor import (
-    conservative_aggressive_class_k,
-    run_experiment_1,
-    run_experiment_2,
-)
+# Copyright (c) 2025, Chair of Embedded Software (Informatik 11) - RWTH Aachen University.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
-conservative_aggressive_class_k()
-run_experiment_1()
-run_experiment_2()
+
+# ------------------------------------
+# Run file sigmarl/hocbf_taylor.py
+# ------------------------------------
