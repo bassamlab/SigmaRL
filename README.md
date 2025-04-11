@@ -18,14 +18,14 @@
   - [Papers](#papers)
     - [1. SigmaRL](#1-sigmarl)
     - [2. XP-MARL](#2-xp-marl)
-    - [3. CBF-MARL](#3-cbf-marl)
+    - [3. MTV-Based CBF](#3-mtv-based-cbf)
     - [4. Truncated Taylor CBF (TTCBF)](#4-truncated-taylor-cbf-ttcbf)
   - [TODOs](#todos)
   - [Acknowledgments](#acknowledgments)
 
 > [!NOTE]
 > - Check out our recent work [Truncated Taylor CBF](#4-truncated-taylor-cbf-ttcbf)! It proposes a new notion of high-order CBFs termed Truncated Taylor CBF (TTCBF). TTCBF can handle constraints with arbitrary relative degrees while using only one design parameter to facilitate control design.
-<!-- > - Check out our recent work [CBF-MARL](#3-cbf-marl)! It uses a learning-based, *less conservative* distance metric to categorize safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL. -->
+<!-- > - Check out our recent work [MTV-Based CBF](#3-mtv-based-cbf)! It uses a learning-based, *less conservative* distance metric to categorize safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL. -->
 <!-- > - Check out our recent work [XP-MARL](#2-xp-marl)! It augments MARL with learning-based au<ins>x</ins>iliary <ins>p</ins>rioritization to address *non-stationarity*. -->
 
 ## Welcome to SigmaRL!
@@ -125,8 +125,9 @@ Figure 2: We use an auxiliary MARL to learn dynamic priority assignments to addr
   </table>
   <!-- <figcaption>Figure 1.</figcaption> -->
 </figure>
+<a id="fig-mtv-based-cbf"></a>
 
-Figure 3: Demonstrating the safety and reduced conservatism of our MTV-based safety margin. In the overtaking scenario, while the traditional approach fails to overtake due to excessive conservatism (see (a)), ours succeeds (see (b)). Note that in the overtaking scenario, the slow-moving vehicle $j$ purposely obstructs vehicle $i$ three times to prevent it from overtaking. In the bypassing scenario, while the traditional approach requires a large lateral space due to excessive conservatism (see (c)), ours requires a smaller one (see (d)). See our [CBF-MARL paper](#3-cbf-marl) for more details.
+Figure 3: Demonstrating the safety and reduced conservatism of our MTV-based safety margin. In the overtaking scenario, while the traditional approach fails to overtake due to excessive conservatism (see (a)), ours succeeds (see (b)). Note that in the overtaking scenario, the slow-moving vehicle $j$ purposely obstructs vehicle $i$ three times to prevent it from overtaking. In the bypassing scenario, while the traditional approach requires a large lateral space due to excessive conservatism (see (c)), ours requires a smaller one (see (d)). See our [MTV-Based CBF paper](#3-mtv-based-cbf) for more details.
 
 <figure>
   <table>
@@ -188,28 +189,28 @@ After training, run `main_testing.py` to test your model. You may need to adjust
 *Note*: If the path to a saved model changes, you need to update the value of `where_to_save` in the corresponding JSON file as well.
 
 ## Customize Your Own Maps
-We support maps customized in <a href="https://josm.openstreetmap.de/" target="_blank">JOSM</a>, an open-source editor for ​OpenStreetMap. Follow these steps:
-- Install and open JOSM, click the green download button
-- Zoom in and find an empty area (as empty as possible)
-- Select the area by drawing a rectangle
-- Click "Download"
-- Now you will see a new window. Make sure there is no element. Otherwise, redo the above steps.
-- Customize lanes. Note that all lanes you draw are considered center lines. You do not need to draw left and right boundaries, since they will be determined automatically later by our script with a given width.
-- Save the osm file and store it at `sigmarl.assets/maps`. Give it a name.
-- Go to `sigmarl/constants.py` and create a new dictionary for it. You should at least give the value for the key `map_path`, `lane_width`, and `scale`.
-- Go to `sigmarl/parse_osm.py`. Adjust the parameters `scenario_type` and run it.
+We support maps customized in <a href="https://josm.openstreetmap.de/" target="_blank">JOSM</a>, an open-source editor for ​OpenStreetMap. Follow these steps (video tutorial available <a href="https://github.com/bassamlab/assets/blob/main/sigmarl/media/custom_map_tutorial.mp4" target="_blank">here</a>):
+- Install JOSM from the website given above.
+- To get an empty map that can be customized, do the following:
+  - Open JOSM and click the green download button
+  - Zoom in and choose an arbitrary place on the map by drawing a rectangle. The area should be as empty as possible.
+  - Clicking "Download" will open a new window. There should be the notification that no data could get found, otherwise redo choosing the area.
+- Customize the map by drawing lines. Note that all lanes you draw are considered center lines. You do not need to draw left and right boundaries, since they will be determined automatically later by our script with a given width. The distance between the nodes of a lane should be approximatly 0.1 meters. You can find useful hints and commands for customizing the map at <a href="https://josm.openstreetmap.de/wiki/Help/Action/Select#Scale" target="_blank">Actions</a> and <a href="https://josm.openstreetmap.de/wiki/Help/Menu/Tools" target="_blank">Tools</a>.
+- Give each lane the key "lanes" and an unique value.
+- Save the resulting .osm file and store it at `assets/maps`. Give it a name.
+- Go to `utilities/constants.py` and create a new entry in the dictionary "SCENARIOS" for it. The key of the entry is the name of the map and the value is a dictionary, for which you should at least give the value for the key `map_path`, `lane_width`, and `scale`. Also you should provide a list for `reference_paths_ids` (which paths exist?) and a dictionary for `neighboring_lanelet_ids` (which lanes are adjacent?).
+- Go to `utilities/parse_osm.py`. Adjust the parameters `scenario_type` and run it.
 
 ## News
 - [2025-03-21] Check out our recent work [Truncated Taylor CBF](#4-truncated-taylor-cbf-ttcbf)! It proposes a new notion of high-order CBFs termed Truncated Taylor CBF (TTCBF). TTCBF can handle constraints with arbitrary relative degrees while using only one design parameter to facilitate control design.
-- [2025-03-10] Our work [CBF-MARL](#3-cbf-marl) was accepted by the 23rd European Control Conference (ECC 2025)! It uses a learning-based, *less conservative* distance metric to quantify safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL.
+- [2025-03-10] Our work [MTV-Based CBF](#3-mtv-based-cbf) was accepted by the 23rd European Control Conference (ECC 2025)! It uses a learning-based, *less conservative* distance metric to quantify safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL.
 - [2024-09-15] Check out our recent work [XP-MARL](#2-xp-marl)! It augments MARL with learning-based au<ins>x</ins>iliary <ins>p</ins>rioritization to address *non-stationarity*.
 - [2024-08-14] We support customized maps in OpenStreetMap now (see [here](#customize-your-own-maps))!
 - [2024-07-10] Our [CPM Scenario](#fig-scenario-cpm) is now available as an MARL benchmark scenario in VMAS (see <a href="https://github.com/proroklab/VectorizedMultiAgentSimulator/releases/tag/1.4.2" target="_blank">here</a>)!
 - [2024-07-10] Our work [SigmaRL](#1-sigmarl) was accepted by the 27th IEEE International Conference on Intelligent Transportation Systems (IEEE ITSC 2024)!
 
 ## Papers
-We would be grateful if you would refer to the papers below if you find this repository helpful.
-
+Papers related to this repository are listed below.
 
 ### 1. SigmaRL
 <div>
@@ -264,11 +265,11 @@ Jianye Xu, Omar Sobhy, and Bassam Alrifaee, "XP-MARL: Auxiliary Prioritization i
 
   You can also run `testing_mappo_cavs.py` to intuitively evaluate the trained models. Adjust the parameter `path` therein to specify which folder the target model was saved.
 
-### 3. CBF-MARL
+### 3. MTV-Based CBF
 <div>
 Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin," <i>arXiv preprint arXiv:2411.08999</i>, 2024.
 
-<a href="https://doi.org/10.48550/arXiv.2411.08999" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a>
+<a href="https://doi.org/10.48550/arXiv.2411.08999" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"> </a>[![Jump to Video](https://img.shields.io/badge/Jump%20to-Video-blue)](#fig-mtv-based-cbf)
 </div>
 
 - **BibTeX**
@@ -292,7 +293,7 @@ Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Pro
 <div>
 Jianye Xu and Bassam Alrifaee, "High-Order Control Barrier Functions: Insights and a Truncated Taylor-Based Formulation," <i>arXiv preprint arXiv:2503.15014</i>, 2025.
 
-<a href="https://doi.org/10.48550/arXiv.2503.15014" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a><a href="https://github.com/bassamlab/SigmaRL/tree/1.3.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+<a href="https://doi.org/10.48550/arXiv.2503.15014" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://github.com/bassamlab/SigmaRL/tree/1.3.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
 
 - **BibTeX**
@@ -313,7 +314,7 @@ Jianye Xu and Bassam Alrifaee, "High-Order Control Barrier Functions: Insights a
 ## TODOs
 - Improve safety
   - [ ] Integrating Control Barrier Functions (CBFs)
-    - [x] Proof of concept with two agents (see the CBF-MARL paper [here](#3-cbf-marl))
+    - [x] Proof of concept with two agents (see the MTV-Based CBF paper [here](#3-mtv-based-cbf))
     - [x] High-Order CBFs [here](#4-truncated-taylor-cbf)
   - [ ] Integrating Model Predictive Control (MPC)
 - Address non-stationarity
