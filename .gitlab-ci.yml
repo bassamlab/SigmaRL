@@ -3,11 +3,16 @@ stages:
 
 test_job:
   stage: test
-  image: python:3.12
+  image: python:3.12-slim
   variables:
     CICD_TESTING: "true"
+  cache:
+    key: pip-cache
+    paths:
+      - .cache/pip
   before_script:
-    - pip install -r requirements.txt
+    - pip install --upgrade pip
+    - pip install --no-cache-dir -r requirements.txt
   script:
     - ls -R sigmarl/tests
     - python -m unittest discover -s sigmarl/tests -p "*.py"
