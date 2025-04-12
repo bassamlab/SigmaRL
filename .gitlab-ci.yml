@@ -12,7 +12,7 @@ test_job:
       - .cache/pip
   before_script:
     - pip install --upgrade pip
-    - pip install --no-cache-dir -r requirements.txt
+    - pip install --no-cache-dir -r requirements_gitlab.txt
   script:
     - ls -R sigmarl/tests
     - python -m unittest discover -s sigmarl/tests -p "*.py"
