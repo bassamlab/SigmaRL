@@ -65,6 +65,7 @@ try:
             break_when_any_done=False,
             is_save_simulation_video=parameters.is_save_simulation_video,
         )
-        save_video(f"{path}video", frame_list, fps=1 / parameters.dt)
+        if parameters.is_save_simulation_video:
+            save_video(f"{path}video", frame_list, fps=1 / parameters.dt)
 except StopIteration:
     raise FileNotFoundError("No json file found.")
