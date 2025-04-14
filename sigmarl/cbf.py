@@ -1254,7 +1254,9 @@ class CBF:
         penalty_s_veh *= D_long
 
         # Predict the value of psi_0 at the next time step
-        psi_0_predict = h_ji + dot_h_ji * self.dt + 1 / 2 * ddot_h_ji * self.dt**2
+        psi_0_predict = (
+            h_ji + dot_h_ji * self.dt + 1 / 2 * ddot_h_ji * self.dt**2
+        )  # Use truncated Taylor series to predict the next-step CBF value, see https://arxiv.org/abs/2503.15014 for more details
         if self.is_relax_cbf:
             scale_factor = 18  # The vehicles are 1:18 scaled
             speed_related_offset = max(
@@ -2000,7 +2002,7 @@ class CBF:
             is_close_shape=False,
             num_point_length_side=num_point_length_side,
             num_point_width_side=num_point_width_side,
-        )
+        )  # Shape (num_points_x x num_points_y x num_points_rot, 4 + 2 * (num_point_length_side + num_point_width_side) + 1, 2)
 
         vertices_grid_flat = rec_vertices_grid.reshape(-1, 2)
 
@@ -3009,7 +3011,7 @@ def main(
 if __name__ == "__main__":
     main(
         scenario_type="overtaking",  # One of "overtaking" and "bypassing"
-        sm_type="mtv",  # One of "c2c", "mtv", and "grid"
+        sm_type="grid",  # One of "c2c", "mtv", and "grid"。 In case of "grid", we use point-to-polyline as the distance function
         is_relax_cbf=True,
         is_save_video=False,  # If True, video will be saved without live visualization
         is_save_eval_result=True,
