@@ -222,11 +222,13 @@ Jianye Xu, Pan Hu, and Bassam Alrifaee, "SigmaRL: A Sample-Efficient and General
 - **BibTeX**
   ```bibtex
   @inproceedings{xu2024sigmarl,
-    title={{{SigmaRL}}: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning},
-    author={Xu, Jianye and Hu, Pan and Alrifaee, Bassam},
-    booktitle={2024 IEEE 27th International Conference on Intelligent Transportation Systems (ITSC), in press},
-    year={2024},
-    organization={IEEE}
+    title = {SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning},
+    booktitle = {2024 IEEE 27th International Conference on Intelligent Transportation Systems (ITSC)},
+    author = {Xu, Jianye and Hu, Pan and Alrifaee, Bassam},
+    year = {2024},
+    pages = {768--775},
+    issn = {2153-0017},
+    doi = {10.1109/ITSC58415.2024.10919918}
   }
   ```
 
