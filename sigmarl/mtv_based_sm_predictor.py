@@ -484,9 +484,9 @@ class SafetyMarginEstimatorModule:
         self.error_upper_bound = checkpoint["error_upper_bound"]
 
         self.net.eval()
-        print(
-            f"Model loaded from {self.path_nn}, with an error upper bound of {self.error_upper_bound:.6f}"
-        )
+        # print(
+        # f"Model loaded from {self.path_nn}, with an error upper bound of {self.error_upper_bound:.6f}"
+        # )
         return self.net
 
     def test_model(self, net):

@@ -49,6 +49,8 @@ from sigmarl.helper_training import (
 
 from sigmarl.scenarios.road_traffic import ScenarioRoadTraffic
 
+from sigmarl.cbf_qp import CBFQP
+
 # Reproducibility
 torch.manual_seed(0)
 
@@ -91,6 +93,18 @@ class MAPPOCAVs:
                     env,
                     decision_making_module.policy,
                     priority_module,
+                    self.parameters,
+                )
+
+        if self.parameters.is_using_cbf:
+            self.cbf_controllers = self._setup_cbf_qp_controller(env)
+            self._load_existing_model_for_cbf(decision_making_module, priority_module)
+            if self.parameters.is_using_cbf_in_testing:
+                return (
+                    env,
+                    decision_making_module.policy,
+                    priority_module,
+                    self.cbf_controllers,
                     self.parameters,
                 )
 
@@ -263,15 +277,28 @@ class MAPPOCAVs:
 
     def _setup_data_collector(self, env, decision_making_module, priority_module):
         """Set up the data collector for gathering experience."""
-        return SyncDataCollectorCustom(
-            env,
-            decision_making_module.policy,
-            priority_module=priority_module,
-            device=self.parameters.device,
-            storing_device=self.parameters.device,
-            frames_per_batch=self.parameters.frames_per_batch,
-            total_frames=self.parameters.total_frames,
-        )
+        if self.parameters.is_using_cbf and not self.parameters.is_using_cbf_in_testing:
+            self.cbf_controllers = self._setup_cbf_qp_controller(env)
+            return SyncDataCollectorCustom(
+                env,
+                decision_making_module.policy,
+                priority_module=priority_module,
+                cbf_controllers=self.cbf_controllers,
+                device=self.parameters.device,
+                storing_device=self.parameters.device,
+                frames_per_batch=self.parameters.frames_per_batch,
+                total_frames=self.parameters.total_frames,
+            )
+        else:
+            return SyncDataCollectorCustom(
+                env,
+                decision_making_module.policy,
+                priority_module=priority_module,
+                device=self.parameters.device,
+                storing_device=self.parameters.device,
+                frames_per_batch=self.parameters.frames_per_batch,
+                total_frames=self.parameters.total_frames,
+            )
 
     def _setup_replay_buffer(self):
         """Set up the replay buffer for storing experiences."""
@@ -324,7 +351,7 @@ class MAPPOCAVs:
                 priority_module.GAE(
                     tensordict_data,
                     params=priority_module.loss_module.critic_network_params,
-                    target_params=priority_module.loss_module.target_network_critic_params,
+                    target_params=priority_module.loss_module.target_critic_network_params,
                 )
 
     def _update_priorities(self, tensordict_data):
@@ -496,6 +523,74 @@ class MAPPOCAVs:
         """Print a summary of the training process."""
         training_duration = (time.time() - t_start) / 3600
         cprint(f"[INFO] Training duration: {training_duration:.2f} hours.", "blue")
+
+    def _setup_cbf_qp_controller(self, env):
+        """Set up the cbf_qp_controller if cbf constrained MARL is enabled."""
+        if (
+            self.parameters.is_using_cbf
+            and not self.parameters.is_using_centralized_cbf
+        ):
+            # Each agent in each environment has one CBF-based controller
+            cbf_controllers = [
+                [
+                    CBFQP(env=env, env_idx=env_idx, agent_idx=agent_idx)
+                    for agent_idx in range(self.parameters.n_agents)
+                ]
+                for env_idx in range(self.parameters.num_vmas_envs)
+            ]
+            return cbf_controllers
+        elif self.parameters.is_using_cbf and self.parameters.is_using_centralized_cbf:
+            # Each environment has one CBF-based controller
+            cbf_controllers = [
+                CBFQP(env=env, env_idx=env_idx)
+                for env_idx in range(self.parameters.num_vmas_envs)
+            ]
+            return cbf_controllers
+        else:
+            return None
+
+    def _load_existing_model_for_cbf(self, decision_making_module, priority_module):
+        """Load RL decision making and priority policy model"""
+        if self.parameters.is_using_centralized_cbf:
+            if self.parameters.is_using_cbf_in_testing:
+                decision_making_module.policy.load_state_dict(
+                    torch.load(self.parameters.where_to_save + "final_policy.pth")
+                )
+                cprint(
+                    "[INFO] Loaded decision-making model for CBF-constrained MARL",
+                    "red",
+                )
+        else:
+            if self.parameters.is_using_cbf_in_testing:
+                decision_making_module.policy.load_state_dict(
+                    torch.load(self.parameters.where_to_save + "final_policy.pth")
+                )
+                priority_module.policy.load_state_dict(
+                    torch.load(
+                        self.parameters.where_to_save + "final_priority_policy.pth"
+                    )
+                )
+                cprint(
+                    "[INFO] Loaded decision-making and priority model for CBF-constrained MARL",
+                    "red",
+                )
+
+            else:
+                if self.parameters.prioritization_method == "marl":
+                    priority_module.policy.load_state_dict(
+                        torch.load(
+                            self.parameters.where_to_save + "final_priority_policy.pth"
+                        )
+                    )
+                    cprint(
+                        "[INFO] Loaded MARL priority model for priority-based solving",
+                        "red",
+                    )
+                else:
+                    cprint(
+                        "[INFO] Use random priority model for priority-based solving",
+                        "red",
+                    )
 
 
 def mappo_cavs(parameters: Parameters):

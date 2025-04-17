@@ -5,6 +5,7 @@
 
 import torch
 import torch.nn as nn
+import sys
 from torch import Tensor
 
 import typing
@@ -52,7 +53,7 @@ from vmas.simulator.utils import (
 from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
 
 # Specs
-from torchrl.data import UnboundedContinuousTensorSpec
+from torchrl.data import Unbounded
 
 # Utils
 from matplotlib import pyplot as plt
@@ -62,6 +63,7 @@ from ctypes import byref
 import json
 import os
 import re
+import time
 
 from typing import Callable, Dict, Optional, Sequence, Tuple, Union
 
@@ -109,6 +111,7 @@ class TransformedEnvCustom(TransformedEnv):
         out=None,
         is_save_simulation_video: bool = False,
         priority_module=None,
+        cbf_controllers=None,
     ):
         """Executes a rollout in the environment.
 
@@ -167,7 +170,13 @@ class TransformedEnvCustom(TransformedEnv):
             "callback": callback,
             "is_save_simulation_video": is_save_simulation_video,
             "priority_module": priority_module,
+            "cbf_controllers": cbf_controllers,
         }
+        self.time_rl = []
+        self.time_cbf = []
+        self.time_pseudo_dis = []
+        self.num_fail = 0
+
         if break_when_any_done:
             if is_save_simulation_video:
                 tensordicts, frame_list = self._rollout_stop_early(
@@ -206,6 +215,7 @@ class TransformedEnvCustom(TransformedEnv):
         callback,
         is_save_simulation_video,
         priority_module,
+        cbf_controllers,
     ):
         tensordicts = []
 
@@ -225,7 +235,10 @@ class TransformedEnvCustom(TransformedEnv):
                     nearing_agents_indices=self.base_env.scenario_name.observations.nearing_agents_indices,
                 )
 
-            if self.base_env.scenario_name.parameters.is_using_prioritized_marl:
+            if (
+                self.base_env.scenario_name.parameters.is_using_prioritized_marl
+                and not self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+            ):
                 (
                     tensordict,
                     priority_rank,
@@ -242,6 +255,42 @@ class TransformedEnvCustom(TransformedEnv):
                 self.base_env.scenario_name.priority_rank = priority_rank
                 self.base_env.scenario_name.observable_higher_priority_agents = (
                     observable_higher_priority_agents
+                )
+            elif (
+                self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+                and not self.env.base_env.scenario_name.parameters.is_using_centralized_cbf
+            ):
+                (
+                    time_rl,
+                    time_cbf,
+                    time_pseudo_dis,
+                    tensordict,
+                    priority_rank,
+                    observable_higher_priority_agents,
+                ) = cbf_constrained_decentralized_policy(
+                    tensordict,
+                    policy,
+                    priority_module,
+                    cbf_controllers,
+                    self.base_env.scenario_name.observations.nearing_agents_indices,
+                    self.base_env.scenario_name.parameters.is_communication_noise,
+                    self.base_env.scenario_name.parameters.noise_level,
+                )
+                # Store time for computational efficiency
+                self.time_rl.append(time_rl)
+                self.time_cbf.append(time_cbf)
+                self.time_pseudo_dis.append(time_pseudo_dis)
+                # Store priority_rank for later use
+                self.base_env.scenario_name.priority_rank = priority_rank
+                self.base_env.scenario_name.observable_higher_priority_agents = (
+                    observable_higher_priority_agents
+                )
+            elif (
+                self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+                and self.base_env.scenario_name.parameters.is_using_centralized_cbf
+            ):
+                tensordict = cbf_constrained_centralized_policy(
+                    tensordict, policy, cbf_controllers
                 )
             else:
                 tensordict = policy(tensordict)
@@ -279,7 +328,13 @@ class TransformedEnvCustom(TransformedEnv):
                     frame_list.append(frame)
                 else:
                     callback(self, tensordict)
-
+        if self.base_env.scenario_name.parameters.is_using_cbf:
+            num_fail = 0
+            for i in range(len(cbf_controllers)):
+                for j in range(len(cbf_controllers[i])):
+                    num_fail += cbf_controllers[i][j].num_fail
+            self.num_fail = num_fail
+            # print("Total number of cbf failure solving is:", num_fail)
         if is_save_simulation_video:
             return tensordicts, frame_list  # Modification
         else:
@@ -297,6 +352,7 @@ class TransformedEnvCustom(TransformedEnv):
         callback,
         is_save_simulation_video,
         priority_module,
+        cbf_controllers,
     ):
         tensordicts = []
         tensordict_ = tensordict
@@ -317,7 +373,10 @@ class TransformedEnvCustom(TransformedEnv):
                     nearing_agents_indices=self.base_env.scenario_name.observations.nearing_agents_indices,
                 )
 
-            if self.base_env.scenario_name.parameters.is_using_prioritized_marl:
+            if (
+                self.base_env.scenario_name.parameters.is_using_prioritized_marl
+                and not self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+            ):
                 (
                     tensordict_,
                     priority_rank,
@@ -335,6 +394,45 @@ class TransformedEnvCustom(TransformedEnv):
                 self.base_env.scenario_name.observable_higher_priority_agents = (
                     observable_higher_priority_agents
                 )
+            elif (
+                self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+                and not self.base_env.scenario_name.parameters.is_using_centralized_cbf
+            ):
+                (
+                    time_rl,
+                    time_cbf,
+                    time_pseudo_dis,
+                    tensordict_,
+                    priority_rank,
+                    observable_higher_priority_agents,
+                ) = cbf_constrained_decentralized_policy(
+                    tensordict_,
+                    policy,
+                    priority_module,
+                    cbf_controllers,
+                    self.base_env.scenario_name.observations.nearing_agents_indices,
+                    self.base_env.scenario_name.parameters.is_communication_noise,
+                    self.base_env.scenario_name.parameters.noise_level,
+                )
+                # Store time for computational efficiency
+                self.time_rl.append(time_rl)
+                self.time_cbf.append(time_cbf)
+                self.time_pseudo_dis.append(time_pseudo_dis)
+                # Store priority_rank for later use
+                self.base_env.scenario_name.nominal_action = tensordict[
+                    "agents", "info", "nominal_action"
+                ]
+                self.base_env.scenario_name.priority_rank = priority_rank
+                self.base_env.scenario_name.observable_higher_priority_agents = (
+                    observable_higher_priority_agents
+                )
+            elif (
+                self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+                and self.base_env.scenario_name.parameters.is_using_centralized_cbf
+            ):
+                tensordict_ = cbf_constrained_centralized_policy(
+                    tensordict_, policy, cbf_controllers
+                )
             else:
                 tensordict_ = policy(tensordict_)
             if auto_cast_to_device:
@@ -351,6 +449,13 @@ class TransformedEnvCustom(TransformedEnv):
                     frame_list.append(frame)
                 else:
                     callback(self, tensordict)
+        if self.base_env.scenario_name.parameters.is_using_cbf:
+            num_fail = 0
+            for i in range(len(cbf_controllers)):
+                for j in range(len(cbf_controllers[i])):
+                    num_fail += cbf_controllers[i][j].num_fail
+            self.num_fail = num_fail
+            # print("Total number of cbf failure solving is:", num_fail)
 
         if is_save_simulation_video:
             return tensordicts, frame_list  # Modification
@@ -589,7 +694,7 @@ class SyncDataCollectorCustom(SyncDataCollector):
                 },
                 batch_size=[self.env.base_env.scenario_name.parameters.num_vmas_envs],
             )
-
+            self._tensordict_out["next", "agents", "info"].set("priority", priority)
             self._tensordict_out["agents", "info"].set("priority", priority)
 
         self._tensordict_out = (
@@ -625,9 +730,11 @@ class SyncDataCollectorCustom(SyncDataCollector):
         env,
         policy,
         priority_module=None,
+        cbf_controllers=None,
         **kwargs,
     ):
         self.priority_module = priority_module
+        self.cbf_controllers = cbf_controllers
         super().__init__(env, policy, **kwargs)
         self.helper_init(env, policy, **kwargs)
 
@@ -668,6 +775,7 @@ class SyncDataCollectorCustom(SyncDataCollector):
                 # <Modification ends>
                 elif (
                     self.env.base_env.scenario_name.parameters.is_using_prioritized_marl
+                    and not self.env.base_env.scenario_name.parameters.is_using_cbf
                 ):
                     prioritized_ap_policy(
                         tensordict=self._tensordict,
@@ -676,6 +784,28 @@ class SyncDataCollectorCustom(SyncDataCollector):
                         nearing_agents_indices=self.env.base_env.scenario_name.observations.nearing_agents_indices,
                         is_communication_noise=self.env.base_env.scenario_name.parameters.is_communication_noise,
                         noise_level=self.env.base_env.scenario_name.parameters.noise_level,
+                    )
+                elif (
+                    self.env.base_env.scenario_name.parameters.is_using_cbf
+                    and not self.env.base_env.scenario_name.parameters.is_using_centralized_cbf
+                ):
+                    cbf_constrained_decentralized_policy(
+                        tensordict=self._tensordict,
+                        policy=self.policy,
+                        priority_module=self.priority_module,
+                        cbf_controllers=self.cbf_controllers,
+                        nearing_agents_indices=self.env.base_env.scenario_name.observations.nearing_agents_indices,
+                        is_communication_noise=self.env.base_env.scenario_name.parameters.is_communication_noise,
+                        noise_level=self.env.base_env.scenario_name.parameters.noise_level,
+                    )
+                elif (
+                    self.env.base_env.scenario_name.parameters.is_using_cbf
+                    and self.env.base_env.scenario_name.parameters.is_using_centralized_cbf
+                ):
+                    cbf_constrained_centralized_policy(
+                        tensordict=self._tensordict,
+                        policy=self.policy,
+                        cbf_controllers=self.cbf_controllers,
                     )
                 else:
                     self.policy(self._tensordict)
@@ -1023,6 +1153,8 @@ class Parameters:
         is_communication_noise: str = False,  # Whether to inject communication noise to propagated actions
         noise_level: float = 0.1,  # Noise is modeled by a normal distribution. `noise_level` defines the variance of the normal distribution.
         is_using_cbf: bool = False,  # Whether to use Control Barrier Function (CBF)
+        is_using_centralized_cbf: bool = False,  # Whether to use centralized solving for CBF-constrained MARL
+        is_using_cbf_in_testing: bool = False,  # Whether incooperated CBF into execution phase
         experiment_type: str = "simulation",  # One of {"simulation", "lab"}. If you only use simulation, you do not need to worry about "lab".
         is_obs_steering: bool = False,  # Whether to observe the steering angle of other agents
     ):
@@ -1109,6 +1241,9 @@ class Parameters:
         self.noise_level = noise_level
 
         self.is_using_cbf = is_using_cbf
+        self.is_using_centralized_cbf = is_using_centralized_cbf
+        self.is_using_cbf_in_testing = is_using_cbf_in_testing
+
         self.experiment_type = experiment_type
         self.is_obs_steering = is_obs_steering
 
@@ -1317,7 +1452,7 @@ class PriorityModule:
 
         policy = ProbabilisticActor(
             module=policy_module,
-            spec=UnboundedContinuousTensorSpec(),
+            spec=Unbounded(),
             in_keys=[self.prefix_key + ("loc",), self.prefix_key + ("scale",)],
             out_keys=[self.prefix_key + ("scores",)],
             distribution_class=TanhNormal,
@@ -1530,7 +1665,7 @@ class CBFModule:
 
         policy = ProbabilisticActor(
             module=policy_module,
-            spec=UnboundedContinuousTensorSpec(),
+            spec=Unbounded(),
             in_keys=[self.prefix_key + ("loc",), self.prefix_key + ("scale",)],
             out_keys=[self.prefix_key + ("scores",)],
             distribution_class=TanhNormal,
@@ -2016,3 +2151,221 @@ def prioritized_ap_policy(
     tensordict[base_observation_key] = combined_obs
 
     return tensordict, priority_rank, observable_higher_priority_agents
+
+
+def cbf_constrained_decentralized_policy(
+    tensordict,
+    policy,
+    priority_module,
+    cbf_controllers,
+    nearing_agents_indices,
+    is_communication_noise,
+    noise_level,
+):
+    """
+
+    This function is used to make action decisions for multiple agents at each time step,
+    based on their priority, and enforces safety constraints via Control Barrier Functions (CBFs).
+    Each agent makes decisions independently based on its observations
+    and the actions of its neighbors.
+
+    Parameters:
+    ----------
+    tensordict : TensorDict
+        A dictionary-like object that stores the data for all agents and environments.
+    policy : Callable
+        The policy function used to compute the actions for the agents.
+    priority_module : Callable
+        A module that computes the priority rank for agents by wrapping the process
+        of generating priority scores and ranking agents according to these scores.
+    cbf_controllers : List[List[CBFController]]
+        A list of CBF-based controllers for each environment and agent, used to
+        correct the unsafe policy's actions.
+    nearing_agents_indices : Tensor
+        A tensor indicating the neighboring agents for each agent in each environment.
+
+    Returns:
+    ----------
+    tensordict : TensorDict
+        The updated tensordict with corrected safe actions with CBF.
+    """
+    base_observation_key = ("agents", "info", "base_observation")
+    cbf_observation_key = ("agents", "info", "cbf_observation")
+
+    device = tensordict.device
+
+    # Clone original observation
+    original_obs = tensordict[base_observation_key].clone()
+    original_cbf_obs = tensordict[cbf_observation_key].clone()
+
+    # Infer parameters
+    n_envs, n_agents, obs_dim, action_dim = (
+        original_obs.shape[0],
+        original_obs.shape[1],
+        original_obs.shape[2],
+        AGENTS["n_actions"],
+    )
+
+    cbf_obs_dim = original_cbf_obs.shape[2]
+    n_nearing_agents = nearing_agents_indices.shape[-1]
+    # Generate priority rank using the priority module
+    priority_module(tensordict)
+    # Extract priority rank (shape: (n_envs, n_agents)) from tensordict
+    priority_rank = tensordict[priority_module.prefix_key + ("rank",)]
+
+    # Temporary tensors to store intermediate observations and combined results
+    temp_obs = torch.zeros(n_envs, n_agents, obs_dim)
+    combined_action = torch.zeros(n_envs, n_agents, action_dim)
+    combined_loc = torch.zeros(n_envs, n_agents, action_dim)
+    combined_sample_log_prob = torch.zeros(n_envs, n_agents)
+    combined_scale = torch.zeros(n_envs, n_agents, action_dim)
+    combined_obs = torch.zeros(n_envs, n_agents, obs_dim)
+
+    # Observable high-priority agents
+    observable_higher_priority_agents = [
+        [[] for _ in range(n_agents)] for _ in range(n_envs)
+    ]
+
+    time_cbf = 0
+    time_rl = 0
+    time_pseudo_dis = 0
+
+    # Loop through each step in the priority rank
+    for turn in range(n_agents):
+        # Reset the observation
+        tensordict[("agents", "info")].set("base_observation", original_obs)
+        tensordict[("agents", "info")].set("cbf_observation", original_cbf_obs)
+
+        # Get the list of agents for the current turn based on priority
+        current_turn_agents = priority_rank[:, turn]
+
+        # Create environment indices (from 0 to n_envs - 1)
+        envs = torch.arange(n_envs)
+
+        # Create a mask indicating which agents are acting in each environment
+        mask = torch.zeros(n_envs, n_agents, dtype=torch.bool)
+        mask[envs, current_turn_agents] = True
+
+        # Create a mask indication which higher priority agents are nearing the currrent agents
+        mask_higher_priority_agents = torch.zeros(
+            n_envs, n_agents, n_nearing_agents, dtype=torch.bool
+        )
+        temp_cbf_obs = torch.zeros(n_envs, n_agents, cbf_obs_dim)
+
+        # Prepare input for the policy by modifying the observations
+        for env in range(n_envs):
+            agent_idx = current_turn_agents[env]
+            obs = tensordict[base_observation_key][env, agent_idx].clone()
+            cbf_obs = tensordict[cbf_observation_key][env, agent_idx].clone()
+
+            # Get the indices of neighboring agents
+            current_turn_agent_neighbors = nearing_agents_indices[env, agent_idx].to(
+                torch.int64
+            )
+
+            # Collect actions of the current agent's neighbors
+            actions_so_far = combined_action[env, current_turn_agent_neighbors].view(-1)
+
+            # Set of higher-priority agents
+            higher_priority_agents = priority_rank[env, :turn]
+
+            # Observable high-priority agents
+            are_observable_higher_priority_agents = torch.isin(
+                current_turn_agent_neighbors, higher_priority_agents
+            )
+            observable_higher_priority_agents[env][
+                agent_idx
+            ] = current_turn_agent_neighbors[are_observable_higher_priority_agents]
+
+            mask_higher_priority_agents[
+                env, agent_idx, :
+            ] = are_observable_higher_priority_agents
+
+            # Propagate the collected actions into the current agent's observation
+            if is_communication_noise:
+                std_noise_speed = AGENTS["max_speed"] * noise_level
+                std_noise_steering = AGENTS["max_steering"] * noise_level
+                noise = torch.cat(
+                    [
+                        std_noise_speed * torch.randn(action_dim, device=device),
+                        std_noise_steering * torch.randn(action_dim, device=device),
+                    ],
+                    dim=-1,
+                )
+                obs[-len(actions_so_far) :] = actions_so_far + noise
+                cbf_obs[-len(actions_so_far) :] = actions_so_far + noise
+            else:
+                obs[-len(actions_so_far) :] = actions_so_far
+                cbf_obs[-len(actions_so_far) :] = actions_so_far
+
+            # Store the updated observation for the current agent in temp_obs
+            temp_obs[env, agent_idx] = obs
+            temp_cbf_obs[env, agent_idx] = cbf_obs
+
+        # Update the base_observation with temp_obs for policy execution
+        tensordict[("agents", "info")].set("base_observation", temp_obs)
+        # Update the cbf_observation with temp_cbf_obs for policy execution
+        tensordict[("agents", "info")].set("cbf_observation", temp_cbf_obs)
+
+        # Call the policy to generate actions for the agents
+        time_rl_start = time.time()
+        policy(tensordict)
+        time_rl += time.time() - time_rl_start  # Time for RL policy
+
+        if "nominal_action" not in tensordict[("agents", "info")].keys():
+            nominal_action = torch.zeros(
+                n_envs,
+                n_agents,
+                action_dim,
+                dtype=torch.float32,
+                device=tensordict.device,
+            )
+            tensordict[("agents", "info")].set("nominal_action", nominal_action)
+
+        # CBF-QP solving
+        time_cbf_start = time.time()
+        for i in range(n_envs):
+            for j in range(n_agents):
+                if mask[i, j]:
+                    cbf_controllers[i][j].solve_decentralized_cbf_qp(
+                        tensordict, mask_higher_priority_agents
+                    )
+                    time_pseudo_dis += cbf_controllers[i][j].time_pseudo_dis
+        time_cbf += time.time() - time_cbf_start
+
+        # Use the mask to place the data into the correct positions in the combined tensors
+        combined_action[mask] = tensordict[("agents", "action")][mask]
+        combined_loc[mask] = tensordict[("agents", "loc")][mask]
+        combined_sample_log_prob[mask] = tensordict[("agents", "sample_log_prob")][mask]
+        combined_scale[mask] = tensordict[("agents", "scale")][mask]
+        combined_obs[mask] = tensordict[base_observation_key][mask]
+
+    tensordict[("agents", "action")] = combined_action
+    tensordict[("agents", "loc")] = combined_loc
+    tensordict[("agents", "sample_log_prob")] = combined_sample_log_prob
+    tensordict[("agents", "scale")] = combined_scale
+    tensordict[base_observation_key] = combined_obs
+    tensordict[cbf_observation_key] = original_cbf_obs
+
+    return (
+        time_rl,
+        time_cbf,
+        time_pseudo_dis,
+        tensordict,
+        priority_rank,
+        observable_higher_priority_agents,
+    )
+
+
+def cbf_constrained_centralized_policy(
+    tensordict,
+    policy,
+    cbf_controllers,
+):
+    try:
+        raise NotImplementedError(
+            "Function cbf_constrained_centralized_policy is not yet implemented!"
+        )
+    except NotImplementedError as e:
+        print(f"Error: {e}")
+        sys.exit("Exiting program: Function not implemented.")
