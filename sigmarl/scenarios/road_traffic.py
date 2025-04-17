@@ -52,11 +52,14 @@ from sigmarl.helper_scenario import (
     interX,
     angle_eliminate_two_pi,
     transform_from_global_to_local_coordinate,
+    get_current_lanelet_id,
 )
 
 from sigmarl.map_manager import MapManager
 
 from sigmarl.constants import SCENARIOS, AGENTS
+
+from sigmarl.pseudo_distance import PseudoDistance
 
 
 class ScenarioRoadTraffic(BaseScenario):
@@ -294,7 +297,10 @@ class ScenarioRoadTraffic(BaseScenario):
                 is_using_opponent_modeling=kwargs.pop(
                     "is_using_opponent_modeling", False
                 ),
+                is_use_mtv_distance=kwargs.pop("is_use_mtv_distance", False),
                 is_using_cbf=kwargs.pop("is_using_cbf", False),
+                is_using_centralized_cbf=kwargs.pop("is_using_centralized_cbf", False),
+                is_using_cbf_in_testing=kwargs.pop("is_using_cbf_in_testing", False),
                 experiment_type=kwargs.pop("experiment_type", "simulation"),
                 is_obs_steering=kwargs.pop("is_obs_steering", False),
             )
@@ -330,6 +336,23 @@ class ScenarioRoadTraffic(BaseScenario):
                 raise ValueError(
                     f"The given prioritization method is not supported. Obtained: {self.parameters.prioritization_method}. Expected: 'marl' or 'random'."
                 )
+        if self.parameters.is_using_cbf:
+            if self.parameters.is_using_centralized_cbf:
+                print(
+                    colored(
+                        "[INFO] Using CBF-constrained MARL with centralized solving",
+                        "red",
+                    )
+                )
+            else:
+                self.parameters.is_using_prioritized_marl = True
+                # self.parameters.prioritization_method = 'marl'
+                print(
+                    colored(
+                        "[INFO] Using CBF-constrained MARL with decentralized solving",
+                        "red",
+                    )
+                )
 
         self.parameters.n_nearing_agents_observed = min(
             self.parameters.n_nearing_agents_observed, self.parameters.n_agents - 1
@@ -357,6 +380,13 @@ class ScenarioRoadTraffic(BaseScenario):
         )
 
         cprint(f"[INFO] Map of {self.parameters.scenario_type} parsed.", "blue")
+
+        # Initialize pseudo distance information for the map
+        if self.parameters.is_using_cbf:
+            self.map_pseudo_distance = PseudoDistance(
+                scenario_type=self.parameters.scenario_type, map=self.map
+            )
+
         # Determine the maximum number of points on the reference path
         if "CPM_mixed" in self.parameters.scenario_type:
             # Mixed scenarios including intersection, merge in, and merge out
@@ -464,6 +494,8 @@ class ScenarioRoadTraffic(BaseScenario):
                 center_line_i[-1] + idx_broadcasting_entend * direction
             )
 
+        max_num_lanelets = len(self.map.parser.lanelets_all)
+
         # Initialize agent-specific reference paths, which will be determined in `reset_world_at` function
         self.ref_paths_agent_related = ReferencePathsAgentRelated(
             long_term=torch.zeros(
@@ -536,6 +568,19 @@ class ScenarioRoadTraffic(BaseScenario):
             point_id=torch.zeros(
                 (batch_dim, self.n_agents), device=device, dtype=torch.int32
             ),  # Which points agents are
+            ref_lanelet_ids=torch.zeros(
+                (batch_dim, self.n_agents, max_num_lanelets),
+                device=device,
+                dtype=torch.int32,
+            ),  # Lanelet IDs of the reference path
+            n_ref_lanelet_ids=torch.zeros(
+                (batch_dim, self.n_agents), device=device, dtype=torch.int32
+            ),  # Number of lanelet IDs in the reference path (used for slicing later)
+            ref_lanelet_segment_points=torch.zeros(
+                (batch_dim, self.n_agents, max_num_lanelets + 1, 2),
+                device=device,
+                dtype=torch.float32,
+            ),  # Connection points (segment startpoints and endpoints) of the lanelets for the reference path
         )
 
         # The shape of each agent is considered a rectangle with 4 vertices.
@@ -603,6 +648,28 @@ class ScenarioRoadTraffic(BaseScenario):
                 dtype=torch.int32,
             ),
         )
+
+        # Create cbf obseravtion
+        self.cbf_observations = Observations(
+            n_nearing_agents=torch.tensor(
+                self.parameters.n_nearing_agents_observed,
+                device=device,
+                dtype=torch.int32,
+            ),
+            noise_level=torch.tensor(noise_level, device=device, dtype=torch.float32),
+            n_stored_steps=torch.tensor(
+                n_stored_steps, device=device, dtype=torch.int32
+            ),
+            n_observed_steps=torch.tensor(
+                n_observed_steps, device=device, dtype=torch.int32
+            ),
+            nearing_agents_indices=torch.zeros(
+                (batch_dim, self.n_agents, self.parameters.n_nearing_agents_observed),
+                device=device,
+                dtype=torch.int32,
+            ),
+        )
+
         assert (
             self.observations.n_stored_steps >= 1
         ), "The number of stored steps should be at least 1."
@@ -824,6 +891,44 @@ class ScenarioRoadTraffic(BaseScenario):
                 dtype=torch.float32,
             )
         )
+
+        if self.parameters.is_using_cbf:
+            self.cbf_observations.past_pos = CircularBuffer(
+                torch.zeros(
+                    (n_stored_steps, batch_dim, self.n_agents, 2),
+                    device=device,
+                    dtype=torch.float32,
+                )
+            )  # position (x, y)
+            self.cbf_observations.past_rot = CircularBuffer(
+                torch.zeros(
+                    (n_stored_steps, batch_dim, self.n_agents),
+                    device=device,
+                    dtype=torch.float32,
+                )
+            )  # rotation (heading angle)
+            self.cbf_observations.past_vel = CircularBuffer(
+                torch.zeros(
+                    (n_stored_steps, batch_dim, self.n_agents),
+                    device=device,
+                    dtype=torch.float32,
+                )
+            )  # velocity
+            self.cbf_observations.past_steering = CircularBuffer(
+                torch.zeros(
+                    (n_stored_steps, batch_dim, self.n_agents),
+                    device=device,
+                    dtype=torch.float32,
+                )
+            )  # steering angle
+            self.cbf_observations.past_id = CircularBuffer(
+                torch.zeros(
+                    (n_stored_steps, batch_dim, self.n_agents),
+                    device=device,
+                    dtype=torch.int32,
+                )
+            )  # Lanelet ID
+
         self.normalizers = Normalizers(
             pos=torch.tensor(
                 [self.agent_length * 10, self.agent_length * 10],
@@ -994,6 +1099,9 @@ class ScenarioRoadTraffic(BaseScenario):
         # Store the computed observations of each agent for reuse in `info()`
         # to generate `base_obs` and `prio_obs`, which are used for prioritized MARL.
         self.stored_observations = [None] * self.n_agents
+
+        # Store the CBF related observations
+        self.stored_cbf_observations = [None] * self.n_agents
 
     def _init_world(self, batch_dim: int, device: torch.device):
         # Make world
@@ -1443,6 +1551,17 @@ class ScenarioRoadTraffic(BaseScenario):
         ][-1, :]
 
         self.ref_paths_agent_related.is_loop[env_i, i_agent] = ref_path["is_loop"]
+        if self.parameters.is_using_cbf:
+            # Store information for determining the current lanelet ID of each agent
+            self.ref_paths_agent_related.n_ref_lanelet_ids[env_i, i_agent] = len(
+                ref_path["lanelet_IDs"]
+            )
+            self.ref_paths_agent_related.ref_lanelet_ids[
+                env_i, i_agent, : len(ref_path["lanelet_IDs"])
+            ] = torch.tensor(ref_path["lanelet_IDs"], dtype=torch.int32)
+            self.ref_paths_agent_related.ref_lanelet_segment_points[
+                env_i, i_agent, : len(ref_path["lanelet_IDs"]) + 1
+            ] = self.map.get_ref_lanelet_segment_points(ref_path["lanelet_IDs"])
 
     def _reset_init_distances_and_short_term_ref_path(self, env_j, i_agent, agents):
         """
@@ -2030,9 +2149,9 @@ class ScenarioRoadTraffic(BaseScenario):
             self._update_observation_and_normalize(agent, agent_index)
 
         # Observation of other agents
-        obs_other_agents = self._observe_other_agents(agent_index)
+        obs_other_agents, cbf_obs_other_agents = self._observe_other_agents(agent_index)
 
-        obs_self = self._observe_self(agent_index)
+        obs_self, cbf_obs_self = self._observe_self(agent_index)
 
         obs_self.append(obs_other_agents)  # Append the observations of other agents
 
@@ -2040,6 +2159,15 @@ class ScenarioRoadTraffic(BaseScenario):
 
         obs = torch.hstack(obs_all)  # Convert from list to tensor
 
+        if self.parameters.is_using_cbf:
+            path_id = self.ref_paths_agent_related.path_id[
+                :, agent_index
+            ]  # Reference path ID
+            cbf_obs_self.append(path_id.unsqueeze(1))
+
+            cbf_obs_self.append(cbf_obs_other_agents)
+            cbf_obs_self = [o for o in cbf_obs_self if o is not None]
+            cbf_obs = torch.hstack(cbf_obs_self)
         if self.parameters.is_using_opponent_modeling:
             # Zero-padding as a placeholder for actions of surrounding agents
             obs = F.pad(
@@ -2053,9 +2181,20 @@ class ScenarioRoadTraffic(BaseScenario):
                 self.observations.noise_level
                 * torch.rand_like(obs, device=self.world.device, dtype=torch.float32)
             )
+            if self.parameters.is_using_cbf:
+                cbf_obs = cbf_obs + (
+                    self.cbf_observations.noise_level
+                    * torch.rand_like(
+                        cbf_obs, device=self.world.device, dtype=torch.float32
+                    )
+                )
 
         # Store observation for reuse in `info()`, only relevant for prioritized MARL
         self.stored_observations[agent_index] = obs
+
+        # Store observation for reuse in `info()`, only relevant for CBF-constrained MARL
+        if self.parameters.is_using_cbf:
+            self.stored_cbf_observations[agent_index] = cbf_obs
 
         return obs
 
@@ -2322,6 +2461,31 @@ class ScenarioRoadTraffic(BaseScenario):
                 # Determine the current lanelet IDs of all agents of all envs for later use
                 self.map.determine_current_lanelet(positions_global)
 
+        # Store cbf observation
+        if self.parameters.is_using_cbf:
+            self.cbf_observations.past_pos.add(positions_global)
+            self.cbf_observations.past_rot.add(
+                angle_eliminate_two_pi(rotations_global[:])
+            )
+
+            vel_global = (
+                torch.stack([a.state.vel for a in self.world.agents], dim=0)
+                .transpose(0, 1)
+                .squeeze(-1)
+            )
+            vel_global = torch.norm(vel_global, dim=-1)
+
+            self.cbf_observations.past_vel.add(vel_global)
+            self.cbf_observations.past_steering.add(steering_global)
+            self.cbf_observations.past_id.add(
+                get_current_lanelet_id(
+                    positions_global,
+                    self.ref_paths_agent_related.ref_lanelet_segment_points,
+                    self.ref_paths_agent_related.n_ref_lanelet_ids,
+                    self.ref_paths_agent_related.ref_lanelet_ids,
+                )
+            )
+
     def _observe_other_agents(self, agent_index):
         """Observe surrounding agents."""
         ##################################################
@@ -2451,6 +2615,50 @@ class ScenarioRoadTraffic(BaseScenario):
                 masked_agents
             ] = self.constants.mask_one  # Distance mask
 
+            # Get cbf observations
+            if self.parameters.is_using_cbf:
+                cbf_indexing_tuple_1 = (
+                    (self.constants.env_idx_broadcasting,)
+                    + (())
+                    + (self.observations.nearing_agents_indices[:, agent_index],)
+                )
+                # Positions of nearing agents
+                cbf_obs_pos_other_agents = self.cbf_observations.past_pos.get_latest()[
+                    cbf_indexing_tuple_1
+                ]  # [batch_size, n_nearing_agents, 2]
+                cbf_obs_pos_other_agents[
+                    masked_agents
+                ] = self.constants.mask_one  # Position mask
+
+                # Rotations of nearing agents
+                cbf_obs_rot_other_agents = self.cbf_observations.past_rot.get_latest()[
+                    cbf_indexing_tuple_1
+                ]  # [batch_size, n_nearing_agents]
+                cbf_obs_rot_other_agents[
+                    masked_agents
+                ] = self.constants.mask_zero  # Rotation mask
+
+                # Velocities of nearing agents
+                cbf_obs_vel_other_agents = self.cbf_observations.past_vel.get_latest()[
+                    cbf_indexing_tuple_1
+                ]  # [batch_size, n_nearing_agents]
+                cbf_obs_vel_other_agents[
+                    masked_agents
+                ] = self.constants.mask_zero  # Velocity mask
+
+                # Steering of nearing agents
+                cbf_obs_steering_other_agents = (
+                    self.cbf_observations.past_steering.get_latest()[
+                        self.constants.env_idx_broadcasting,
+                        self.observations.nearing_agents_indices[:, agent_index],
+                    ]
+                )
+                cbf_obs_steering_other_agents[
+                    masked_agents
+                ] = self.constants.mask_zero  # Steering mask
+
+                cbf_obs_mask_other_agents = masked_agents
+
         else:
             indexing_tuple_2 = (self.constants.env_idx_broadcasting.squeeze(-1),) + (
                 (agent_index,) if self.parameters.is_ego_view else ()
@@ -2489,6 +2697,26 @@ class ScenarioRoadTraffic(BaseScenario):
                 indexing_tuple_2
             ]
 
+            # Get cbf observations of other agents
+            if self.parameters.is_using_cbf:
+                cbf_indexing_tuple_2 = (
+                    self.constants.env_idx_broadcasting.squeeze(-1),
+                ) + (())
+                cbf_obs_pos_other_agents = self.cbf_observations.past_pos.get_latest()[
+                    cbf_indexing_tuple_2
+                ]
+                cbf_obs_rot_other_agents = self.cbf_observations.past_rot.get_latest()[
+                    cbf_indexing_tuple_2
+                ]
+                cbf_obs_vel_other_agents = self.cbf_observations.past_vel.get_latest()[
+                    cbf_indexing_tuple_2
+                ]
+                cbf_obs_steering_other_agents = (
+                    self.cbf_observations.past_steering.get_latest()[
+                        cbf_indexing_tuple_2
+                    ]
+                )
+
         # Flatten the last dimensions to combine all features into a single dimension
         obs_pos_other_agents_flat = obs_pos_other_agents.reshape(
             self.world.batch_dim, self.observations.n_nearing_agents, -1
@@ -2517,6 +2745,24 @@ class ScenarioRoadTraffic(BaseScenario):
         obs_steering_other_agents_flat = obs_steering_other_agents.reshape(
             self.world.batch_dim, self.observations.n_nearing_agents, -1
         )
+
+        if self.parameters.is_using_cbf:
+            # Flatt cbf observations
+            cbf_obs_pos_other_agents_flat = cbf_obs_pos_other_agents.reshape(
+                self.world.batch_dim, self.observations.n_nearing_agents, -1
+            )
+            cbf_obs_rot_other_agents_flat = cbf_obs_rot_other_agents.reshape(
+                self.world.batch_dim, self.observations.n_nearing_agents, -1
+            )
+            cbf_obs_vel_other_agents_flat = cbf_obs_vel_other_agents.reshape(
+                self.world.batch_dim, self.observations.n_nearing_agents, -1
+            )
+            cbf_obs_steering_other_agents_flat = cbf_obs_steering_other_agents.reshape(
+                self.world.batch_dim, self.observations.n_nearing_agents, -1
+            )
+            cbf_obs_mask_other_agents_flat = cbf_obs_mask_other_agents.reshape(
+                self.world.batch_dim, self.observations.n_nearing_agents, -1
+            )  # mask for nearing agents
 
         # Observation of other agents
         obs_others_list = [
@@ -2555,7 +2801,23 @@ class ScenarioRoadTraffic(BaseScenario):
             self.world.batch_dim, -1
         )  # [batch_size, -1]
 
-        return obs_other_agents
+        cbf_obs_other_agents = None
+        if self.parameters.is_using_cbf:
+            cbf_obs_others_list = [
+                cbf_obs_pos_other_agents_flat,
+                cbf_obs_rot_other_agents_flat,
+                cbf_obs_vel_other_agents_flat,
+                cbf_obs_steering_other_agents_flat,
+                cbf_obs_mask_other_agents_flat,
+            ]
+            cbf_obs_others_list = [
+                o for o in cbf_obs_others_list if o is not None
+            ]  # Filter out None values
+            cbf_obs_other_agents = torch.cat(cbf_obs_others_list, dim=-1).reshape(
+                self.world.batch_dim, -1
+            )
+
+        return obs_other_agents, cbf_obs_other_agents
 
     def _observe_self(self, agent_index):
         """Observe the given agent itself."""
@@ -2625,7 +2887,33 @@ class ScenarioRoadTraffic(BaseScenario):
             ),  # [own] right boundaries
         ]
 
-        return obs_self
+        cbf_obs_self = None
+        if self.parameters.is_using_cbf:
+            cbf_indexing_tuple_3 = (
+                (self.constants.env_idx_broadcasting,) + (agent_index,) + (())
+            )
+            cbf_indexing_tuple_vel = (
+                (self.constants.env_idx_broadcasting,) + (agent_index,) + (())
+            )  # In local coordinate system, only the first component is interesting, as the second is always 0
+            cbf_obs_self = [
+                self.cbf_observations.past_pos.get_latest()[
+                    cbf_indexing_tuple_3
+                ].reshape(self.world.batch_dim, -1),
+                self.cbf_observations.past_rot.get_latest()[
+                    cbf_indexing_tuple_3
+                ].reshape(self.world.batch_dim, -1),
+                self.cbf_observations.past_vel.get_latest()[
+                    cbf_indexing_tuple_vel
+                ].reshape(self.world.batch_dim, -1),
+                self.cbf_observations.past_steering.get_latest()[
+                    :, agent_index
+                ].reshape(self.world.batch_dim, -1),
+                self.cbf_observations.past_id.get_latest()[:, agent_index].reshape(
+                    self.world.batch_dim, -1
+                ),
+            ]
+
+        return obs_self, cbf_obs_self
 
     def done(self):
         # print("[DEBUG] done()")
@@ -2764,8 +3052,31 @@ class ScenarioRoadTraffic(BaseScenario):
         # others-observation: velocities of surrounding, observable agents
         # others-observation: jaw angles of surrounding, observable agents
         # others-observation: short-term reference path of surrounding, observable agents
-        cbf_obs = None
-        # self.observations.
+        if (
+            self.parameters.is_using_cbf
+            and not self.parameters.is_using_centralized_cbf
+        ):
+            cbf_obs = F.pad(
+                self.stored_cbf_observations[agent_index].clone(),
+                (0, self.parameters.n_nearing_agents_observed * AGENTS["n_actions"]),
+            )
+        elif self.parameters.is_using_cbf and self.parameters.is_using_centralized_cbf:
+            cbf_obs = self.stored_cbf_observations[agent_index].clone()
+
+        # cbf_observation: self_observation + others_observation
+        # self_observation: position x
+        # self_observation: position y
+        # self_observation: rotation
+        # self_observation: velocity
+        # self_observation: steering
+        # self_observation: current lanelet ID
+        # self_observation: current path ID
+        # others_observation: position x  of surrounding, observable agents
+        # others_observation: position y  of surrounding, observable agents
+        # others_observation: rotation of surrounding, observable agents
+        # others_observation: velocity of surrounding, observable agents
+        # others_observation: steering of surrounding, observable agents
+        # others_observation: bool value 0: observable, 1: non observable
 
         info = {
             "pos": agent.state.pos / self.normalizers.pos_world,
@@ -2830,7 +3141,8 @@ class ScenarioRoadTraffic(BaseScenario):
 
         geoms = []
 
-        self._render_action_propagation_direction(env_index, geoms)
+        # self._render_action_propagation_direction(env_index, geoms) # Comment out this line to disable priority visualization in CBF-constrained MARL
+        self._render_cbf_action(env_index, geoms)
 
         self._render_lanelets(geoms)
 
@@ -3095,6 +3407,224 @@ class ScenarioRoadTraffic(BaseScenario):
         # Adjust agent colors
         for i in range(self.n_agents):
             self.world.agents[i]._color = self.colors[i]
+
+    def _render_cbf_action(self, env_index, geoms):
+        """
+        Render the CBF corrected actions and nominal actions as arrows for each agent.
+
+        Args:
+            env_index (int): The index of the current environment.
+            geoms (list): A list of geometric objects to which the new visualizations will be added.
+
+        Description:
+            For each agent, this method visualizes two types of actions:
+                - The CBF corrected action (shown in the agent's color)
+                - The nominal action (shown in semi-transparent black)
+            Each action is rendered as a directional arrow, where the direction reflects the steering angle,
+            and the length indicates the magnitude of the velocity.
+        """
+        if self.parameters.is_using_cbf:
+            for i in range(self.n_agents):
+                # Heading angle of the current agent
+                heading = self.world.agents[i].state.rot[env_index]
+                # CBF and nominal actions for the current agent
+                cbf_action_vel = self.world.agents[i].action.u[env_index, 0]
+                cbf_action_steering = self.world.agents[i].action.u[env_index, 1]
+
+                nominal_action_vel = self.nominal_action[env_index, i, 0]
+                nominal_action_steering = self.nominal_action[env_index, i, 1]
+                # Render directional arrow for CBF conrrected action
+                # Mainline of the arrow
+                cbf_line = rendering.Line(
+                    # Starting point: current position of the agent
+                    (
+                        self.world.agents[i].state.pos[env_index, 0],
+                        self.world.agents[i].state.pos[env_index, 1],
+                    ),
+                    #  Ending point: computed using the heading, steering angle, and velocity
+                    (
+                        self.world.agents[i].state.pos[env_index, 0]
+                        + torch.cos(heading + cbf_action_steering)
+                        * cbf_action_vel
+                        * 0.5,
+                        self.world.agents[i].state.pos[env_index, 1]
+                        + torch.sin(heading + cbf_action_steering)
+                        * cbf_action_vel
+                        * 0.5,
+                    ),
+                    width=5,
+                )
+                # Wings of the arrowhead
+                cbf_arrow_line1 = rendering.Line(
+                    (
+                        self.world.agents[i].state.pos[env_index, 0]
+                        + torch.cos(heading + cbf_action_steering)
+                        * cbf_action_vel
+                        * 0.5,
+                        self.world.agents[i].state.pos[env_index, 1]
+                        + torch.sin(heading + cbf_action_steering)
+                        * cbf_action_vel
+                        * 0.5,
+                    ),
+                    (
+                        self.world.agents[i].state.pos[env_index, 0]
+                        + torch.cos(heading + cbf_action_steering)
+                        * cbf_action_vel
+                        * 0.5
+                        + torch.cos(heading + cbf_action_steering + torch.pi * 8 / 9)
+                        * torch.sign(cbf_action_vel)
+                        * 0.07,
+                        self.world.agents[i].state.pos[env_index, 1]
+                        + torch.sin(heading + cbf_action_steering)
+                        * cbf_action_vel
+                        * 0.5
+                        + torch.sin(heading + cbf_action_steering + torch.pi * 8 / 9)
+                        * torch.sign(cbf_action_vel)
+                        * 0.07,
+                    ),
+                    width=5,
+                )
+                cbf_arrow_line2 = rendering.Line(
+                    (
+                        self.world.agents[i].state.pos[env_index, 0]
+                        + torch.cos(heading + cbf_action_steering)
+                        * cbf_action_vel
+                        * 0.5,
+                        self.world.agents[i].state.pos[env_index, 1]
+                        + torch.sin(heading + cbf_action_steering)
+                        * cbf_action_vel
+                        * 0.5,
+                    ),
+                    (
+                        self.world.agents[i].state.pos[env_index, 0]
+                        + torch.cos(heading + cbf_action_steering)
+                        * cbf_action_vel
+                        * 0.5
+                        + torch.cos(heading + cbf_action_steering - torch.pi * 8 / 9)
+                        * torch.sign(cbf_action_vel)
+                        * 0.07,
+                        self.world.agents[i].state.pos[env_index, 1]
+                        + torch.sin(heading + cbf_action_steering)
+                        * cbf_action_vel
+                        * 0.5
+                        + torch.sin(heading + cbf_action_steering - torch.pi * 8 / 9)
+                        * torch.sign(cbf_action_vel)
+                        * 0.07,
+                    ),
+                    width=5,
+                )
+                # Render directional arrow for nominal action
+                # Mainline of the arrow
+                nominal_line = rendering.Line(
+                    # Starting point: current position of the agent
+                    (
+                        self.world.agents[i].state.pos[env_index, 0],
+                        self.world.agents[i].state.pos[env_index, 1],
+                    ),
+                    #  Ending point: computed using the heading, steering angle, and velocity
+                    (
+                        self.world.agents[i].state.pos[env_index, 0]
+                        + torch.cos(heading + nominal_action_steering)
+                        * nominal_action_vel
+                        * 0.5,
+                        self.world.agents[i].state.pos[env_index, 1]
+                        + torch.sin(heading + nominal_action_steering)
+                        * nominal_action_vel
+                        * 0.5,
+                    ),
+                    width=5,  # Set line width
+                )
+                # Wings of the arrowhead
+                nominal_arrow_line1 = rendering.Line(
+                    (
+                        self.world.agents[i].state.pos[env_index, 0]
+                        + torch.cos(heading + nominal_action_steering)
+                        * nominal_action_vel
+                        * 0.5,
+                        self.world.agents[i].state.pos[env_index, 1]
+                        + torch.sin(heading + nominal_action_steering)
+                        * nominal_action_vel
+                        * 0.5,
+                    ),
+                    (
+                        self.world.agents[i].state.pos[env_index, 0]
+                        + torch.cos(heading + nominal_action_steering)
+                        * nominal_action_vel
+                        * 0.5
+                        + torch.cos(
+                            heading + nominal_action_steering + torch.pi * 8 / 9
+                        )
+                        * torch.sign(nominal_action_vel)
+                        * 0.07,
+                        self.world.agents[i].state.pos[env_index, 1]
+                        + torch.sin(heading + nominal_action_steering)
+                        * nominal_action_vel
+                        * 0.5
+                        + torch.sin(
+                            heading + nominal_action_steering + torch.pi * 8 / 9
+                        )
+                        * torch.sign(nominal_action_vel)
+                        * 0.07,
+                    ),
+                    width=5,
+                )
+                nominal_arrow_line2 = rendering.Line(
+                    (
+                        self.world.agents[i].state.pos[env_index, 0]
+                        + torch.cos(heading + nominal_action_steering)
+                        * nominal_action_vel
+                        * 0.5,
+                        self.world.agents[i].state.pos[env_index, 1]
+                        + torch.sin(heading + nominal_action_steering)
+                        * nominal_action_vel
+                        * 0.5,
+                    ),
+                    (
+                        self.world.agents[i].state.pos[env_index, 0]
+                        + torch.cos(heading + nominal_action_steering)
+                        * nominal_action_vel
+                        * 0.5
+                        + torch.cos(
+                            heading + nominal_action_steering - torch.pi * 8 / 9
+                        )
+                        * torch.sign(nominal_action_vel)
+                        * 0.07,
+                        self.world.agents[i].state.pos[env_index, 1]
+                        + torch.sin(heading + nominal_action_steering)
+                        * nominal_action_vel
+                        * 0.5
+                        + torch.sin(
+                            heading + nominal_action_steering - torch.pi * 8 / 9
+                        )
+                        * torch.sign(nominal_action_vel)
+                        * 0.07,
+                    ),
+                    width=5,
+                )
+                # Add transform and set the color of the arrow
+                xform = rendering.Transform()
+
+                cbf_line.add_attr(xform)
+                cbf_line.set_color(*self.colors[i])
+                cbf_arrow_line1.add_attr(xform)
+                cbf_arrow_line2.add_attr(xform)
+                cbf_arrow_line1.set_color(*self.colors[i])
+                cbf_arrow_line2.set_color(*self.colors[i])
+
+                nominal_line.add_attr(xform)
+                nominal_line.set_color(*Color.black75)
+                nominal_arrow_line1.add_attr(xform)
+                nominal_arrow_line2.add_attr(xform)
+                nominal_arrow_line1.set_color(*Color.black75)
+                nominal_arrow_line2.set_color(*Color.black75)
+
+                # Add the arrows to the list of geometric objects to be rendered
+                geoms.append(cbf_line)
+                geoms.append(cbf_arrow_line1)
+                geoms.append(cbf_arrow_line2)
+                geoms.append(nominal_line)
+                geoms.append(nominal_arrow_line1)
+                geoms.append(nominal_arrow_line2)
 
 
 if __name__ == "__main__":

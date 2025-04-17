@@ -99,7 +99,8 @@ class MapManager:
         """
         # Prepare a tensor to store the mask results
         mask = torch.zeros(nearing_agents_indices.shape, dtype=torch.bool)
-
+        if not isinstance(self.current_lanelet_idx, torch.Tensor):
+            self.current_lanelet_idx = torch.tensor(self.current_lanelet_idx)
         # Iterate through each agent and its nearing agents
         for env_idx in range(self.current_lanelet_idx.size(0)):
             ego_lanelet_idx = self.current_lanelet_idx[env_idx, agent_idx].item()
@@ -113,3 +114,33 @@ class MapManager:
                     mask[env_idx, near_idx] = True
 
         return mask
+
+    def get_ref_lanelet_segment_points(self, ref_lanelet_ids: torch.Tensor):
+        """
+        Get the segment points of the reference path's centerline.
+
+        Parameters:
+        ----------
+        ref_lanelet_ids : torch.Tensor
+            Tensor containing the IDs of the reference path.
+
+        Returns:
+        -------
+        ref_lanelet_segment_points : torch.Tensor
+            Tensor containing the start point of each lanelet and the end point of the last lanelet in the reference path,
+            where each segment corresponds to a lanelet.
+        """
+        ref_lanelet_segment_points = []
+        for id in ref_lanelet_ids:
+            start_point = self.parser.lanelets_all[id - 1]["center_line"][
+                0
+            ]  # all start points of center line in each lanlet
+            ref_lanelet_segment_points.append(start_point)
+
+        end_point = self.parser.lanelets_all[id - 1]["center_line"][
+            -1
+        ]  # end point of the center line in the last lanelet
+        ref_lanelet_segment_points.append(end_point)
+        ref_lanelet_segment_points = torch.stack(ref_lanelet_segment_points, dim=0)
+
+        return ref_lanelet_segment_points

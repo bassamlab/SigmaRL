@@ -178,6 +178,9 @@ class ReferencePathsAgentRelated:
         scenario_id: torch.Tensor = None,
         path_id: torch.Tensor = None,
         point_id: torch.Tensor = None,
+        ref_lanelet_ids: torch.Tensor = None,
+        n_ref_lanelet_ids: torch.Tensor = None,
+        ref_lanelet_segment_points: torch.Tensor = None,
     ):
         self.long_term = long_term  # Actual long-term reference paths of agents
         self.long_term_vec_normalized = (
@@ -207,6 +210,14 @@ class ReferencePathsAgentRelated:
         self.scenario_id = scenario_id  # Which scenarios agents are (current implementation includes (1) intersection, (2) merge-in, and (3) merge-out)
         self.path_id = path_id  # Which paths agents are
         self.point_id = point_id  # Which points agents are
+
+        self.ref_lanelet_ids = ref_lanelet_ids  # Lanelet IDs of the reference path
+        self.n_ref_lanelet_ids = (
+            n_ref_lanelet_ids  # Number of lanelets in the reference path
+        )
+        self.ref_lanelet_segment_points = (
+            ref_lanelet_segment_points  # Connection points between lanelets
+        )
 
 
 class Distances:
@@ -472,6 +483,7 @@ class Observations:
         past_widths: CircularBuffer = None,
         past_left_boundary: CircularBuffer = None,
         past_right_boundary: CircularBuffer = None,
+        past_id: CircularBuffer = None,
     ):
         self.n_nearing_agents = n_nearing_agents
         self.nearing_agents_indices = nearing_agents_indices
@@ -510,6 +522,7 @@ class Observations:
         )
         self.past_lengths = past_lengths  # Past lengths of agents (although they do not change, but for the reason of keeping consistence)
         self.past_widths = past_widths  # Past widths of agents (although they do not change, but for the reason of keeping consistence)
+        self.past_id = past_id  # Past lanelet IDs
 
 
 class Noise:
@@ -1198,3 +1211,80 @@ def angle_eliminate_two_pi(angle):
     angle = angle % two_pi  # Normalize angle to be within 0 and 2*pi
     angle[angle > torch.pi] -= two_pi  # Shift to -pi to pi range
     return angle
+
+
+def get_current_lanelet_id(
+    point: torch.Tensor,
+    ref_lanelet_segment_point: torch.Tensor,
+    n_ref_lanelet_ids: torch.Tensor,
+    ref_lanelet_ids: torch.Tensor,
+):
+    """
+    Get the current lanelet ID for each agent based on their location.
+    This function computes the closest lanelet to each agent by projecting
+    their location onto the lanelet's polyline segments.
+
+    Parameters:
+    ----------
+    point : torch.Tensor
+        A tensor containing the coordinates of the points (agents' locations).
+    ref_lanelet_segment_point : torch.Tensor
+        A tensor containing the start and end points of each segment of the reference path polyline.
+    n_ref_lanelet_ids : torch.Tensor
+        A tensor containing the number of lanelets for each path.
+    ref_lanelet_ids : torch.Tensor
+        A tensor containing the IDs of the reference path.
+
+    Returns:
+    -------
+    current_id : torch.Tensor
+        The lanelet ID of the closest lanelet to the agent's location.
+    """
+
+    # Expand and repeat for broadcasting
+    max_num_lanelets = ref_lanelet_segment_point.shape[2] - 1
+
+    # Mask valid lanelets based on n_ref_lanelet_ids
+    mask = (
+        torch.arange(max_num_lanelets + 1 - 1, device=n_ref_lanelet_ids.device)
+        .unsqueeze(0)
+        .unsqueeze(0)
+    )
+    mask = mask < (n_ref_lanelet_ids).unsqueeze(-1)
+
+    # Split the polyline into line segments
+    line_starts = ref_lanelet_segment_point[:, :, :-1, :]
+    line_ends = ref_lanelet_segment_point[:, :, 1:, :]
+
+    # Expand point for broadcasting
+    point_expanded = point.unsqueeze(2)
+
+    # Create vectors for each line segment and for the point to the start of each segment
+    line_vecs = line_ends - line_starts
+    point_vecs = point_expanded - line_starts
+
+    # Project point_vecs onto line_vecs
+    line_lens_squared = torch.sum(line_vecs**2, dim=-1)
+    projected_lengths = torch.sum(point_vecs * line_vecs, dim=-1) / line_lens_squared
+
+    # Clamp the projections to lie within the line segments
+    clamped_lengths = torch.clamp(projected_lengths, 0, 1)
+
+    # Find the closest points on the line segments to the given points
+    closest_points = line_starts + (line_vecs * clamped_lengths.unsqueeze(-1))
+
+    # Calculate the distances from the given points to these closest points
+    distances = torch.norm(closest_points - point_expanded, dim=-1)
+
+    # Apply mask to distances
+    distances[~mask] = float("inf")  # Ignore invalid lanelets
+
+    # Get the index of the nearest lanelet
+    _, nearest_idx = torch.min(distances, dim=-1)
+
+    # Gather the corresponding lanelet IDs
+    current_id = torch.gather(
+        ref_lanelet_ids, dim=2, index=nearest_idx.unsqueeze(-1)
+    ).squeeze(-1)
+
+    return current_id
