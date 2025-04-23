@@ -1095,11 +1095,7 @@ class Parameters:
         scenario_name: str = "road_traffic",  # Scenario name
         # Training parameters
         n_iters: int = 250,  # Number of training iterations
-        frames_per_batch: int = 4096,  # Number of team frames collected per training iteration
-        # num_envs = frames_per_batch / max_steps
-        # total_frames = frames_per_batch * n_iters
-        # sub_batch_size = frames_per_batch // minibatch_size
-        num_epochs: int = 60,  # Optimization steps per batch of data collected
+        num_epochs: int = 30,  # Optimization steps per batch of data collected
         minibatch_size: int = 512,  # Size of the mini-batches in each optimization step (2**9 - 2**12?)
         lr: float = 2e-4,  # Learning rate
         lr_min: float = 1e-5,  # Minimum learning rate (used for scheduling of learning rate)
@@ -1109,8 +1105,7 @@ class Parameters:
         lmbda: float = 0.9,  # lambda for generalised advantage estimation
         entropy_eps: float = 1e-4,  # Coefficient of the entropy term in the PPO loss
         max_steps: int = 128,  # Episode steps before done
-        total_frames: int = None,  # Total frame for one training, equals `frames_per_batch * n_iters`
-        num_vmas_envs: int = None,  # Number of vectorized environments
+        num_vmas_envs: int = 32,  # Number of vectorized environments
         scenario_type: str = "intersection_1",  # One of {"CPM_entire", "CPM_mixed", "intersection_1", ...}. See SCENARIOS in utilities/constants.py for more scenarios.
         # "CPM_entire": Entire map of the CPM Lab
         # "CPM_mixed": Intersection, merge-in, and merge-out of the CPM Lab. Probability defined in `cpm_scenario_probabilities`
@@ -1179,10 +1174,6 @@ class Parameters:
 
         # Sampling
         self.n_iters = n_iters
-        self.frames_per_batch = frames_per_batch
-
-        if (frames_per_batch is not None) and (n_iters is not None):
-            self.total_frames = frames_per_batch * n_iters
 
         # Training
         self.num_epochs = num_epochs
@@ -1198,10 +1189,7 @@ class Parameters:
 
         self.scenario_type = scenario_type
 
-        if (frames_per_batch is not None) and (max_steps is not None):
-            self.num_vmas_envs = (
-                frames_per_batch // max_steps
-            )  # Number of vectorized envs. frames_per_batch should be divisible by this number,
+        self.num_vmas_envs = num_vmas_envs
 
         self.is_save_intermediate_model = is_save_intermediate_model
         self.is_load_model = is_load_model
@@ -1267,6 +1255,23 @@ class Parameters:
 
         if (model_name is None) and (scenario_name is not None):
             self.model_name = get_model_name(self)
+
+    @property
+    def frames_per_batch(self):
+        """
+        Number of team frames collected per training iteration
+            num_envs = frames_per_batch / max_steps
+            total_frames = frames_per_batch * n_iters
+            sub_batch_size = frames_per_batch // minibatch_size
+        """
+        return self.num_vmas_envs * self.max_steps
+
+    @property
+    def total_frames(self):
+        """
+        Total number of frames collected for training
+        """
+        return self.frames_per_batch * self.n_iters
 
     def to_dict(self):
         # Create a dictionary representation of the instance

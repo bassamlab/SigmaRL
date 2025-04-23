@@ -107,7 +107,7 @@ class ScenarioRoadTraffic(BaseScenario):
         """
         scenario_type = kwargs.pop(
             "scenario_type", "CPM_entire"
-        )  # Scenario type. See all scenario types in SCENARIOS in utilities/constants
+        )  # Scenario type such as CPM_entire, CPM_mixed, intersection_1, etc. See all scenario types in SCENARIOS in utilities/constants
         self.agent_width = AGENTS["width"]  # The width of the agent in [m]
         self.agent_length = AGENTS["length"]  # The length of the agent in [m]
         lane_width = SCENARIOS[scenario_type][
@@ -221,21 +221,6 @@ class ScenarioRoadTraffic(BaseScenario):
         n_observed_steps = kwargs.pop(
             "n_observed_steps", 1
         )  # The number of steps to observe (include the current step). At least one, and at most `n_stored_steps`
-
-        # World dimensions
-        self.world_x_dim = SCENARIOS[scenario_type]["world_x_dim"]
-        self.world_y_dim = SCENARIOS[scenario_type]["world_y_dim"]
-
-        self.render_origin = [
-            self.world_x_dim / 2,
-            self.world_y_dim / 2,
-        ]
-
-        self.viewer_size = (
-            int(self.world_x_dim * self.resolution_factor),
-            int(self.world_y_dim * self.resolution_factor),
-        )
-        self.viewer_zoom = SCENARIOS[scenario_type]["viewer_zoom"]
 
         self.max_steering = kwargs.pop(
             "max_steering",
@@ -356,6 +341,8 @@ class ScenarioRoadTraffic(BaseScenario):
         self.parameters.n_nearing_agents_observed = min(
             self.parameters.n_nearing_agents_observed, self.parameters.n_agents - 1
         )
+        if self.parameters.n_nearing_agents_observed == 0:
+            cprint("[INFO] Not observing other agents.", "blue")
         self.n_agents = self.parameters.n_agents
 
         # Timer for the first env
@@ -379,6 +366,21 @@ class ScenarioRoadTraffic(BaseScenario):
         )
 
         cprint(f"[INFO] Map of {self.parameters.scenario_type} parsed.", "blue")
+
+        # World dimensions
+        self.world_x_dim = self.map.parser.bounds["world_x_dim"]
+        self.world_y_dim = self.map.parser.bounds["world_y_dim"]
+
+        self.render_origin = [
+            self.world_x_dim / 2,
+            self.world_y_dim / 2,
+        ]
+
+        self.viewer_size = (
+            int(self.world_x_dim * self.resolution_factor),
+            int(self.world_y_dim * self.resolution_factor),
+        )
+        self.viewer_zoom = SCENARIOS[scenario_type]["viewer_zoom"]
 
         # Initialize pseudo distance information for the map
         if self.parameters.is_using_cbf:
@@ -1362,9 +1364,12 @@ class ScenarioRoadTraffic(BaseScenario):
                             "grey",
                         )
                     random_count += 1
-                    path_id = torch.randint(
-                        0, len(ref_paths_scenario), (1,)
-                    ).item()  # Select randomly a path
+                    if self.parameters.ref_path_idx is not None:
+                        path_id = self.parameters.ref_path_idx
+                    else:
+                        path_id = torch.randint(
+                            0, len(ref_paths_scenario), (1,)
+                        ).item()  # Select randomly a path
                     self.ref_paths_agent_related.path_id[
                         env_i, i_agent
                     ] = path_id  # Update
@@ -3084,30 +3089,53 @@ class ScenarioRoadTraffic(BaseScenario):
         # others_observation: bool value 0: observable, 1: non observable
 
         info = {
-            "pos": agent.state.pos / self.normalizers.pos_world,
-            "rot": angle_eliminate_two_pi(agent.state.rot) / self.normalizers.rot,
-            "vel": agent.state.vel / self.normalizers.v,
+            "pos": agent.state.pos,
+            "pos_nom": agent.state.pos / self.normalizers.pos_world,
+            "rot": angle_eliminate_two_pi(agent.state.rot),
+            "rot_nom": angle_eliminate_two_pi(agent.state.rot) / self.normalizers.rot,
+            "vel": agent.state.vel,
+            "vel_nom": agent.state.vel / self.normalizers.v,
             "act_vel": (
+                agent.action.u[:, 0]
+                if not is_action_empty
+                else self.constants.empty_action_vel[:, agent_index]
+            ),
+            "act_vel_nom": (
                 (agent.action.u[:, 0] / self.normalizers.v)
                 if not is_action_empty
                 else self.constants.empty_action_vel[:, agent_index]
             ),
             "act_steer": (
+                agent.action.u[:, 1]
+                if not is_action_empty
+                else self.constants.empty_action_steering[:, agent_index]
+            ),
+            "act_steer_nom": (
                 (agent.action.u[:, 1] / self.normalizers.steering)
                 if not is_action_empty
                 else self.constants.empty_action_steering[:, agent_index]
             ),
-            "ref": (
+            "ref": self.ref_paths_agent_related.short_term[:, agent_index].reshape(
+                self.world.batch_dim, -1
+            ),
+            "ref_nom": (
                 self.ref_paths_agent_related.short_term[:, agent_index]
                 / self.normalizers.pos_world
             ).reshape(self.world.batch_dim, -1),
-            "distance_ref": self.distances.ref_paths[:, agent_index]
+            "distance_ref": self.distances.ref_paths[:, agent_index],
+            "distance_ref_nom": self.distances.ref_paths[:, agent_index]
             / self.normalizers.distance_ref,
             "distance_left_b": self.distances.left_boundaries[:, agent_index].min(
+                dim=-1
+            )[0],
+            "distance_left_b_nom": self.distances.left_boundaries[:, agent_index].min(
                 dim=-1
             )[0]
             / self.normalizers.distance_lanelet,
             "distance_right_b": self.distances.right_boundaries[:, agent_index].min(
+                dim=-1
+            )[0],
+            "distance_right_b_nom": self.distances.right_boundaries[:, agent_index].min(
                 dim=-1
             )[0]
             / self.normalizers.distance_lanelet,
