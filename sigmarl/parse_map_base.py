@@ -14,7 +14,10 @@ from sigmarl.colors import (
 
 from sigmarl.constants import SCENARIOS, AGENTS, THRESHOLD
 
-from sigmarl.helper_scenario import get_rectangle_vertices
+from sigmarl.helper_scenario import (
+    compute_pseudo_tangent_vector,
+    get_rectangle_vertices,
+)
 
 
 class ParseMapBase(ABC):
@@ -46,11 +49,21 @@ class ParseMapBase(ABC):
             "is_share_lanelets", False
         )  # Whether agents can move to nearing lanelets
 
+        self._is_show_axis = kwargs.pop(
+            "is_show_axis", False
+        )  # Whether to show the x- and y- axes of the map
+
+        self._n_agents_visu = kwargs.pop(
+            "n_agents_visu", None
+        )  # Number of agents to be visualized
+
         self.bounds = {
             "min_x": float("inf"),
             "min_y": float("inf"),
             "max_x": float("-inf"),
             "max_y": float("-inf"),
+            "world_x_dim": float("inf"),
+            "world_y_dim": float("inf"),
         }  # Bounds of the map
 
         self.lanelets_all = (
@@ -66,7 +79,7 @@ class ParseMapBase(ABC):
         self._intersection_info = []  # For the CPM Scenario only
 
         self._linewidth = 0.5
-        self._fontsize = 12
+        self._fontsize = 9
 
         # Use the same name for data to be stored as the scenario type
         self._scenario_type = self._scenario_type
@@ -75,7 +88,22 @@ class ParseMapBase(ABC):
         # Get the path to the corresponding map for the given scenario type
         self._map_path = SCENARIOS[self._scenario_type]["map_path"]
 
-    def _visualize_random_agents(self, ax, reference_paths, n_agents):
+    def _compute_pseudo_tangent_vectors(self):
+        for ref_path in self.reference_paths:
+            ref_path["left_boundary_pseudo_vector"] = compute_pseudo_tangent_vector(
+                ref_path["left_boundary"]
+            )
+            ref_path["right_boundary_pseudo_vector"] = compute_pseudo_tangent_vector(
+                ref_path["right_boundary"]
+            )
+            ref_path[
+                "left_boundary_shared_pseudo_vector"
+            ] = compute_pseudo_tangent_vector(ref_path["left_boundary_shared"])
+            ref_path[
+                "right_boundary_shared_pseudo_vector"
+            ] = compute_pseudo_tangent_vector(ref_path["right_boundary_shared"])
+
+    def _visualize_random_agents(self, ax, reference_paths):
         # Get the number of agents to be visualized
 
         initial_distance_threshold = THRESHOLD["initial_distance"]
@@ -83,7 +111,10 @@ class ParseMapBase(ABC):
         length = AGENTS["length"]
 
         positions, rotations = self.generate_random_states(
-            reference_paths, self._device, n_agents, initial_distance_threshold
+            reference_paths,
+            self._device,
+            self._n_agents_visu,
+            initial_distance_threshold,
         )
 
         vertices = get_rectangle_vertices(
@@ -94,14 +125,14 @@ class ParseMapBase(ABC):
             is_close_shape=True,
         )  # Get the vertices of the agents
 
-        for i_agent in range(n_agents):
+        for i_agent in range(self._n_agents_visu):
             # plt.fill(vertices[i_agent, :, 0], vertices[i_agent, :, 1], color="grey")
             polygon = plt.Polygon(
                 vertices[i_agent],
                 closed=True,
                 edgecolor="black",
                 linewidth=0.4,
-                facecolor="grey",
+                facecolor="tab:blue",
                 zorder=3,
             )
             ax.add_patch(polygon)

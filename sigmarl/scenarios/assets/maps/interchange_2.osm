@@ -247,7 +247,7 @@
     <nd ref='-37070' />
     <nd ref='-37071' />
     <nd ref='-37072' />
-    <tag k='lanes' v='17' />
+    <tag k='lanes' v='15' />
   </way>
   <way id='-7414' action='modify' visible='true'>
     <nd ref='-36991' />

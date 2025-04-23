@@ -40,12 +40,6 @@ SCENARIOS = {
         "map_path": "interchange_1.osm",
         "n_agents": 8,
         "name": "Scenario 3",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["1", "2", "3"],
             ["1", "7", "6"],
@@ -64,44 +58,38 @@ SCENARIOS = {
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "interchange_2": {
         "map_path": "interchange_2.osm",
         "n_agents": 10,
         "name": "Scenario 6",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["9", "1", "10"],
             ["9", "1", "2", "3", "12"],
-            ["9", "1", "2", "3", "4", "5", "17"],
+            ["9", "1", "2", "3", "4", "5", "15"],
             ["9", "1", "2", "3", "4", "5", "6", "7", "14"],
             ["11", "3", "12"],
-            ["11", "3", "4", "5", "17"],
+            ["11", "3", "4", "5", "15"],
             ["11", "3", "4", "5", "6", "7", "14"],
             ["11", "3", "4", "5", "6", "7", "8", "1", "10"],
-            ["16", "5", "17"],
+            ["16", "5", "15"],
             ["16", "5", "6", "7", "14"],
             ["16", "5", "6", "7", "8", "1", "10"],
             ["16", "5", "6", "7", "8", "1", "2", "3", "12"],
             ["13", "7", "14"],
             ["13", "7", "8", "1", "10"],
             ["13", "7", "8", "1", "2", "3", "12"],
-            ["13", "7", "8", "1", "2", "3", "4", "5", "17"],
+            ["13", "7", "8", "1", "2", "3", "4", "5", "15"],
         ],
         "neighboring_lanelet_ids": {
             "1": ["1", "2", "8", "9", "10"],  # Lanelet with ID "1"
             "2": ["1", "2", "3", "10", "11"],  # Lanelet with ID "2"
             "3": ["2", "3", "4", "11", "12"],  # Lanelet with ID "3"
             "4": ["3", "4", "5", "12", "16"],  # Lanelet with ID "4"
-            "5": ["4", "5", "6", "16", "17"],  # Lanelet with ID "5"
-            "6": ["5", "6", "7", "13", "17"],  # Lanelet with ID "6"
+            "5": ["4", "5", "6", "16", "15"],  # Lanelet with ID "5"
+            "6": ["5", "6", "7", "13", "15"],  # Lanelet with ID "6"
             "7": ["6", "7", "8", "13", "14"],  # Lanelet with ID "7"^
             "8": ["1", "7", "8", "9", "14"],  # Lanelet with ID "8"
             "9": ["1", "8", "9"],  # Lanelet with ID "9"
@@ -110,8 +98,8 @@ SCENARIOS = {
             "12": ["3", "4", "12"],  # Lanelet with ID "12"
             "13": ["6", "7", "13"],  # Lanelet with ID "13"
             "14": ["7", "8", "14"],  # Lanelet with ID "14"
+            "15": ["5", "6", "15"],  # Lanelet with ID "15"
             "16": ["4", "5", "16"],  # Lanelet with ID "16"
-            "17": ["5", "6", "17"],  # Lanelet with ID "17"
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
@@ -122,12 +110,6 @@ SCENARIOS = {
         "map_path": "interchange_3.osm",
         "n_agents": 10,
         "name": "Scenario 9",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["1", "2", "3"],
             ["1", "4", "5", "6"],
@@ -179,12 +161,6 @@ SCENARIOS = {
         "map_path": "intersection_1.osm",
         "n_agents": 6,
         "name": "Intersection 1",
-        "x_dim_min": 0.180,
-        "x_dim_max": 2.198,
-        "y_dim_min": 0.179,
-        "y_dim_max": 3.381,
-        "world_x_dim": 2.5,
-        "world_y_dim": 3.7,
         "reference_paths_ids": [
             ["1", "2"],
             ["1", "3"],
@@ -200,19 +176,13 @@ SCENARIOS = {
         },
         "figsize_x": 2.5,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # A scale converts data from geographic coordinate system (used in JOSM) to Cartesian coordinate system
     },
     "intersection_2": {
         "map_path": "intersection_2.osm",
         "n_agents": 6,
         "name": "Intersection 2",
-        "x_dim_min": 0.180,
-        "x_dim_max": 2.583,
-        "y_dim_min": 0.179,
-        "y_dim_max": 3.381,
-        "world_x_dim": 2.90,
-        "world_y_dim": 3.70,
         "reference_paths_ids": [
             ["1", "2", "5", "10"],
             ["1", "2", "6", "11"],
@@ -243,12 +213,6 @@ SCENARIOS = {
         "map_path": "intersection_3.osm",
         "n_agents": 8,
         "name": "Intersection 3",
-        "x_dim_min": 0.178,
-        "x_dim_max": 3.860,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.311,
-        "world_x_dim": 4.2,
-        "world_y_dim": 2.6,
         "reference_paths_ids": [
             ["1"],
             ["2", "3"],
@@ -276,12 +240,6 @@ SCENARIOS = {
         "map_path": "intersection_4.osm",
         "n_agents": 8,
         "name": "Scenario 7",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["1", "2", "3"],
             ["1", "13", "4"],
@@ -320,19 +278,13 @@ SCENARIOS = {
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "intersection_5": {
         "map_path": "intersection_5.osm",
         "n_agents": 10,
         "name": "Scenario 8",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["1", "2", "3", "4"],
             ["1", "5", "10"],
@@ -378,12 +330,6 @@ SCENARIOS = {
         "map_path": "intersection_6.osm",
         "n_agents": 10,
         "name": "Scenario 10",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["1", "2"],
             ["4", "6", "7", "2"],
@@ -433,12 +379,6 @@ SCENARIOS = {
         "map_path": "intersection_7.osm",
         "n_agents": 8,
         "name": "Scenario 2",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["1", "2", "3", "4"],
             ["1", "2", "3", "12", "6", "7", "8"],
@@ -471,12 +411,6 @@ SCENARIOS = {
         "map_path": "intersection_8.osm",
         "n_agents": 10,
         "name": "Scenario 5",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["1", "2", "3", "4"],
             ["1", "2", "12"],
@@ -513,12 +447,6 @@ SCENARIOS = {
         "map_path": "on_ramp_1.osm",
         "n_agents": 8,
         "name": "Intersection 3",
-        "x_dim_min": 0.152,
-        "x_dim_max": 3.803,
-        "y_dim_min": 0.110,
-        "y_dim_max": 1.537,
-        "world_x_dim": 4.1,
-        "world_y_dim": 1.8,
         "reference_paths_ids": [
             ["1", "3", "5", "7"],
             ["2", "3", "5", "7"],
@@ -543,12 +471,6 @@ SCENARIOS = {
         "map_path": "on_ramp_2_multilane.osm",
         "n_agents": 10,
         "name": "Scenario 4",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["1", "2", "3", "4"],
             ["1", "2", "5", "6", "7", "8"],
@@ -557,31 +479,32 @@ SCENARIOS = {
             ["1", "9", "11", "16", "7", "8"],
             ["1", "9", "11", "16", "7", "15", "4"],
             ["1", "2", "17", "18", "19", "20"],
-            ["1", "2", "17", "18", "19", "27", "4"],
+            ["1", "2", "17", "18", "19", "10", "4"],
             ["1", "21", "23", "24"],
-            ["1", "21", "23", "28", "19", "20"],
-            ["1", "21", "23", "28", "19", "27", "4"],
+            ["1", "21", "23", "22", "19", "20"],
+            ["1", "21", "23", "22", "19", "10", "4"],
             ["14", "11", "12"],
             ["14", "11", "16", "7", "8"],
             ["14", "11", "16", "7", "15", "4"],
             ["13", "6", "7", "8"],
             ["13", "6", "7", "15", "4"],
             ["26", "23", "24"],
-            ["26", "23", "28", "19", "20"],
-            ["26", "23", "28", "19", "27", "4"],
+            ["26", "23", "22", "19", "20"],
+            ["26", "23", "22", "19", "10", "4"],
             ["25", "18", "19", "20"],
-            ["25", "18", "19", "27", "4"],
+            ["25", "18", "19", "10", "4"],
         ],
         "neighboring_lanelet_ids": {
             "1": ["1", "2", "9", "21"],  # Lanelet with ID "1"
             "2": ["1", "2", "3", "5", "9", "17", "21"],  # Lanelet with ID "2"
-            "3": ["2", "3", "4", "5", "15", "17", "27"],  # Lanelet with ID "3"
-            "4": ["3", "4", "15", "27"],  # Lanelet with ID "4"
+            "3": ["2", "3", "4", "5", "15", "17", "10"],  # Lanelet with ID "3"
+            "4": ["3", "4", "15", "10"],  # Lanelet with ID "4"
             "5": ["2", "3", "5", "6", "13", "17"],  # Lanelet with ID "5"
             "6": ["5", "6", "7", "13", "16"],  # Lanelet with ID "6"
             "7": ["6", "7", "8", "15", "16"],  # Lanelet with ID "7"
             "8": ["7", "8", "15"],  # Lanelet with ID "8"
             "9": ["1", "2", "9", "11", "14"],  # Lanelet with ID "9"
+            "10": ["3", "4", "15", "19", "20", "10"],  # Lanelet with ID "10"
             "11": ["9", "11", "12", "14", "16"],  # Lanelet with ID "11"
             "12": ["11", "12", "16"],  # Lanelet with ID "12"
             "13": ["5", "6", "13"],  # Lanelet with ID "13"
@@ -589,16 +512,15 @@ SCENARIOS = {
             "15": ["3", "4", "7", "8", "15"],  # Lanelet with ID "15"
             "16": ["6", "7", "11", "12", "16"],  # Lanelet with ID "16"
             "17": ["2", "3", "5", "17", "18", "25"],  # Lanelet with ID "17"
-            "18": ["17", "18", "19", "25", "28"],  # Lanelet with ID "18"
-            "19": ["18", "19", "20", "27", "28"],  # Lanelet with ID "19"
-            "20": ["19", "20", "27"],  # Lanelet with ID "20"
+            "18": ["17", "18", "19", "25", "22"],  # Lanelet with ID "18"
+            "19": ["18", "19", "20", "10", "22"],  # Lanelet with ID "19"
+            "20": ["19", "20", "10"],  # Lanelet with ID "20"
             "21": ["1", "2", "9", "21", "23"],  # Lanelet with ID "21"
-            "23": ["21", "23", "24", "26", "28"],  # Lanelet with ID "23"
-            "24": ["23", "24", "28"],  # Lanelet with ID "24"
+            "22": ["18", "19", "23", "24", "22"],  # Lanelet with ID "22"
+            "23": ["21", "23", "24", "26", "22"],  # Lanelet with ID "23"
+            "24": ["23", "24", "22"],  # Lanelet with ID "24"
             "25": ["17", "18", "25"],  # Lanelet with ID "25"
             "26": ["21", "23", "26"],  # Lanelet with ID "26"
-            "27": ["3", "4", "15", "19", "20", "27"],  # Lanelet with ID "27"
-            "28": ["18", "19", "23", "24", "28"],  # Lanelet with ID "28"
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
@@ -609,12 +531,6 @@ SCENARIOS = {
         "map_path": "roundabout_1.osm",
         "n_agents": 8,
         "name": "Intersection 3",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["1", "2", "9"],
             ["1", "3", "7", "9"],
@@ -642,12 +558,6 @@ SCENARIOS = {
         "map_path": "roundabout_2.osm",
         "n_agents": 10,
         "name": "Scenario 1",
-        "x_dim_min": 0.180,
-        "x_dim_max": 3.638,
-        "y_dim_min": 0.105,
-        "y_dim_max": 2.019,
-        "world_x_dim": 4.0,
-        "world_y_dim": 2.3,
         "reference_paths_ids": [
             ["8", "1", "9"],
             ["8", "1", "2", "10", "11"],
@@ -698,12 +608,6 @@ SCENARIOS = {
     "goal_reaching_1": {
         "n_agents": 1,
         "name": "",
-        "x_dim_min": 0.0,
-        "x_dim_max": 20.0,
-        "y_dim_min": 0.0,
-        "y_dim_max": 20.0,
-        "world_x_dim": 20.0,
-        "world_y_dim": 20.0,
         "reference_paths_ids": [],
         "neighboring_lanelet_ids": {},
         "figsize_x": 3.0,

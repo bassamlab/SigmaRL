@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import os
 import xml.etree.ElementTree as ET
 from importlib import resources
 
@@ -45,9 +46,14 @@ class ParseXML(ParseMapBase):
         self.bounds["min_y"] = SCENARIOS[self._scenario_type]["y_dim_min"]
         self.bounds["max_y"] = SCENARIOS[self._scenario_type]["y_dim_max"]
 
+        self.bounds["world_x_dim"] = self.bounds["min_x"] + self.bounds["max_x"]
+        self.bounds["world_y_dim"] = self.bounds["min_y"] + self.bounds["max_y"]
+
         self._parse_map_file()
 
         self._get_reference_paths(is_show_each_ref_path=False)
+
+        self._compute_pseudo_tangent_vectors()
 
         if self._is_visualize_map:
             self.visualize_map()
@@ -200,6 +206,8 @@ class ParseXML(ParseMapBase):
         ax.set_aspect("equal", adjustable="box")  # Ensures equal scaling
         ax.grid(True, linewidth=0.3)
 
+        ax.tick_params(axis="both", direction="in")
+
         for lanelet in self.lanelets_all:
             # Extract coordinates for left, right, and center lines
             left_bound = lanelet["left_boundary"]
@@ -249,41 +257,59 @@ class ParseXML(ParseMapBase):
                     fontsize=self._fontsize,
                 )
 
-        n_agents = SCENARIOS[self._scenario_type]["n_agents"]
-
         if self._is_visualize_intersection:
             self._visualize_intersection()
 
-        if self._scenario_type == "CPM_mixed":
-            if self._is_visualize_random_agents:
-                self._visualize_random_agents(
-                    ax, self.reference_paths_intersection, n_agents
-                )
+        if self._is_visualize_random_agents:
+            if self._n_agents_visu is None:
+                self._n_agents_visu = SCENARIOS[self._scenario_type]["n_agents"]
+
+            if self._scenario_type == "CPM_mixed":
+                self._visualize_random_agents(ax, self.reference_paths_intersection)
+            else:
+                self._visualize_random_agents(ax, self.reference_paths)
+
+        if self._is_show_axis:
+            ax.set_xlabel(r"$x$ [m]", fontsize=self._fontsize)
+            ax.set_ylabel(r"$y$ [m]", fontsize=self._fontsize)
+            ax.set_xticks(
+                np.arange(self.bounds["min_x"], self.bounds["max_x"] + 0.05, 1.0)
+            )
+            ax.set_yticks(
+                np.arange(self.bounds["min_y"], self.bounds["max_y"] + 0.05, 1.0)
+            )
+
+            # Set all spines (outer box lines) to gray
+            ax = plt.gca()
+            for spine in ax.spines.values():
+                spine.set_color("gray")  # or use a specific shade, e.g., '#888888'
+            # Set tick marks and labels to gray
+            ax.tick_params(axis="both", colors="gray")  # both ticks and tick labels
+            ax.xaxis.label.set_color("gray")
+            ax.yaxis.label.set_color("gray")
         else:
-            if self._is_visualize_random_agents:
-                self._visualize_random_agents(ax, self.reference_paths, n_agents)
+            ax.set_xticks([])
+            ax.set_yticks([])
 
-        # ax.xlabel(r"$x$ [m]", fontsize=self._fontsize)
-        # ax.ylabel(r"$y$ [m]", fontsize=self._fontsize)
-        ax.set_xlim((0, self.bounds["max_x"]))
-        ax.set_ylim((0, self.bounds["max_y"]))
-        # ax.xticks(np.arange(0, self.bounds["max_x"]+0.05, 0.5), fontsize=self._fontsize)
-        # ax.yticks(np.arange(0, self.bounds["max_y"]+0.05, 0.5), fontsize=self._fontsize)
-        ax.set_xticks([])
-        ax.set_yticks([])
+            # Remove the outer box
+            for spine in ax.spines.values():
+                spine.set_visible(False)
 
-        # Remove the outer box
-        for spine in ax.spines.values():
-            spine.set_visible(False)
+        ax.set_xlim((self.bounds["min_x"], self.bounds["max_x"]))
+        ax.set_ylim((self.bounds["min_y"], self.bounds["max_y"]))
+        ax.grid(False)
 
         # Save fig
         if self._is_save_fig:
             plt.tight_layout()  # Set the layout to be tight to minimize white space
-            plt.savefig(self._scenario_type + ".pdf", format="pdf", bbox_inches="tight")
-            print(f"A fig is saved at {self._scenario_type + '.pdf'}")
+            path = os.path.join("map_" + self._scenario_type + ".pdf")
+            plt.savefig(path, format="pdf", bbox_inches="tight")
+            print(f"A fig is saved at {path}")
 
         if self._is_plt_show:
             plt.show()
+
+        return fig, ax
 
     def _visualize_intersection(self):
         intersection_boundary = []
@@ -400,6 +426,67 @@ class ParseXML(ParseMapBase):
             [24, 19],
             [98, 99],  # intersection: incoming 7 and incoming 8
         ]
+
+        # Do not consider merge-in and merge-out lanelets
+        lanelets_share_same_boundaries_list_without_merges = [
+            [4, 3],
+            [22, 3],
+            [6, 5],
+            [23, 5],
+            [8, 7],
+            [60, 59],
+            [58, 57],
+            [75, 57],
+            [56, 55],
+            [74, 55],
+            [54, 53],
+            [80, 79],
+            [82, 81],
+            [100, 81],
+            [84, 83],
+            [101, 83],
+            [86, 85],
+            [34, 33],
+            [32, 31],
+            [31, 49],
+            [30, 29],
+            [29, 48],
+            [28, 27],
+            [2, 1],  # outer circle (urban)
+            [13, 14],
+            [15, 16],
+            [9, 10],
+            [11, 12],  # inner circle (top right)
+            [63, 64],
+            [61, 62],
+            [67, 68],
+            [65, 66],  # inner circle (bottom right)
+            [91, 92],
+            [93, 94],
+            [87, 88],
+            [89, 90],  # inner circle (bottom left)
+            [37, 38],
+            [35, 36],
+            [41, 42],
+            [39, 40],  # inner circle (top left)
+            [25, 18],
+            [26, 17],
+            [52, 43],
+            [72, 73],  # intersection: incoming 1 and incoming 2
+            [51, 44],
+            [50, 45],
+            [102, 97],
+            [20, 21],  # intersection: incoming 3 and incoming 4
+            [103, 96],
+            [104, 95],
+            [78, 69],
+            [46, 47],  # intersection: incoming 5 and incoming 6
+            [77, 70],
+            [76, 71],
+            [24, 19],
+            [98, 99],  # intersection: incoming 7 and incoming 8
+        ]
+
         path_intersection = [
             [11, 25, 13],
             [11, 26, 52, 37],
@@ -668,7 +755,7 @@ if __name__ == "__main__":
         is_plt_show=False,
         is_visu_lane_ids=False,
         is_visualize_random_agents=True,
-        is_visualize_intersection=True,
+        is_visualize_intersection=False,
     )
 
     # print(parser.lanelets_all)
