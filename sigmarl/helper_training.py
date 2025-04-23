@@ -176,7 +176,6 @@ class TransformedEnvCustom(TransformedEnv):
         self.time_cbf = []
         self.time_pseudo_dis = []
         self.num_fail = 0
-
         if break_when_any_done:
             if is_save_simulation_video:
                 tensordicts, frame_list = self._rollout_stop_early(
@@ -228,7 +227,7 @@ class TransformedEnvCustom(TransformedEnv):
 
             # Possibly predict the actions of surrounding agents using opponent modeling
             if self.base_env.scenario_name.parameters.is_using_opponent_modeling:
-                opponent_modeling(
+                time_rl = opponent_modeling(
                     tensordict=tensordict,
                     policy=policy,
                     n_nearing_agents_observed=self.base_env.scenario_name.parameters.n_nearing_agents_observed,
@@ -237,9 +236,10 @@ class TransformedEnvCustom(TransformedEnv):
 
             if (
                 self.base_env.scenario_name.parameters.is_using_prioritized_marl
-                and not self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+                and not self.base_env.scenario_name.parameters.is_using_cbf
             ):
                 (
+                    time_rl,
                     tensordict,
                     priority_rank,
                     observable_higher_priority_agents,
@@ -257,8 +257,8 @@ class TransformedEnvCustom(TransformedEnv):
                     observable_higher_priority_agents
                 )
             elif (
-                self.base_env.scenario_name.parameters.is_using_cbf_in_testing
-                and not self.env.base_env.scenario_name.parameters.is_using_centralized_cbf
+                self.base_env.scenario_name.parameters.is_using_cbf
+                and not self.base_env.scenario_name.parameters.is_using_centralized_cbf
             ):
                 (
                     time_rl,
@@ -277,7 +277,6 @@ class TransformedEnvCustom(TransformedEnv):
                     self.base_env.scenario_name.parameters.noise_level,
                 )
                 # Store time for computational efficiency
-                self.time_rl.append(time_rl)
                 self.time_cbf.append(time_cbf)
                 self.time_pseudo_dis.append(time_pseudo_dis)
                 # Store priority_rank for later use
@@ -286,14 +285,19 @@ class TransformedEnvCustom(TransformedEnv):
                     observable_higher_priority_agents
                 )
             elif (
-                self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+                self.base_env.scenario_name.parameters.is_using_cbf
                 and self.base_env.scenario_name.parameters.is_using_centralized_cbf
             ):
-                tensordict = cbf_constrained_centralized_policy(
+                time_rl, tensordict = cbf_constrained_centralized_policy(
                     tensordict, policy, cbf_controllers
                 )
             else:
+                # Baseline
+                time_rl_start = time.time()
                 tensordict = policy(tensordict)
+                time_rl += time.time() - time_rl_start  # Time for RL policy
+
+            self.time_rl.append(time_rl)
 
             if auto_cast_to_device:
                 tensordict = tensordict.to(env_device, non_blocking=True)
@@ -366,7 +370,7 @@ class TransformedEnvCustom(TransformedEnv):
 
             # Possibly predict the actions of surrounding agents using opponent modeling
             if self.base_env.scenario_name.parameters.is_using_opponent_modeling:
-                opponent_modeling(
+                time_rl = opponent_modeling(
                     tensordict=tensordict_,
                     policy=policy,
                     n_nearing_agents_observed=self.base_env.scenario_name.parameters.n_nearing_agents_observed,
@@ -375,9 +379,10 @@ class TransformedEnvCustom(TransformedEnv):
 
             if (
                 self.base_env.scenario_name.parameters.is_using_prioritized_marl
-                and not self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+                and not self.base_env.scenario_name.parameters.is_using_cbf
             ):
                 (
+                    time_rl,
                     tensordict_,
                     priority_rank,
                     observable_higher_priority_agents,
@@ -395,7 +400,7 @@ class TransformedEnvCustom(TransformedEnv):
                     observable_higher_priority_agents
                 )
             elif (
-                self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+                self.base_env.scenario_name.parameters.is_using_cbf
                 and not self.base_env.scenario_name.parameters.is_using_centralized_cbf
             ):
                 (
@@ -415,7 +420,6 @@ class TransformedEnvCustom(TransformedEnv):
                     self.base_env.scenario_name.parameters.noise_level,
                 )
                 # Store time for computational efficiency
-                self.time_rl.append(time_rl)
                 self.time_cbf.append(time_cbf)
                 self.time_pseudo_dis.append(time_pseudo_dis)
                 # Store priority_rank for later use
@@ -427,14 +431,19 @@ class TransformedEnvCustom(TransformedEnv):
                     observable_higher_priority_agents
                 )
             elif (
-                self.base_env.scenario_name.parameters.is_using_cbf_in_testing
+                self.base_env.scenario_name.parameters.is_using_cbf
                 and self.base_env.scenario_name.parameters.is_using_centralized_cbf
             ):
-                tensordict_ = cbf_constrained_centralized_policy(
+                time_rl, tensordict_ = cbf_constrained_centralized_policy(
                     tensordict_, policy, cbf_controllers
                 )
             else:
+                time_rl_start = time.time()
                 tensordict_ = policy(tensordict_)
+                time_rl = time.time() - time_rl_start
+
+            self.time_rl.append(time_rl)
+
             if auto_cast_to_device:
                 tensordict_ = tensordict_.to(env_device, non_blocking=True)
             tensordict, tensordict_ = self.step_and_maybe_reset(tensordict_)
@@ -1154,9 +1163,12 @@ class Parameters:
         noise_level: float = 0.1,  # Noise is modeled by a normal distribution. `noise_level` defines the variance of the normal distribution.
         is_using_cbf: bool = False,  # Whether to use Control Barrier Function (CBF)
         is_using_centralized_cbf: bool = False,  # Whether to use centralized solving for CBF-constrained MARL
-        is_using_cbf_in_testing: bool = False,  # Whether incooperated CBF into execution phase
         experiment_type: str = "simulation",  # One of {"simulation", "lab"}. If you only use simulation, you do not need to worry about "lab".
         is_obs_steering: bool = False,  # Whether to observe the steering angle of other agents
+        ref_path_idx: int = None,  # Specify the index of the predefined reference paths that should be used when initializing/resetting agents. Leave empty to use a randomly selected ones.
+        random_seed: int = 0,  # Random seed,
+        is_using_pseudo_distance: bool = False,  # Whether to use pseudo distance
+        n_circles_approximate_vehicle: int = 3,  # Number of circles to approximate the vehicle shape
     ):
 
         self.n_agents = n_agents
@@ -1242,10 +1254,16 @@ class Parameters:
 
         self.is_using_cbf = is_using_cbf
         self.is_using_centralized_cbf = is_using_centralized_cbf
-        self.is_using_cbf_in_testing = is_using_cbf_in_testing
 
         self.experiment_type = experiment_type
         self.is_obs_steering = is_obs_steering
+
+        self.ref_path_idx = ref_path_idx
+
+        self.random_seed = random_seed
+
+        self.is_using_pseudo_distance = is_using_pseudo_distance
+        self.n_circles_approximate_vehicle = n_circles_approximate_vehicle
 
         if (model_name is None) and (scenario_name is not None):
             self.model_name = get_model_name(self)
@@ -1936,6 +1954,8 @@ def opponent_modeling(
     Reference
         [1] Raileanu, Roberta, et al. "Modeling others using oneself in multi-agent reinforcement learning." International conference on machine learning. PMLR, 2018.
     """
+    time_rl_start = time.time()
+
     policy(tensordict)  # Run the policy to get tentative actions
     # Infer parameters
     n_agents = tensordict["agents"]["action"].shape[1]
@@ -1986,6 +2006,11 @@ def opponent_modeling(
             tensordict["agents"]["observation"][
                 :, ego_agent, idx_action_start:idx_action_end
             ] = action_tentative_sur_agent
+
+    policy(tensordict)  # Run the policy to update actions
+    time_rl = time.time() - time_rl_start
+
+    return time_rl
 
 
 def get_observation_key(parameters):
@@ -2073,6 +2098,8 @@ def prioritized_ap_policy(
         [[] for _ in range(n_agents)] for _ in range(n_envs)
     ]
 
+    time_rl = 0
+
     # Loop through each step in the priority rank
     for turn in range(n_agents):
         # Reset the observation
@@ -2113,19 +2140,20 @@ def prioritized_ap_policy(
             ] = current_turn_agent_neighbors[are_observable_higher_priority_agents]
 
             # Propagate the collected actions into the current agent's observation
-            if is_communication_noise:
-                std_noise_speed = AGENTS["max_speed"] * noise_level
-                std_noise_steering = AGENTS["max_steering"] * noise_level
-                noise = torch.cat(
-                    [
-                        std_noise_speed * torch.randn(action_dim, device=device),
-                        std_noise_steering * torch.randn(action_dim, device=device),
-                    ],
-                    dim=-1,
-                )
-                obs[-len(actions_so_far) :] = actions_so_far + noise
-            else:
-                obs[-len(actions_so_far) :] = actions_so_far
+            if len(actions_so_far) > 0:
+                if is_communication_noise:
+                    std_noise_speed = AGENTS["max_speed"] * noise_level
+                    std_noise_steering = AGENTS["max_steering"] * noise_level
+                    noise = torch.cat(
+                        [
+                            std_noise_speed * torch.randn(action_dim, device=device),
+                            std_noise_steering * torch.randn(action_dim, device=device),
+                        ],
+                        dim=-1,
+                    )
+                    obs[-len(actions_so_far) :] = actions_so_far + noise
+                else:
+                    obs[-len(actions_so_far) :] = actions_so_far
 
             # Store the updated observation for the current agent in temp_obs
             temp_obs[env, agent_idx] = obs
@@ -2134,7 +2162,9 @@ def prioritized_ap_policy(
         tensordict[("agents", "info")].set("base_observation", temp_obs)
 
         # Call the policy to generate actions for the agents
+        time_rl_start = time.time()
         policy(tensordict)
+        time_rl += time.time() - time_rl_start
 
         # Use the mask to place the data into the correct positions in the combined tensors
         combined_action[mask] = tensordict[("agents", "action")][mask]
@@ -2150,7 +2180,7 @@ def prioritized_ap_policy(
     tensordict[("agents", "scale")] = combined_scale
     tensordict[base_observation_key] = combined_obs
 
-    return tensordict, priority_rank, observable_higher_priority_agents
+    return time_rl, tensordict, priority_rank, observable_higher_priority_agents
 
 
 def cbf_constrained_decentralized_policy(
@@ -2282,21 +2312,22 @@ def cbf_constrained_decentralized_policy(
             ] = are_observable_higher_priority_agents
 
             # Propagate the collected actions into the current agent's observation
-            if is_communication_noise:
-                std_noise_speed = AGENTS["max_speed"] * noise_level
-                std_noise_steering = AGENTS["max_steering"] * noise_level
-                noise = torch.cat(
-                    [
-                        std_noise_speed * torch.randn(action_dim, device=device),
-                        std_noise_steering * torch.randn(action_dim, device=device),
-                    ],
-                    dim=-1,
-                )
-                obs[-len(actions_so_far) :] = actions_so_far + noise
-                cbf_obs[-len(actions_so_far) :] = actions_so_far + noise
-            else:
-                obs[-len(actions_so_far) :] = actions_so_far
-                cbf_obs[-len(actions_so_far) :] = actions_so_far
+            if len(actions_so_far) > 0:
+                if is_communication_noise:
+                    std_noise_speed = AGENTS["max_speed"] * noise_level
+                    std_noise_steering = AGENTS["max_steering"] * noise_level
+                    noise = torch.cat(
+                        [
+                            std_noise_speed * torch.randn(action_dim, device=device),
+                            std_noise_steering * torch.randn(action_dim, device=device),
+                        ],
+                        dim=-1,
+                    )
+                    obs[-len(actions_so_far) :] = actions_so_far + noise
+                    cbf_obs[-len(actions_so_far) :] = actions_so_far + noise
+                else:
+                    obs[-len(actions_so_far) :] = actions_so_far
+                    cbf_obs[-len(actions_so_far) :] = actions_so_far
 
             # Store the updated observation for the current agent in temp_obs
             temp_obs[env, agent_idx] = obs
@@ -2369,3 +2400,5 @@ def cbf_constrained_centralized_policy(
     except NotImplementedError as e:
         print(f"Error: {e}")
         sys.exit("Exiting program: Function not implemented.")
+
+    return time_rl, tensordict

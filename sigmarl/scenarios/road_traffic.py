@@ -300,7 +300,6 @@ class ScenarioRoadTraffic(BaseScenario):
                 is_use_mtv_distance=kwargs.pop("is_use_mtv_distance", False),
                 is_using_cbf=kwargs.pop("is_using_cbf", False),
                 is_using_centralized_cbf=kwargs.pop("is_using_centralized_cbf", False),
-                is_using_cbf_in_testing=kwargs.pop("is_using_cbf_in_testing", False),
                 experiment_type=kwargs.pop("experiment_type", "simulation"),
                 is_obs_steering=kwargs.pop("is_obs_steering", False),
             )
@@ -2149,7 +2148,13 @@ class ScenarioRoadTraffic(BaseScenario):
             self._update_observation_and_normalize(agent, agent_index)
 
         # Observation of other agents
-        obs_other_agents, cbf_obs_other_agents = self._observe_other_agents(agent_index)
+        if self.parameters.n_nearing_agents_observed > 0:
+            obs_other_agents, cbf_obs_other_agents = self._observe_other_agents(
+                agent_index
+            )
+        else:
+            # Do not observe other agents
+            obs_other_agents, cbf_obs_other_agents = None, None
 
         obs_self, cbf_obs_self = self._observe_self(agent_index)
 

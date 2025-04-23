@@ -1,3 +1,8 @@
+# Copyright (c) 2024, Chair of Embedded Software (Informatik 11) - RWTH Aachen University.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
 import torch
 import numpy as np
 import cvxpy as cp
@@ -7,6 +12,8 @@ import math
 from sigmarl.constants import SCENARIOS, AGENTS
 from sigmarl.dynamics import KinematicBicycleModel
 from sigmarl.mtv_based_sm_predictor import SafetyMarginEstimatorModule
+from sigmarl.rectangle_approximation import RectangleCircleApproximation
+from sigmarl.helper_training import Parameters
 
 
 class CBFQP:
@@ -18,16 +25,16 @@ class CBFQP:
         self.map_pseudo_distance = (
             self.env.base_env.scenario_name.map_pseudo_distance
         )  # Pseudo distance information for distance to bpundary
-        self.parameters = (
+        self.parameters: Parameters = (
             self.env.base_env.scenario_name.parameters
         )  # Parameters from the environment
         self.step = 0  # Step for current environment of current agent
         self.is_using_centralized_cbf = (
-            self.env.base_env.scenario_name.parameters.is_using_centralized_cbf
+            self.parameters.is_using_centralized_cbf
         )  # CBF solving strategy
 
         # Initialize the parameters
-        self.initialize_params()
+        self.initialize_params(**kwargs)
 
         # Kinematics model for the agent
         self.kbm = KinematicBicycleModel(
@@ -41,6 +48,10 @@ class CBFQP:
             min_steering_rate=AGENTS["min_steering_rate"],
             device=self.device,
         )
+
+        self.rec_cir_approx = RectangleCircleApproximation(
+            self.length, self.width, self.parameters.n_circles_approximate_vehicle
+        )  # Use circles to approximate agent
 
         # Load safety margin estimator module to estimate agent to agent safety margin
         self.load_safety_margin_estimator()
@@ -92,7 +103,12 @@ class CBFQP:
         )  # Vehicle approximation with one circle (agent-to-agent)
 
         # Distance type for agent-to-agent distance
-        self.agent_2_agent_sm_type = kwargs.get("agent_2_agent_sm_type", "mtv")
+        self.agent_2_agent_sm_type = kwargs.pop("agent_2_agent_sm_type", "mtv")
+
+        self.is_inject_noise = kwargs.pop("is_inject_noise", False)
+        self.noise_percentage = kwargs.pop(
+            "noise_percentage", 1
+        )  # Noise percentage with respect to the original data
 
         self.safety_buffer = 0.01  # saftey buffer
 
@@ -231,53 +247,64 @@ class CBFQP:
         else:
             # For decentralized solution, only the higher priority agent will be considered
             # Actions observation from higher priority agents need to be splited from the cbf state observation
-            all_state_others = obs_others[: (-self.num_nearing_agents * 2)]
-            all_state_others = all_state_others.reshape(
-                self.num_nearing_agents, -1
-            )  # (n_nearing_agents, 6)
+            if self.num_nearing_agents == 0:
+                state_others = None
+                self.num_higher_prio_nearing_agents = 0
+            else:
+                all_state_others = obs_others[: (-self.num_nearing_agents * 2)]
+                all_state_others = all_state_others.reshape(
+                    self.num_nearing_agents, -1
+                )  # (n_nearing_agents, 6)
 
-            cbf_masked_agents = all_state_others[
-                :, -1
-            ]  # value 0: observable, 1: non observable
-            cbf_masked_agents = (
-                cbf_masked_agents > 0
-            )  # mask for observable nearing agent
+                cbf_masked_agents = all_state_others[
+                    :, -1
+                ]  # value 0: observable, 1: non observable
+                cbf_masked_agents = (
+                    cbf_masked_agents > 0
+                )  # mask for observable nearing agent
 
-            all_state_others = all_state_others[:, :-1]  # (n_nearing_agents, 5)
-            all_action_others = obs_others[(-self.num_nearing_agents * 2) :]
-            all_action_others = all_action_others.reshape(
-                self.num_nearing_agents, -1
-            )  # (n_nearing_agents, 2)
+                all_state_others = all_state_others[:, :-1]  # (n_nearing_agents, 5)
+                all_action_others = obs_others[(-self.num_nearing_agents * 2) :]
+                all_action_others = all_action_others.reshape(
+                    self.num_nearing_agents, -1
+                )  # (n_nearing_agents, 2)
 
-            mask = (
-                self.mask_higher_priority_agents & ~cbf_masked_agents
-            )  # mask for observable higher priority agents
+                mask = (
+                    self.mask_higher_priority_agents & ~cbf_masked_agents
+                )  # mask for observable higher priority agents
 
-            # Mask the surrounding higher priority agents for decentralized solution
-            state_others = all_state_others[mask[self.env_idx, agent_idx]].reshape(
-                -1, all_state_others.shape[-1]
-            )  # (n_higher_prio_nearing_agents, 5), state of each agent:[x, y, psi, velocity, steering]
+                # Mask the surrounding higher priority agents for decentralized solution
+                state_others = all_state_others[mask[self.env_idx, agent_idx]].reshape(
+                    -1, all_state_others.shape[-1]
+                )  # (n_higher_prio_nearing_agents, 5), state of each agent:[x, y, psi, velocity, steering]
 
-            action_others = all_action_others[mask[self.env_idx, agent_idx]].reshape(
-                -1, all_action_others.shape[-1]
-            )  # (n_higher_prio_nearing_agents, 2), RL action of each agent: [velocity, steering]
+                action_others = all_action_others[
+                    mask[self.env_idx, agent_idx]
+                ].reshape(
+                    -1, all_action_others.shape[-1]
+                )  # (n_higher_prio_nearing_agents, 2), RL action of each agent: [velocity, steering]
 
-            # Number of higher priority nearing agents of the agent
-            self.num_higher_prio_nearing_agents = state_others.shape[0]
+                # Number of higher priority nearing agents of the agent
+                self.num_higher_prio_nearing_agents = state_others.shape[0]
 
-            # If there are higher priority agents
-            if self.num_higher_prio_nearing_agents > 0:
-                # Convert from RL actions speed [m/s] and steering [rad] to acceleration [m/s^2] and steering rate [rad/s]
-                action_others, self.u_others = self.rl_action_to_u(
-                    rl_actions=action_others,
-                    v=state_others[:, 3],
-                    steering=state_others[:, 4],
-                )  # (n_higher_prio_nearing_agents, 2), control action u of each agent: [acceleration, steering rate]
+                # If there are higher priority agents
+                if self.num_higher_prio_nearing_agents > 0:
+                    # Convert from RL actions speed [m/s] and steering [rad] to acceleration [m/s^2] and steering rate [rad/s]
+                    action_others, self.u_others = self.rl_action_to_u(
+                        rl_actions=action_others,
+                        v=state_others[:, 3],
+                        steering=state_others[:, 4],
+                    )  # (n_higher_prio_nearing_agents, 2), control action u of each agent: [acceleration, steering rate]
 
         # Agent's nominal action from RL policy
         rl_actions_nominal_agent = tensordict[("agents", "action")][
             self.env_idx, agent_idx
         ].clone()
+        if self.is_inject_noise:
+            rl_action_noise = (
+                torch.rand_like(rl_actions_nominal_agent) * self.noise_percentage
+            )
+            rl_actions_nominal_agent += rl_action_noise
 
         # Convert from RL actions speed [m/s] and steering [rad] to acceleration [m/s^2] and steering rate [rad/s]
         rl_actions_nominal_agent, u_nominal_agent = self.rl_action_to_u(
@@ -290,8 +317,8 @@ class CBFQP:
         self.state_agent_list[agent_idx] = state_agent
         self.state_others_list[agent_idx] = state_others
         # Lanelet ID and Reference ID
-        self.lanelet_id_list[agent_idx] = lanelet_id
-        self.path_id_list[agent_idx] = path_id
+        self.lanelet_id_list[agent_idx] = int(lanelet_id)
+        self.path_id_list[agent_idx] = int(path_id)
 
         # RL action and control action u
         self.rl_actions_nominal_agent_list[agent_idx] = rl_actions_nominal_agent
@@ -413,41 +440,88 @@ class CBFQP:
         # return dx, dy, psi_relative, distance
         return x_relative.item(), y_relative.item(), psi_relative.item(), distance
 
-    def get_circle_centers(self, state):
+    def get_circle_centers(self, state: torch.Tensor) -> torch.Tensor:
         """
-        To evaluate the distance to boundary, the vehicle is approximated with a set of circles.
+        Calculates the global positions and states of circle centers used to
+        approximate a vehicle's shape, based on the vehicle's current state,
+        vehicle length, and the desired number of circles.
+
+        The circles are distributed symmetrically along the vehicle's longitudinal
+        axis (its local x-axis), centered around the vehicle's reference point
+        (typically the rear axle or geometric center, as defined by the 'state' x,y).
+        The spacing between adjacent circle centers along the local x-axis is
+        explicitly defined as vehicle_length / n_circles.
+
+        Args:
+            state: A torch.Tensor representing the vehicle's state.
+                Expected minimum structure: [x, y, yaw]. Additional elements
+                (e.g., velocity, steering) are preserved and copied to each
+                circle's state.
+            n_circles: The number of circles to use for the approximation.
+                    Must be an integer greater than or equal to 1.
+            vehicle_length: The known length of the vehicle. Must be non-negative.
+                            Used to determine the spacing between adjacent circles.
+
+        Returns:
+            A torch.Tensor of shape (n_circles, state.shape[0]), where each row
+            represents the state of a circle center. The state of each circle
+            includes its global (x, y) position and the vehicle's yaw and
+            'other_state' elements from the input state tensor.
+
+        Raises:
+            ValueError: If n_circles is less than 1, if the state tensor
+                        does not have at least 3 elements, or if vehicle_length
+                        is negative.
+            TypeError: If the input state is not a torch.Tensor.
         """
-        center = state[0:2]
-        yaw = state[2]
-        other_state = state[2:]  # other state: [velocity, steering]
+        # --- Input Validation ---
+        if not isinstance(state, torch.Tensor):
+            raise TypeError("Input 'state' must be a torch.Tensor.")
 
-        # 3 circles
-        centers = torch.tensor(
-            [[0.055, 0], [-0.055, 0]],
-            dtype=center.dtype,
-            device=center.device,
-        )  # Circle centers distributed both ahead of and behind the agent's center
+        n_circles = self.parameters.n_circles_approximate_vehicle
+        if n_circles < 1:
+            raise ValueError("Number of circles (n_circles) must be at least 1.")
+        if state.ndim == 0 or state.shape[0] < 3:
+            raise ValueError("State tensor must contain at least [x, y, yaw].")
 
-        cos_yaw = np.cos(yaw.item())
-        sin_yaw = np.sin(yaw.item())
+        # Extract vehicle state components
+        vehicle_center_global = state[0:2]
+        vehicle_yaw = state[2]
+        other_state = state[3:]
 
-        # Rotation matrix for each agent
-        rot_matrix = torch.tensor(
+        relative_centers_local = torch.tensor(
+            self.rec_cir_approx.centers, dtype=state.dtype, device=state.device
+        )  # Shape: (n_circles, 2)
+
+        # Rotate relative centers to global frame
+        cos_yaw = torch.cos(vehicle_yaw)
+        sin_yaw = torch.sin(vehicle_yaw)
+        rotation_matrix_global = torch.tensor(
             [[cos_yaw, -sin_yaw], [sin_yaw, cos_yaw]],
-            dtype=center.dtype,
-            device=center.device,
+            dtype=state.dtype,
+            device=state.device,
+        )  # Shape: (2, 2)
+
+        rotated_vectors_global = torch.matmul(
+            rotation_matrix_global, relative_centers_local.T
+        ).T
+        # Shape: (n_circles, 2)
+
+        # Translate rotated centers to global positions
+        global_circle_centers = (
+            rotated_vectors_global + vehicle_center_global.unsqueeze(0)
         )
+        # Shape: (n_circles, 2)
 
-        # Apply rotation to centers
-        centers_rotated = torch.matmul(rot_matrix, centers.T).T
+        # Construct full circle states
+        vehicle_yaw_expanded = (
+            vehicle_yaw.unsqueeze(0).unsqueeze(0).expand(n_circles, 1)
+        )
+        other_state_expanded = other_state.unsqueeze(0).expand(n_circles, -1)
 
-        # Add center positions to the rotated centers and stack the three centers together.
-        circle_centers = torch.cat(
-            (center.unsqueeze(0), centers_rotated + center), dim=0
-        )  # torch.tensor(3, 2)
         circle_states = torch.cat(
-            (circle_centers, other_state.unsqueeze(0).expand(3, -1)), dim=1
-        )  # state of the circle centers
+            (global_circle_centers, vehicle_yaw_expanded, other_state_expanded), dim=1
+        )  # Shape: (n_circles, state.shape[0])
 
         return circle_states
 
@@ -483,7 +557,7 @@ class CBFQP:
 
         time_pseudo_dis_start = time.time()
         dleft_results, dright_results = self.map_pseudo_distance.get_distance(
-            path_id, int(lanelet_id.item()), query_points
+            path_id, lanelet_id, query_points
         )
         self.time_pseudo_dis += (
             time.time() - time_pseudo_dis_start
@@ -955,7 +1029,6 @@ class CBFQP:
 
             # First-order CBF condition
             cbf_condition_1 = dot_h * self.dt + p1 * h
-
             # Second-order CBF condition
             cbf_condition_2 = (
                 ddot_h * self.dt + (p2 + p1) * dot_h * self.dt + (p1 * p2 + v1) * h
@@ -980,7 +1053,6 @@ class CBFQP:
 
             # First-order CBF condition
             cbf_condition_1 = dot_h * self.dt + lambda_cbf_1 * h
-
             # Second-order CBF condition
             cbf_condition_2 = (
                 ddot_h * self.dt
@@ -1015,8 +1087,7 @@ class CBFQP:
             ddx (float): second derivative of x at agent center
             ddy (float): second derivative of y at agent center
             ddpsi (float): second derivative of heading ψ at agent center
-            idx (int): index of the sub-center to compute:
-                    0 = center, 1 = front, 2 = rear
+            idx (int): index of the sub-center to compute
 
         Returns:
             dx_center (float): first time derivative of x at the shifted center
@@ -1031,9 +1102,8 @@ class CBFQP:
         dpsi = dstate_time_agent[2].item()
 
         # Offset of the sub-center (e.g., front, center, and rear) relative to the agent center
-        offsets = [[0, 0], [0.055, 0], [-0.055, 0]]
+        delta_x, delta_y = self.rec_cir_approx.centers[idx]
 
-        delta_x, delta_y = offsets[idx]
         # First time derivative
         dx_center = dx - delta_x * np.sin(psi) * dpsi - delta_y * np.cos(psi) * dpsi
         dy_center = dy + delta_x * np.cos(psi) * dpsi - delta_y * np.sin(psi) * dpsi
@@ -1050,7 +1120,10 @@ class CBFQP:
             - delta_y * (np.sin(psi) * ddpsi + np.cos(psi) * dpsi * dpsi)
         )
 
-        return dx_center, dy_center, ddx_center, ddy_center
+        dpsi_center = dpsi
+        ddpsi_center = ddpsi
+
+        return dx_center, dy_center, dpsi_center, ddx_center, ddy_center, ddpsi_center
 
     def compute_auxiliary_state(self, v1):
         # Update the auxiliary state according to auxiliary system dynamics
@@ -1101,8 +1174,10 @@ class CBFQP:
             (
                 dx_circle,
                 dy_circle,
+                dpsi_circle,
                 ddx_circle,
                 ddy_circle,
+                ddpsi_circle,
             ) = self.compute_center_state_time_derivatives(
                 state_agent[2], dstate_time_agent, ddx, ddy, ddpsi, i
             )
@@ -1331,6 +1406,7 @@ class CBFQP:
         self.out_v1 = v1.value
 
         if prob.status != cp.OPTIMAL:
+            print(f"Warning: QP not solved optimally. Status: {prob.status}")
             u_cbf = self.u_nominal_agent_list[self.agent_idx].flatten()
             self.num_fail += 1
             # If there is no valid solution for the optimization problem, take the original action

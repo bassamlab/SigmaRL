@@ -8,6 +8,8 @@ import time
 
 from termcolor import colored, cprint
 
+import random
+
 # Torch
 import torch
 
@@ -51,9 +53,6 @@ from sigmarl.scenarios.road_traffic import ScenarioRoadTraffic
 
 from sigmarl.cbf_qp import CBFQP
 
-# Reproducibility
-torch.manual_seed(0)
-
 
 class MAPPOCAVs:
     """
@@ -70,6 +69,10 @@ class MAPPOCAVs:
         """
         self.parameters = parameters
 
+        # Reproducibility
+        torch.manual_seed(self.parameters.random_seed)
+        random.seed(self.parameters.random_seed)
+
     def train(self):
         """
         Execute the main training loop for MAPPO.
@@ -81,25 +84,19 @@ class MAPPOCAVs:
         save_data = self._initialize_save_data()
         decision_making_module = self._setup_decision_making_module(env)
         priority_module = self._setup_priority_module(env)
-        cbf_module = self._setup_cbf_module(env)
 
         self._ensure_save_directory_exists()
+
+        if self.parameters.is_using_cbf:
+            self.cbf_controllers = self._setup_cbf_qp_controller(env)
+            self._load_existing_model_for_cbf(decision_making_module, priority_module)
+        else:
+            self.cbf_controllers = None
 
         if self.parameters.is_load_model:
             self._load_existing_model(decision_making_module, priority_module)
             if not self.parameters.is_continue_train:
                 cprint("[INFO] Training will not continue.", "blue")
-                return (
-                    env,
-                    decision_making_module.policy,
-                    priority_module,
-                    self.parameters,
-                )
-
-        if self.parameters.is_using_cbf:
-            self.cbf_controllers = self._setup_cbf_qp_controller(env)
-            self._load_existing_model_for_cbf(decision_making_module, priority_module)
-            if self.parameters.is_using_cbf_in_testing:
                 return (
                     env,
                     decision_making_module.policy,
@@ -141,7 +138,13 @@ class MAPPOCAVs:
         self._save_final_model(decision_making_module, priority_module)
         self._print_training_summary(t_start)
 
-        return env, decision_making_module.policy, priority_module, self.parameters
+        return (
+            env,
+            decision_making_module.policy,
+            priority_module,
+            self.cbf_controllers,
+            self.parameters,
+        )
 
     def _setup_environment(self):
         """Set up the training environment."""
@@ -179,13 +182,8 @@ class MAPPOCAVs:
         """Set up the priority module if prioritized MARL is enabled."""
         if self.parameters.is_using_prioritized_marl:
             return PriorityModule(env=env, mappo=True)
-        return None
-
-    def _setup_cbf_module(self, env):
-        """Set up the Control Barrier Function (CBF) module if enabled."""
-        if self.parameters.is_using_cbf:
-            return CBFModule(env=env, mappo=True)
-        return None
+        else:
+            return None
 
     def _ensure_save_directory_exists(self):
         """Ensure the directory for saving models exists."""
@@ -277,7 +275,7 @@ class MAPPOCAVs:
 
     def _setup_data_collector(self, env, decision_making_module, priority_module):
         """Set up the data collector for gathering experience."""
-        if self.parameters.is_using_cbf and not self.parameters.is_using_cbf_in_testing:
+        if self.parameters.is_using_cbf:
             self.cbf_controllers = self._setup_cbf_qp_controller(env)
             return SyncDataCollectorCustom(
                 env,
@@ -551,46 +549,30 @@ class MAPPOCAVs:
 
     def _load_existing_model_for_cbf(self, decision_making_module, priority_module):
         """Load RL decision making and priority policy model"""
-        if self.parameters.is_using_centralized_cbf:
-            if self.parameters.is_using_cbf_in_testing:
-                decision_making_module.policy.load_state_dict(
-                    torch.load(self.parameters.where_to_save + "final_policy.pth")
-                )
-                cprint(
-                    "[INFO] Loaded decision-making model for CBF-constrained MARL",
-                    "red",
-                )
-        else:
-            if self.parameters.is_using_cbf_in_testing:
-                decision_making_module.policy.load_state_dict(
-                    torch.load(self.parameters.where_to_save + "final_policy.pth")
-                )
-                priority_module.policy.load_state_dict(
-                    torch.load(
-                        self.parameters.where_to_save + "final_priority_policy.pth"
-                    )
-                )
-                cprint(
-                    "[INFO] Loaded decision-making and priority model for CBF-constrained MARL",
-                    "red",
-                )
+        decision_making_module.policy.load_state_dict(
+            torch.load(self.parameters.where_to_save + "final_policy.pth")
+        )
 
-            else:
-                if self.parameters.prioritization_method == "marl":
-                    priority_module.policy.load_state_dict(
-                        torch.load(
-                            self.parameters.where_to_save + "final_priority_policy.pth"
-                        )
-                    )
-                    cprint(
-                        "[INFO] Loaded MARL priority model for priority-based solving",
-                        "red",
-                    )
-                else:
-                    cprint(
-                        "[INFO] Use random priority model for priority-based solving",
-                        "red",
-                    )
+        cprint(
+            "[INFO] Loaded decision-making model for CBF-constrained MARL",
+            "red",
+        )
+
+        if (
+            self.parameters.is_using_prioritized_marl
+            and self.parameters.prioritization_method.lower() == "marl"
+        ):
+            priority_module.policy.load_state_dict(
+                torch.load(self.parameters.where_to_save + "final_priority_policy.pth")
+            )
+            cprint("[INFO] Loaded priority model for CBF-constrained MARL", "red")
+        else:
+            priority_module = None
+
+            cprint(
+                "[INFO] Use random priority model for priority-based solving",
+                "red",
+            )
 
 
 def mappo_cavs(parameters: Parameters):
@@ -610,4 +592,4 @@ def mappo_cavs(parameters: Parameters):
 if __name__ == "__main__":
     config_file = "config.json"
     parameters = Parameters.from_json(config_file)
-    env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
+    env, policy, priority_module, _, parameters = mappo_cavs(parameters=parameters)
