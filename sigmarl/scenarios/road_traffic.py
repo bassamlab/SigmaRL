@@ -199,9 +199,6 @@ class ScenarioRoadTraffic(BaseScenario):
             "threshold_near_other_agents_MTV_high", self.agent_length
         )
 
-        # Visualization
-        self.resolution_factor = kwargs.pop("resolution_factor", 200)  # Default 200
-
         # Reference path
         sample_interval_ref_path = kwargs.pop(
             "sample_interval_ref_path", 2
@@ -225,6 +222,14 @@ class ScenarioRoadTraffic(BaseScenario):
         # World dimensions
         self.world_x_dim = SCENARIOS[scenario_type]["world_x_dim"]
         self.world_y_dim = SCENARIOS[scenario_type]["world_y_dim"]
+
+        # Visualization
+        self.max_viewer_window_size = kwargs.pop(
+            "max_viewer_window_size", 720
+        )  # Default 720
+        self.resolution_factor = self.max_viewer_window_size / max(
+            self.world_x_dim, self.world_y_dim
+        )
 
         self.render_origin = [
             self.world_x_dim / 2,
