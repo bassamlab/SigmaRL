@@ -17,6 +17,7 @@ venv/
 *.pdf
 *.txt
 *.pkl
+.idea
 
 # Distribution / packaging
 .Python
