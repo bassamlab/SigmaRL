@@ -10,8 +10,12 @@ from termcolor import colored
 
 import torch
 from torch import Tensor
-import torch.nn.functional as F
 from typing import Dict
+
+from sigmarl.scenarios.observations.observation_provider import ObservationProviderParameters
+from sigmarl.scenarios.observations.observation_provider_gr import ObservationProviderGRSimulation
+from sigmarl.scenarios.world_state.world_state_gr.world_state_gr import WorldStateGRParameters
+from sigmarl.scenarios.world_state.world_state_gr.world_state_gr_sim import WorldStateGRSimulation
 
 cicd_testing = os.getenv("CICD_TESTING", "false").lower() == "true"
 if not cicd_testing:
@@ -31,18 +35,13 @@ from sigmarl.colors import Color, colors
 from sigmarl.helper_training import Parameters, WorldCustom, Vehicle
 
 from sigmarl.helper_scenario import (
-    CircularBuffer,
-    Distances,
     Normalizers,
-    Observations,
     Penalties,
     Rewards,
     Thresholds,
     Timer,
     Constants,
     StateBuffer,
-    get_perpendicular_distances,
-    get_rectangle_vertices,
     angle_eliminate_two_pi,
 )
 
@@ -59,6 +58,7 @@ class GoalReaching(BaseScenario):
         world = self._init_world(batch_dim, device)
         self._init_agents(world)
         self.is_obs_steering = False
+        self.world_state.init_world(world)
         return world
 
     def _init_params(self, batch_dim, device, **kwargs):
@@ -238,12 +238,6 @@ class GoalReaching(BaseScenario):
             render_begin=0,
         )
 
-        # The shape of each agent is considered a rectangle with 4 vertices.
-        # The first vertex is repeated at the end to close the shape.
-        self.vertices = torch.zeros(
-            (batch_dim, self.n_agents, 5, 2), device=device, dtype=torch.float32
-        )
-
         weighting_ref_directions = torch.linspace(
             1,
             0.2,
@@ -272,36 +266,6 @@ class GoalReaching(BaseScenario):
             time=torch.tensor(penalty_time, device=device, dtype=torch.float32),
             leave_world=torch.tensor(
                 penalty_leave_world, device=device, dtype=torch.float32
-            ),
-        )
-
-        self.observations = Observations(
-            noise_level=torch.tensor(noise_level, device=device, dtype=torch.float32),
-        )
-
-        self.observations.past_action_steering = CircularBuffer(
-            torch.zeros(
-                (self.parameters.n_steps_stored, batch_dim, self.n_agents),
-                device=device,
-                dtype=torch.float32,
-            )
-        )
-
-        self.observations.past_action_vel = CircularBuffer(
-            torch.zeros(
-                (self.parameters.n_steps_stored, batch_dim, self.n_agents),
-                device=device,
-                dtype=torch.float32,
-            )
-        )
-
-        self.distances = Distances(
-            type="c2c",  # Type of distances between agents
-            agents=torch.zeros(
-                batch_dim, self.n_agents, self.n_agents, dtype=torch.float32
-            ),
-            ref_paths=torch.zeros(
-                (batch_dim, self.n_agents), device=device, dtype=torch.float32
             ),
         )
 
@@ -365,7 +329,32 @@ class GoalReaching(BaseScenario):
             (batch_dim, 2), device=device, dtype=torch.float32
         )
 
-        self.is_leave_world = torch.zeros((batch_dim), device=device, dtype=torch.bool)
+        self.is_leave_world = torch.zeros(batch_dim, device=device, dtype=torch.bool)
+
+        self.world_state = WorldStateGRSimulation(
+            WorldStateGRParameters(
+                batch_dim=batch_dim,
+                n_agents=self.n_agents,
+                device=device,
+                goal=self.goal,
+                original_pos=self.original_pos
+            )
+        )
+
+        self.observation_provider = ObservationProviderGRSimulation(
+            ObservationProviderParameters(
+                batch_dim=batch_dim,
+                n_agents=self.n_agents,
+                device=device,
+                n_stored_steps=self.parameters.n_steps_stored,
+                noise_level=noise_level,
+                is_add_noise=self.parameters.is_add_noise
+            ),
+            self.constants,
+            self.normalizers,
+            self.short_term_ref_path,
+            self.world_state
+        )
 
     def _init_world(self, batch_dim: int, device: torch.device):
         # Make world
@@ -491,6 +480,7 @@ class GoalReaching(BaseScenario):
         )  # `slice(None)` is equivalent to `:`
 
         agent = self.world.agents[0]
+        agent_index = 0
 
         self.timer.step_duration[:] = 0
         self.timer.start = time.time()
@@ -569,15 +559,10 @@ class GoalReaching(BaseScenario):
 
         self.original_pos[
             env_index_2
-        ] = initial_pos.clone()  # Update priginal positions
+        ] = initial_pos.clone()  # Update original positions
 
-        # Distance from the center of gravity (CG) of the agent to its reference path
-        self.distances.ref_paths[env_index_2, 0], _ = get_perpendicular_distances(
-            point=agent.state.pos[env_index_2],
-            polyline=torch.stack(
-                [self.original_pos[env_index_2], self.goal[env_index_2]], dim=1
-            ),
-        )
+        # update ref path distance
+        self.world_state.update_distances(self.world_state.get_agent_state_list(), agent_index, env_index=env_index_2)
 
         # Generate short-term reference path
         self.generate_reference_path(env_index)
@@ -644,8 +629,16 @@ class GoalReaching(BaseScenario):
         # Get the index of the current agent
         agent_index = self.world.agents.index(agent)
 
+        # Timer
+        self.timer.step_duration[self.timer.step] = time.time() - self.timer.step_begin
+        self.timer.step_begin = (
+            time.time()
+        )  # Set to the current time as the begin of the current time step
+        self.timer.step += 1  # Increment step by 1
+        # print(self.timer.step)
+
         # [update] mutual distances between agents, vertices of each agent, and collision matrices
-        self._update_state_before_rewarding(agent)
+        self.world_state.update_state_before_rewarding(agent_index)
 
         ##################################################
         ## [reward] forward movement
@@ -694,7 +687,7 @@ class GoalReaching(BaseScenario):
         ## [penalty] deviating from reference path
         ##################################################
         penalty_dev_ref = (
-            self.distances.ref_paths[:, agent_index]
+            self.world_state.distances.ref_paths[:, agent_index]
             / self.thresholds.deviate_from_ref_path
             * self.penalties.deviate_from_ref_path
         )
@@ -703,10 +696,10 @@ class GoalReaching(BaseScenario):
         ##################################################
         ## [penalty] changing steering too quick
         ##################################################
-        steering_current = self.observations.past_action_steering.get_latest(n=1)[
+        steering_current = self.observation_provider.observations.past_action_steering.get_latest(n=1)[
             :, agent_index
         ]
-        steering_past = self.observations.past_action_steering.get_latest(n=2)[
+        steering_past = self.observation_provider.observations.past_action_steering.get_latest(n=2)[
             :, agent_index
         ]
 
@@ -768,32 +761,6 @@ class GoalReaching(BaseScenario):
 
         return rew_clamed
 
-    def _update_state_before_rewarding(self, agent: Vehicle):
-        """
-        Update some states (such as vertices of the agent) that will be used before rewarding agents.
-        """
-        # Timer
-        self.timer.step_duration[self.timer.step] = time.time() - self.timer.step_begin
-        self.timer.step_begin = (
-            time.time()
-        )  # Set to the current time as the begin of the current time step
-        self.timer.step += 1  # Increment step by 1
-        # print(self.timer.step)
-
-        self.vertices[:, 0] = get_rectangle_vertices(
-            center=agent.state.pos,
-            yaw=agent.state.rot,
-            width=agent.shape.width,
-            length=agent.shape.length,
-            is_close_shape=True,
-        )
-
-        # Distance from the center of gravity (CG) of the agent to its reference path
-        (self.distances.ref_paths[:, 0], _,) = get_perpendicular_distances(
-            point=agent.state.pos,
-            polyline=torch.stack([self.original_pos, self.goal], dim=1),
-        )
-
     def observation(self, agent: Agent):
         """
         Generate an observation for the given agent in all envs.
@@ -835,64 +802,11 @@ class GoalReaching(BaseScenario):
         # Inject the new positions back into the agent's state
         agent.set_pos(new_pos, batch_index=None)
 
-        pos = agent.state.pos
-        rot = agent.state.rot
+        agent_index = self.world.agents.index(agent)
 
-        # Compute the vectors from the agent's position to the short-term reference paths
-        vectors_to_ref = self.short_term_ref_path - pos.unsqueeze(1)
+        self.observation_provider.update_state(self.world)
 
-        # Calculate the angles of these vectors
-        angles_to_ref = (
-            torch.atan2(vectors_to_ref[..., 1], vectors_to_ref[..., 0])
-        ).unsqueeze(-1)
-
-        # Compute the angle difference between the vectors and the agent's rotation
-        angle_difference = angles_to_ref - rot.unsqueeze(1)
-
-        # Calculate the length of the vectors
-        vector_lengths = torch.norm(vectors_to_ref, dim=-1).unsqueeze(-1)
-
-        # Project the vectors into the agent's ego view using the angle difference
-        short_term_ref_ego_view_x = vector_lengths * torch.cos(angle_difference)
-        short_term_ref_ego_view_y = vector_lengths * torch.sin(angle_difference)
-
-        short_term_ref_ego_view = torch.cat(
-            (short_term_ref_ego_view_x, short_term_ref_ego_view_y), dim=-1
-        )
-
-        obs = torch.hstack(
-            [
-                agent.state.speed / self.normalizers.v,
-                agent.state.steering / self.normalizers.steering,
-                (short_term_ref_ego_view / self.normalizers.pos).reshape(
-                    self.world.batch_dim, -1
-                ),
-                self.distances.ref_paths / self.normalizers.distance_ref,
-            ]
-        )
-
-        if self.parameters.is_add_noise:
-            # Add sensor noise if required
-            obs = obs + (
-                self.observations.noise_level
-                * torch.rand_like(obs, device=self.world.device, dtype=torch.float32)
-            )
-
-        # Add new observation - actions & normalize
-        if agent.action.u is None:
-            self.observations.past_action_vel.add(self.constants.empty_action_vel)
-            self.observations.past_action_steering.add(
-                self.constants.empty_action_steering
-            )
-        else:
-            self.observations.past_action_vel.add(
-                torch.stack([a.action.u[:, 0] for a in self.world.agents], dim=1)
-                / self.normalizers.v
-            )
-            self.observations.past_action_steering.add(
-                torch.stack([a.action.u[:, 1] for a in self.world.agents], dim=1)
-                / self.normalizers.steering
-            )
+        obs = self.observation_provider.get_observation(agent_index)
 
         return obs
 
@@ -950,7 +864,6 @@ class GoalReaching(BaseScenario):
         # others-observation: jaw angles of surrounding, observable agents
         # others-observation: short-term reference path of surrounding, observable agents
         cbf_obs = None
-        # self.observations.
 
         info = {
             "pos": agent.state.pos / self.normalizers.pos_world,
@@ -969,7 +882,7 @@ class GoalReaching(BaseScenario):
             "ref": (self.short_term_ref_path[:] / self.normalizers.pos_world).reshape(
                 self.world.batch_dim, -1
             ),
-            "distance_ref": self.distances.ref_paths[:, agent_index]
+            "distance_ref": self.world_state.distances.ref_paths[:, agent_index]
             / self.normalizers.distance_ref,
         }
 
