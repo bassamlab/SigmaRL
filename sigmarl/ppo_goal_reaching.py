@@ -16,10 +16,7 @@ import torch
 
 # Data collection
 from sigmarl.helper_training import (
-    SyncDataCollectorCustom,
-    DecisionMakingModule,
-    PriorityModule,
-    CBFModule,
+    SyncDataCollectorCustom
 )
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data import TensorDictPrioritizedReplayBuffer
@@ -40,6 +37,10 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib
 
+from sigmarl.modules.cbf_module import CBFModule
+from sigmarl.modules.decision_making_module import DecisionMakingModule
+from sigmarl.modules.priority_module import PriorityModule
+
 # Set up font
 matplotlib.rcParams["pdf.fonttype"] = 42  # Use Type 1 fonts (vector fonts)
 matplotlib.rcParams["font.family"] = "serif"
@@ -56,8 +57,7 @@ from sigmarl.helper_training import (
     get_path_to_save_model,
     find_the_highest_reward_among_all_models,
     save,
-    compute_td_error,
-    get_observation_key,
+    compute_td_error
 )
 
 from sigmarl.scenarios.goal_reaching import GoalReaching
@@ -86,7 +86,7 @@ class PPOGoalReaching:
         Execute the main training loop for MAPPO.
 
         Returns:
-            tuple: Containing the environment, policy, priority module (possibly), and updated parameters.
+            tuple: Containing the environment, decision-making module, priority module (possibly), and updated parameters.
         """
         env = self._setup_environment()
         save_data = self._initialize_save_data()
@@ -102,7 +102,7 @@ class PPOGoalReaching:
                 cprint("[INFO] Training will not continue.", "blue")
                 return (
                     env,
-                    decision_making_module.policy,
+                    decision_making_module,
                     priority_module,
                     self.parameters,
                 )
@@ -140,7 +140,7 @@ class PPOGoalReaching:
         self._save_final_model(decision_making_module, priority_module)
         self._print_training_summary(t_start)
 
-        return env, decision_making_module.policy, priority_module, self.parameters
+        return env, decision_making_module, priority_module, self.parameters
 
     def _setup_environment(self):
         """Set up the training environment."""
@@ -234,18 +234,15 @@ class PPOGoalReaching:
 
     def _load_intermediate_model(self, decision_making_module, priority_module):
         """Load an intermediate model."""
-        paths = get_path_to_save_model(parameters=self.parameters)
-        if priority_module and self.parameters.prioritization_method.lower() == "marl":
-            (
-                PATH_POLICY,
-                PATH_CRITIC,
-                PATH_PRIORITY_POLICY,
-                PATH_PRIORITY_CRITIC,
-                PATH_FIG,
-                PATH_JSON,
-            ) = paths
-        else:
-            PATH_POLICY, PATH_CRITIC, PATH_FIG, PATH_JSON = paths
+        (
+            PATH_POLICY,
+            PATH_CRITIC,
+            PATH_PRIORITY_POLICY,
+            PATH_PRIORITY_CRITIC,
+            PATH_FIG,
+            PATH_JSON,
+        ) = get_path_to_save_model(parameters=self.parameters)
+
 
         decision_making_module.policy.load_state_dict(
             torch.load(PATH_POLICY, weights_only=True)
@@ -450,17 +447,15 @@ class PPOGoalReaching:
             save(
                 self.parameters,
                 save_data,
-                decision_making_module.policy,
-                decision_making_module.critic,
-                priority_module.policy if priority_module else None,
-                priority_module.critic if priority_module else None,
+                decision_making_module,
+                priority_module if priority_module else None
             )
         else:
             # Otherwise only save parameters and episode mean reward values
             self.parameters.episode_reward_mean_current = (
                 self.parameters.episode_reward_intermediate
             )
-            save(self.parameters, save_data, None, None, None, None)
+            save(self.parameters, save_data, None, None)
 
     def _update_learning_rate(self, decision_making_module, pbar):
         """Update the learning rate based on training progress."""
@@ -515,7 +510,7 @@ def ppo_goal_reaching(parameters: Parameters):
         parameters (Parameters): Configuration parameters for the training process.
 
     Returns:
-        tuple: Containing the environment, policy, priority module, and updated parameters.
+        tuple: Containing the environment, decision-making module, priority module, and updated parameters.
     """
     trainer = PPOGoalReaching(parameters)
     return trainer.train()
@@ -524,4 +519,4 @@ def ppo_goal_reaching(parameters: Parameters):
 if __name__ == "__main__":
     config_file = "sigmarl/config_goal_reaching.json"
     parameters = Parameters.from_json(config_file)
-    env, policy, priority_module, parameters = ppo_goal_reaching(parameters=parameters)
+    env, decision_making_module, priority_module, parameters = ppo_goal_reaching(parameters=parameters)

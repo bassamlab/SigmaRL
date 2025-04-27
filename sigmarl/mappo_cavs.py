@@ -16,10 +16,7 @@ import torch
 
 # Data collection
 from sigmarl.helper_training import (
-    SyncDataCollectorCustom,
-    DecisionMakingModule,
-    PriorityModule,
-    CBFModule,
+    SyncDataCollectorCustom
 )
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data import TensorDictPrioritizedReplayBuffer
@@ -44,8 +41,11 @@ from sigmarl.helper_training import (
     get_path_to_save_model,
     find_the_highest_reward_among_all_models,
     save,
-    compute_td_error,
+    compute_td_error
 )
+from sigmarl.modules.cbf_module import CBFModule
+from sigmarl.modules.decision_making_module import DecisionMakingModule
+from sigmarl.modules.priority_module import PriorityModule
 
 from sigmarl.scenarios.road_traffic import ScenarioRoadTraffic
 
@@ -73,7 +73,7 @@ class MAPPOCAVs:
         Execute the main training loop for MAPPO.
 
         Returns:
-            tuple: Containing the environment, policy, priority module (possibly), and updated parameters.
+            tuple: Containing the environment, decision-making module, priority module (possibly), and updated parameters.
         """
         env = self._setup_environment()
         save_data = self._initialize_save_data()
@@ -89,7 +89,7 @@ class MAPPOCAVs:
                 cprint("[INFO] Training will not continue.", "blue")
                 return (
                     env,
-                    decision_making_module.policy,
+                    decision_making_module,
                     priority_module,
                     self.parameters,
                 )
@@ -127,7 +127,7 @@ class MAPPOCAVs:
         self._save_final_model(decision_making_module, priority_module)
         self._print_training_summary(t_start)
 
-        return env, decision_making_module.policy, priority_module, self.parameters
+        return env, decision_making_module, priority_module, self.parameters
 
     def _setup_environment(self):
         """Set up the training environment."""
@@ -214,20 +214,16 @@ class MAPPOCAVs:
             )
             cprint("[INFO] Loaded the final priority model", "red")
 
-    def _load_intermediate_model(self, decision_making_module, priority_module: None):
+    def _load_intermediate_model(self, decision_making_module, priority_module = None):
         """Load an intermediate model."""
-        paths = get_path_to_save_model(parameters=self.parameters)
-        if priority_module and self.parameters.prioritization_method.lower() == "marl":
-            (
-                PATH_POLICY,
-                PATH_CRITIC,
-                PATH_PRIORITY_POLICY,
-                PATH_PRIORITY_CRITIC,
-                PATH_FIG,
-                PATH_JSON,
-            ) = paths
-        else:
-            PATH_POLICY, PATH_CRITIC, PATH_FIG, PATH_JSON = paths
+        (
+            PATH_POLICY,
+            PATH_CRITIC,
+            PATH_PRIORITY_POLICY,
+            PATH_PRIORITY_CRITIC,
+            PATH_FIG,
+            PATH_JSON,
+        ) = get_path_to_save_model(parameters=self.parameters)
 
         decision_making_module.policy.load_state_dict(torch.load(PATH_POLICY))
         cprint(f"[INFO] Loaded the intermediate model '{PATH_POLICY}'", "blue")
@@ -424,17 +420,15 @@ class MAPPOCAVs:
             save(
                 self.parameters,
                 save_data,
-                decision_making_module.policy,
-                decision_making_module.critic,
-                priority_module.policy if priority_module else None,
-                priority_module.critic if priority_module else None,
+                decision_making_module,
+                priority_module if priority_module else None,
             )
         else:
             # Otherwise only save parameters and episode mean reward values
             self.parameters.episode_reward_mean_current = (
                 self.parameters.episode_reward_intermediate
             )
-            save(self.parameters, save_data, None, None, None, None)
+            save(self.parameters, save_data, None, None)
 
     def _update_learning_rate(self, decision_making_module, pbar):
         """Update the learning rate based on training progress."""
@@ -493,7 +487,7 @@ def mappo_cavs(parameters: Parameters):
         parameters (Parameters): Configuration parameters for the training process.
 
     Returns:
-        tuple: Containing the environment, policy, priority module, and updated parameters.
+        tuple: Containing the environment, decision-making module, priority module, and updated parameters.
     """
     trainer = MAPPOCAVs(parameters)
     return trainer.train()
@@ -502,4 +496,4 @@ def mappo_cavs(parameters: Parameters):
 if __name__ == "__main__":
     config_file = "config.json"
     parameters = Parameters.from_json(config_file)
-    env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
+    env, decision_making_module, priority_module, parameters = mappo_cavs(parameters=parameters)

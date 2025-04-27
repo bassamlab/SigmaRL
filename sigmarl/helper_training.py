@@ -65,6 +65,9 @@ import re
 
 from typing import Callable, Dict, Optional, Sequence, Tuple, Union
 
+from sigmarl.modules.decision_making_module import DecisionMakingModule
+from sigmarl.modules.priority_module import PriorityModule
+
 DEFAULT_EXPLORATION_TYPE: ExplorationType = ExplorationType.RANDOM
 
 import warnings
@@ -1017,6 +1020,7 @@ class Parameters:
         is_load_out_td: bool = False,  # Whether to load evaluation outputs
         is_testing_mode: bool = False,  # In testing mode, collisions do not terminate the current simulation
         is_save_simulation_video: bool = False,  # Whether to save simulation videos
+        # extensions
         is_using_opponent_modeling: bool = False,  # Whether to use opponent modeling to predict the actions of other agents
         is_using_prioritized_marl: bool = False,  # Whether to use prioritized MARL and action propagation.
         prioritization_method: str = "marl",  # Which method to use for generating priority ranks (options: {"marl", "random"}). Applicable only for prioritized MARL scenarios.
@@ -1149,465 +1153,20 @@ class SaveData:
         )  # Convert dict back to Parameters instance
         return cls(parameters, dict_data["episode_reward_mean_list"])
 
-
-class DecisionMakingModule:
-    def __init__(self, env: TransformedEnvCustom = None, mappo: bool = True):
-        """
-        Initializes the DecisionMakingModule, which is responsible for generating decisions using a neural network policy.
-        It also sets up a PPO loss module with an actor-critic architecture and GAE (Generalized Advantage Estimation) for RL optimization.
-
-        Parameters:
-        -----------
-        env : TransformedEnvCustom
-            The environment containing the observation specifications and other scenario parameters.
-        mappo : bool, optional
-            Flag to indicate whether to use centralised learning in the critic (MAPPO). Default is True.
-        """
-        parameters = env.scenario.parameters
-        observation_key = get_observation_key(parameters)
-
-        policy_net = torch.nn.Sequential(
-            MultiAgentMLP(
-                n_agent_inputs=env.observation_spec[observation_key].shape[
-                    -1
-                ],  # n_obs_per_agent
-                n_agent_outputs=(
-                    2 * env.action_spec.shape[-1]
-                ),  # 2 * n_actions_per_agents
-                n_agents=env.n_agents,
-                centralised=False,  # the policies are decentralised (ie each agent will act from its observation)
-                share_params=True,  # sharing parameters means that agents will all share the same policy, which will allow them to benefit from each other’s experiences, resulting in faster training. On the other hand, it will make them behaviorally homogenous, as they will share the same model
-                device=parameters.device,
-                depth=2,
-                num_cells=256,
-                activation_class=torch.nn.Tanh,
-            ),
-            NormalParamExtractor(),  # this will just separate the last dimension into two outputs: a `loc` and a non-negative `scale``, used as parameters for a normal distribution (mean and standard deviation)
-        )
-
-        # print("policy_net:", policy_net, "\n")
-
-        policy_module = TensorDictModule(
-            policy_net,
-            in_keys=[observation_key],
-            out_keys=[
-                ("agents", "loc"),
-                ("agents", "scale"),
-            ],  # represents the parameters of the policy distribution for each agent
-        )
-
-        # Use a probabilistic actor allows for exploration
-        policy = ProbabilisticActor(
-            module=policy_module,
-            spec=env.unbatched_action_spec,
-            in_keys=[("agents", "loc"), ("agents", "scale")],
-            out_keys=[env.action_key],
-            distribution_class=TanhNormal,
-            distribution_kwargs={
-                "low": env.unbatched_action_spec[env.action_key].space.low,
-                "high": env.unbatched_action_spec[env.action_key].space.high,
-            },
-            return_log_prob=True,
-            log_prob_key=(
-                "agents",
-                "sample_log_prob",
-            ),  # log probability favors numerical stability and gradient calculation
-        )  # we'll need the log-prob for the PPO loss
-
-        critic_net = MultiAgentMLP(
-            n_agent_inputs=env.observation_spec[observation_key].shape[
-                -1
-            ],  # Number of observations
-            n_agent_outputs=1,  # 1 value per agent
-            n_agents=env.n_agents,
-            centralised=mappo,  # If `centralised` is True (which may help overcome the non-stationary problem in MARL), each agent will use the inputs of all agents to compute its output (n_agent_inputs * n_agents will be the number of inputs for one agent). Otherwise, each agent will only use its data as input.
-            share_params=True,  # If `share_params` is True, the same MLP will be used to make the forward pass for all agents (homogeneous policies). Otherwise, each agent will use a different MLP to process its input (heterogeneous policies).
-            device=parameters.device,
-            depth=2,
-            num_cells=256,
-            activation_class=torch.nn.Tanh,
-        )
-
-        # print("critic_net:", critic_net, "\n")
-
-        critic = TensorDictModule(
-            module=critic_net,
-            in_keys=[
-                observation_key
-            ],  # Note that the critic in PPO only takes the same inputs (observations) as the actor
-            out_keys=[("agents", "state_value")],
-        )
-
-        loss_module = ClipPPOLoss(
-            actor=policy,
-            critic=critic,
-            clip_epsilon=parameters.clip_epsilon,
-            entropy_coef=parameters.entropy_eps,
-            normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
-        )
-
-        loss_module.set_keys(  # We have to tell the loss where to find the keys
-            reward=env.reward_key,
-            action=env.action_key,
-            sample_log_prob=("agents", "sample_log_prob"),
-            value=("agents", "state_value"),
-            # These last 2 keys will be expanded to match the reward shape
-            done=("agents", "done"),
-            terminated=("agents", "terminated"),
-        )
-
-        loss_module.make_value_estimator(
-            ValueEstimators.GAE, gamma=parameters.gamma, lmbda=parameters.lmbda
-        )  # We build GAE
-        GAE = loss_module.value_estimator  # Generalized Advantage Estimation
-
-        optim = torch.optim.Adam(loss_module.parameters(), parameters.lr)
-
-        self.policy = policy
-        self.critic = critic
-
-        self.loss_module = loss_module
-        self.optim = optim
-        self.GAE = GAE
-
-
-class PriorityModule:
-    def __init__(self, env: TransformedEnvCustom = None, mappo: bool = True):
-        """
-        Initializes the PriorityModule, which is responsible for computing the priority rank of agents
-        and their scores using a neural network policy. It also sets up a PPO loss module with an actor-critic
-        architecture and GAE (Generalized Advantage Estimation) for RL optimization.
-
-        Parameters:
-        -----------
-        env : TransformedEnvCustom
-            The environment containing the observation specifications and other scenario parameters.
-        mappo : bool, optional
-            Flag to indicate whether to use centralised learning in the critic (MAPPO). Default is True.
-        """
-
-        self.env = env
-        self.parameters = self.env.scenario.parameters
-
-        # Tuple containing the prefix keys relevant to the priority variables
-        self.prefix_key = ("agents", "info", "priority")
-
-        observation_key = get_priority_observation_key()
-
-        policy_net = torch.nn.Sequential(
-            MultiAgentMLP(
-                n_agent_inputs=env.observation_spec[observation_key].shape[-1],
-                n_agent_outputs=2 * 1,  # 2 * n_actions_per_agents
-                n_agents=self.parameters.n_agents,
-                centralised=False,  # the policies are decentralised (ie each agent will act from its observation)
-                share_params=True,
-                device=self.parameters.device,
-                depth=2,
-                num_cells=256,
-                activation_class=torch.nn.Tanh,
-            ),
-            NormalParamExtractor(),  # this will just separate the last dimension into two outputs: a loc and a non-negative scale
-        )
-
-        policy_module = TensorDictModule(
-            policy_net,
-            in_keys=[observation_key],
-            out_keys=[self.prefix_key + ("loc",), self.prefix_key + ("scale",)],
-        )
-
-        policy = ProbabilisticActor(
-            module=policy_module,
-            spec=UnboundedContinuousTensorSpec(),
-            in_keys=[self.prefix_key + ("loc",), self.prefix_key + ("scale",)],
-            out_keys=[self.prefix_key + ("scores",)],
-            distribution_class=TanhNormal,
-            distribution_kwargs={},
-            return_log_prob=True,
-            log_prob_key=self.prefix_key + ("sample_log_prob",),
-        )  # we'll need the log-prob for the PPO loss
-
-        critic_net = MultiAgentMLP(
-            n_agent_inputs=env.observation_spec[observation_key].shape[
-                -1
-            ],  # Number of observations
-            n_agent_outputs=1,  # 1 value per agent
-            n_agents=self.parameters.n_agents,
-            centralised=mappo,  # If `centralised` is True (which may help overcome the non-stationary problem in MARL), each agent will use the inputs of all agents to compute its output (n_agent_inputs * n_agents will be the number of inputs for one agent). Otherwise, each agent will only use its data as input.
-            share_params=True,  # If `share_params` is True, the same MLP will be used to make the forward pass for all agents (homogeneous policies). Otherwise, each agent will use a different MLP to process its input (heterogeneous policies).
-            device=self.parameters.device,
-            depth=2,
-            num_cells=256,
-            activation_class=torch.nn.Tanh,
-        )
-
-        critic = TensorDictModule(
-            module=critic_net,
-            in_keys=[
-                observation_key
-            ],  # Note that the critic in PPO only takes the same inputs (observations) as the actor
-            out_keys=[self.prefix_key + ("state_value",)],
-        )
-
-        self.policy = policy
-        self.critic = critic
-
-        if self.parameters.prioritization_method.lower() == "marl":
-            loss_module = ClipPPOLoss(
-                actor=policy,
-                critic=critic,
-                clip_epsilon=self.parameters.clip_epsilon,
-                entropy_coef=self.parameters.entropy_eps,
-                normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
-            )
-
-            # Comment out advantage and value_target keys to use the same advantage for both base and priority loss modules
-            loss_module.set_keys(  # We have to tell the loss where to find the keys
-                reward=env.reward_key,
-                action=self.prefix_key + ("scores",),
-                sample_log_prob=self.prefix_key + ("sample_log_prob",),
-                value=self.prefix_key + ("state_value",),
-                # These last 2 keys will be expanded to match the reward shape
-                done=("agents", "done"),
-                terminated=("agents", "terminated"),
-                # advantage=self.prefix_key + ("advantage",),
-                # value_target=self.prefix_key + ("value_target",),
-            )
-
-            loss_module.make_value_estimator(
-                ValueEstimators.GAE,
-                gamma=self.parameters.gamma,
-                lmbda=self.parameters.lmbda,
-            )  # We build GAE
-            GAE = loss_module.value_estimator  # Generalized Advantage Estimation
-
-            optim = torch.optim.Adam(loss_module.parameters(), self.parameters.lr)
-
-            self.GAE = GAE
-            self.loss_module = loss_module
-            self.optim = optim
-
-    def rank_agents(self, scores):
-        """
-        Ranks agents based on their priority scores.
-
-        The method returns the indices of agents in descending order based on their scores.
-
-        Parameters:
-        -----------
-        scores : Tensor
-            A tensor containing the priority scores for each agent.
-
-        Returns:
-        --------
-        ordered_indices : Tensor
-            A tensor containing the indices of agents ordered by their priority scores in descending order.
-        """
-        # Remove the last dimension of size 1
-        scores = scores.squeeze(-1)
-
-        # Get the indices that would sort the tensor along the last dimension in descending order
-        ordered_indices = torch.argsort(scores, dim=-1, descending=True)
-
-        return ordered_indices
-
-    def __call__(self, tensordict):
-        """
-        Computes the priority rank of agents based on their scores and updates the tensordict.
-
-        The method calls the priority actor to generate scores for each agent, ranks the agents
-        based on those scores, and then updates the tensordict with the priority rank.
-
-        Parameters:
-        -----------
-        tensordict : TensorDict
-            A dictionary-like object containing the data for the agents.
-
-        Returns:
-        --------
-        tensordict : TensorDict
-            The updated tensordict with the priority rank of agents added.
-        """
-
-        if self.parameters.prioritization_method.lower() == "random":
-            n_envs = self.parameters.num_vmas_envs
-            n_agents = self.parameters.n_agents
-            priority_rank = torch.stack(
-                [torch.randperm(n_agents) for _ in range(n_envs)]
-            )
-        else:
-            # Call the priority actor and extract the scores key from the resulting tensordict
-            scores = self.policy(tensordict)[self.prefix_key + ("scores",)]
-
-            # Generate the priority rank of agents
-            priority_rank = self.rank_agents(scores)
-
-        tensordict[self.prefix_key + ("rank",)] = priority_rank
-
-        # Return the tensordict with the priority rank included
-        return tensordict
-
-    def compute_losses_and_optimize(self, data):
-        """
-        Computes the PPO loss (actor and critic losses) and performs backpropagation with gradient clipping.
-
-        This method computes the combined loss (objective, critic, and entropy losses) from the loss module,
-        checks for invalid gradients (NaN or infinite values), performs backpropagation, applies gradient clipping,
-        and then steps the optimizer to update the model parameters.
-
-        Parameters:
-        -----------
-        data : TensorDict
-            A dictionary-like object containing the data for computing the losses.
-
-        Returns:
-        --------
-        None
-        """
-
-        loss_vals = self.loss_module(data)
-
-        loss_value = (
-            loss_vals["loss_objective"]
-            + loss_vals["loss_critic"]
-            + loss_vals["loss_entropy"]
-        )
-
-        assert not loss_value.isnan().any()
-        assert not loss_value.isinf().any()
-
-        loss_value.backward()
-
-        torch.nn.utils.clip_grad_norm_(
-            self.loss_module.parameters(), self.parameters.max_grad_norm
-        )  # Optional
-
-        self.optim.step()
-        self.optim.zero_grad()
-
-
-class CBFModule:
-    def __init__(self, env: TransformedEnvCustom = None, mappo: bool = True):
-        """
-        Initializes the CBFModule, which is responsible for learning a Control Barrier Function (CBF) with a neural network policy.
-        It also sets up a PPO loss module with an actor-critic architecture and GAE (Generalized Advantage Estimation) for RL optimization.
-
-        Parameters:
-        -----------
-        env : TransformedEnvCustom
-            The environment containing the observation specifications and other scenario parameters.
-        mappo : bool, optional
-            Flag to indicate whether to use centralised learning in the critic (MAPPO). Default is True.
-        """
-
-        self.env = env
-        self.parameters = self.env.scenario.parameters
-
-        # Tuple containing the prefix keys relevant to the control barrier values
-        self.prefix_key = ("agents", "info", "cbf")
-
-        observation_key = get_cbf_observation_key()
-
-        policy_net = torch.nn.Sequential(
-            MultiAgentMLP(
-                n_agent_inputs=env.observation_spec[observation_key].shape[-1],
-                n_agent_outputs=2 * 1,  # 2 * n_actions_per_agents
-                n_agents=self.parameters.n_agents,
-                centralised=False,  # the policies are decentralised (ie each agent will act from its observation)
-                share_params=True,
-                device=self.parameters.device,
-                depth=2,
-                num_cells=256,
-                activation_class=torch.nn.Tanh,
-            ),
-            NormalParamExtractor(),  # this will just separate the last dimension into two outputs: a loc and a non-negative scale
-        )
-
-        policy_module = TensorDictModule(
-            policy_net,
-            in_keys=[observation_key],
-            out_keys=[self.prefix_key + ("loc",), self.prefix_key + ("scale",)],
-        )
-
-        policy = ProbabilisticActor(
-            module=policy_module,
-            spec=UnboundedContinuousTensorSpec(),
-            in_keys=[self.prefix_key + ("loc",), self.prefix_key + ("scale",)],
-            out_keys=[self.prefix_key + ("scores",)],
-            distribution_class=TanhNormal,
-            distribution_kwargs={},
-            return_log_prob=True,
-            log_prob_key=self.prefix_key + ("sample_log_prob",),
-        )  # we'll need the log-prob for the PPO loss
-
-        critic_net = MultiAgentMLP(
-            n_agent_inputs=env.observation_spec[observation_key].shape[
-                -1
-            ],  # Number of observations
-            n_agent_outputs=1,  # 1 value per agent
-            n_agents=self.parameters.n_agents,
-            centralised=mappo,  # If `centralised` is True (which may help overcome the non-stationary problem in MARL), each agent will use the inputs of all agents to compute its output (n_agent_inputs * n_agents will be the number of inputs for one agent). Otherwise, each agent will only use its data as input.
-            share_params=True,  # If `share_params` is True, the same MLP will be used to make the forward pass for all agents (homogeneous policies). Otherwise, each agent will use a different MLP to process its input (heterogeneous policies).
-            device=self.parameters.device,
-            depth=2,
-            num_cells=256,
-            activation_class=torch.nn.Tanh,
-        )
-
-        critic = TensorDictModule(
-            module=critic_net,
-            in_keys=[
-                observation_key
-            ],  # Note that the critic in PPO only takes the same inputs (observations) as the actor
-            out_keys=[self.prefix_key + ("state_value",)],
-        )
-
-        self.policy = policy
-        self.critic = critic
-
-        loss_module = ClipPPOLoss(
-            actor=policy,
-            critic=critic,
-            clip_epsilon=self.parameters.clip_epsilon,
-            entropy_coef=self.parameters.entropy_eps,
-            normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
-        )
-
-        loss_module.set_keys(  # We have to tell the loss where to find the keys
-            reward=env.reward_key,
-            action=self.prefix_key + ("scores",),
-            sample_log_prob=self.prefix_key + ("sample_log_prob",),
-            value=self.prefix_key + ("state_value",),
-            done=("agents", "done"),
-            terminated=("agents", "terminated"),
-            advantage=self.prefix_key + ("advantage",),
-            value_target=self.prefix_key + ("value_target",),
-        )
-
-        loss_module.make_value_estimator(
-            ValueEstimators.GAE,
-            gamma=self.parameters.gamma,
-            lmbda=self.parameters.lmbda,
-        )  # We build GAE
-        GAE = loss_module.value_estimator  # Generalized Advantage Estimation
-
-        optim = torch.optim.Adam(loss_module.parameters(), self.parameters.lr)
-
-        self.GAE = GAE
-        self.loss_module = loss_module
-        self.optim = optim
-
-
 ##################################################
 ## Helper Functions
 ##################################################
 def get_path_to_save_model(parameters: Parameters):
     parameters.model_name = get_model_name(parameters=parameters)
 
+    uses_prioritized_marl = parameters.is_using_prioritized_marl and parameters.prioritization_method.lower() == "marl"
+    file_ext = 'pth'
+
     PATH_POLICY = os.path.join(
-        parameters.where_to_save, parameters.model_name + "_policy.pth"
+        parameters.where_to_save, f"{parameters.model_name}_policy.{file_ext}"
     )
     PATH_CRITIC = os.path.join(
-        parameters.where_to_save, parameters.model_name + "_critic.pth"
+        parameters.where_to_save, f"{parameters.model_name}_critic.{file_ext}"
     )
     PATH_FIG = os.path.join(
         parameters.where_to_save, parameters.model_name + "_training_process.pdf"
@@ -1615,34 +1174,21 @@ def get_path_to_save_model(parameters: Parameters):
     PATH_JSON = os.path.join(
         parameters.where_to_save, parameters.model_name + "_data.json"
     )
-
-    if (
-        parameters.is_using_prioritized_marl
-        and parameters.prioritization_method.lower() == "marl"
-    ):
-        PATH_PRIORITY_POLICY = os.path.join(
-            parameters.where_to_save, parameters.model_name + "_priority_policy.pth"
-        )
-        PATH_PRIORITY_CRITIC = os.path.join(
-            parameters.where_to_save, parameters.model_name + "_priority_critic.pth"
-        )
-
-        return (
-            PATH_POLICY,
-            PATH_CRITIC,
-            PATH_PRIORITY_POLICY,
-            PATH_PRIORITY_CRITIC,
-            PATH_FIG,
-            PATH_JSON,
-        )
+    PATH_PRIORITY_POLICY = os.path.join(
+        parameters.where_to_save, f"{parameters.model_name}_priority_policy.{file_ext}"
+    ) if uses_prioritized_marl else None
+    PATH_PRIORITY_CRITIC = os.path.join(
+        parameters.where_to_save, f"{parameters.model_name}_priority_critic.{file_ext}"
+    ) if uses_prioritized_marl else None
 
     return (
         PATH_POLICY,
         PATH_CRITIC,
+        PATH_PRIORITY_POLICY,
+        PATH_PRIORITY_CRITIC,
         PATH_FIG,
         PATH_JSON,
     )
-
 
 def delete_files_with_lower_mean_reward(parameters: Parameters):
     # Regular expression pattern to match and capture the float number
@@ -1682,28 +1228,18 @@ def find_the_highest_reward_among_all_models(path):
 def save(
     parameters: Parameters,
     save_data: SaveData,
-    policy=None,
-    critic=None,
-    priority_policy=None,
-    priority_critic=None,
+    decision_making_module: DecisionMakingModule,
+    priority_module: PriorityModule
 ):
     # Get paths
-    paths = get_path_to_save_model(parameters=parameters)
-
-    if (
-        parameters.is_using_prioritized_marl
-        and parameters.prioritization_method.lower() == "marl"
-    ):
-        (
-            PATH_POLICY,
-            PATH_CRITIC,
-            PATH_PRIORITY_POLICY,
-            PATH_PRIORITY_CRITIC,
-            PATH_FIG,
-            PATH_JSON,
-        ) = paths
-    else:
-        PATH_POLICY, PATH_CRITIC, PATH_FIG, PATH_JSON = paths
+    (
+        PATH_POLICY,
+        PATH_CRITIC,
+        PATH_PRIORITY_POLICY,
+        PATH_PRIORITY_CRITIC,
+        PATH_FIG,
+        PATH_JSON,
+    ) = get_path_to_save_model(parameters=parameters)
 
     # Save parameters and mean episode reward list
     json_object = json.dumps(save_data.to_dict(), indent=4)  # Serializing json
@@ -1724,19 +1260,20 @@ def save(
     # plt.savefig(PATH_FIG, format="pdf")
 
     # Save models
-    if (policy != None) & (critic != None):
+    if decision_making_module and decision_making_module.policy and decision_making_module.critic:
         # Save current models
-        torch.save(policy.state_dict(), PATH_POLICY)
-        torch.save(critic.state_dict(), PATH_CRITIC)
+        torch.save(decision_making_module.policy.state_dict(), PATH_POLICY)
+        torch.save(decision_making_module.critic.state_dict(), PATH_CRITIC)
 
-        if (
-            parameters.is_using_prioritized_marl
-            and parameters.prioritization_method.lower() == "marl"
+        if (parameters.is_using_prioritized_marl and
+                parameters.prioritization_method.lower() == "marl" and
+                priority_module and
+                priority_module.policy and
+                priority_module.critic
         ):
-            if (priority_policy != None) & (priority_critic != None):
-                # Save current models
-                torch.save(priority_policy.state_dict(), PATH_PRIORITY_POLICY)
-                torch.save(priority_critic.state_dict(), PATH_PRIORITY_CRITIC)
+            # Save current models
+            torch.save(priority_module.policy.state_dict(), PATH_PRIORITY_POLICY)
+            torch.save(priority_module.critic.state_dict(), PATH_PRIORITY_CRITIC)
 
         # Delete files with lower mean episode reward
         delete_files_with_lower_mean_reward(parameters=parameters)
@@ -1851,24 +1388,6 @@ def opponent_modeling(
             tensordict["agents"]["observation"][
                 :, ego_agent, idx_action_start:idx_action_end
             ] = action_tentative_sur_agent
-
-
-def get_observation_key(parameters):
-    return (
-        ("agents", "observation")
-        if not parameters.is_using_prioritized_marl
-        else ("agents", "info", "base_observation")
-    )
-
-
-def get_priority_observation_key():
-    return ("agents", "info", "priority_observation")
-
-
-def get_cbf_observation_key():
-    """The observation key of CBF"""
-    return ("agents", "info", "cbf_observation")
-
 
 def prioritized_ap_policy(
     tensordict,

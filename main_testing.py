@@ -48,15 +48,17 @@ try:
         parameters.is_visualize_extra_info = True
 
         if parameters.scenario_type.lower() == "goal_reaching_1":
-            env, policy, priority_module, parameters = ppo_goal_reaching(
+            env, decision_making_module, priority_module, parameters = ppo_goal_reaching(
                 parameters=parameters
             )
         else:
-            env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
+            env, decision_making_module, priority_module, parameters = mappo_cavs(
+            parameters=parameters
+            )
 
         out_td, frame_list = env.rollout(
             max_steps=parameters.max_steps - 1,
-            policy=policy,
+            policy=decision_making_module.policy,
             priority_module=priority_module,
             callback=lambda env, _: env.render(
                 mode="rgb_array", visualize_when_rgb=True

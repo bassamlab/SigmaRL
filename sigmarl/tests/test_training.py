@@ -46,11 +46,11 @@ class TestTrainingScenarios(unittest.TestCase):
 
                 # Run training for the scenario
                 if parameters.scenario_type.lower() == "goal_reaching_1":
-                    env, policy, priority_module, parameters = ppo_goal_reaching(
+                    env, decision_making_module, priority_module, parameters = ppo_goal_reaching(
                         parameters=parameters
                     )
                 else:
-                    env, policy, priority_module, parameters = mappo_cavs(
+                    env, decision_making_module, priority_module, parameters = mappo_cavs(
                         parameters=parameters
                     )
 
