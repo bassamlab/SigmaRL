@@ -40,7 +40,7 @@ setup(
         "torchrl==0.6.0",
         "torchdiffeq==0.2.4",
         "tqdm==4.67.0",
-        "typing_extensions==4.8.0",
+        "typing_extensions==4.12.2",
         "vmas==1.4.3",
         "matplotlib==3.9.2",
         "termcolor==2.5.0",
@@ -53,6 +53,6 @@ setup(
     },
     include_package_data=True,
     package_data={
-        "sigmarl": ["assets/*", "scenarios/*", "config.json"],
+        "sigmarl": ["assets/*", "scenarios/*", "modules/*", "config.json"],
     },
 )
