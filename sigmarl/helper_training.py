@@ -1156,29 +1156,31 @@ class SaveData:
 ##################################################
 ## Helper Functions
 ##################################################
-def get_path_to_save_model(parameters: Parameters):
+def get_path_to_save_model(parameters: Parameters, absolute=True):
     parameters.model_name = get_model_name(parameters=parameters)
 
     uses_prioritized_marl = parameters.is_using_prioritized_marl and parameters.prioritization_method.lower() == "marl"
     file_ext = 'pth'
 
+    where_to_save = parameters.where_to_save if absolute else ""
+
     PATH_POLICY = os.path.join(
-        parameters.where_to_save, f"{parameters.model_name}_policy.{file_ext}"
+        where_to_save, f"{parameters.model_name}_policy.{file_ext}"
     )
     PATH_CRITIC = os.path.join(
-        parameters.where_to_save, f"{parameters.model_name}_critic.{file_ext}"
+        where_to_save, f"{parameters.model_name}_critic.{file_ext}"
     )
     PATH_FIG = os.path.join(
-        parameters.where_to_save, parameters.model_name + "_training_process.pdf"
+        where_to_save, parameters.model_name + "_training_process.pdf"
     )
     PATH_JSON = os.path.join(
-        parameters.where_to_save, parameters.model_name + "_data.json"
+        where_to_save, parameters.model_name + "_data.json"
     )
     PATH_PRIORITY_POLICY = os.path.join(
-        parameters.where_to_save, f"{parameters.model_name}_priority_policy.{file_ext}"
+        where_to_save, f"{parameters.model_name}_priority_policy.{file_ext}"
     ) if uses_prioritized_marl else None
     PATH_PRIORITY_CRITIC = os.path.join(
-        parameters.where_to_save, f"{parameters.model_name}_priority_critic.{file_ext}"
+        where_to_save, f"{parameters.model_name}_priority_critic.{file_ext}"
     ) if uses_prioritized_marl else None
 
     return (
