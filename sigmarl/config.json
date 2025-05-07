@@ -40,7 +40,7 @@
     "is_observe_distance_to_boundaries": true,
     "is_observe_distance_to_center_line": true,
     "is_apply_mask": false,
-    "is_add_noise": false,
+    "is_obs_noise": false,
     "is_observe_ref_path_other_agents": false,
     "is_using_opponent_modeling": false,
     "is_using_prioritized_marl": false,

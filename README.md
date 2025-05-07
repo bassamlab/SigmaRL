@@ -6,6 +6,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2409.11852-b31b1b.svg)](https://doi.org/10.48550/arXiv.2409.11852)
 [![arXiv](https://img.shields.io/badge/arXiv-2411.08999-b31b1b.svg)](https://doi.org/10.48550/arXiv.2411.08999)
 [![arXiv](https://img.shields.io/badge/arXiv-2503.15014-b31b1b.svg)](https://doi.org/10.48550/arXiv.2503.15014)
+[![arXiv](https://img.shields.io/badge/arXiv-2503.15014-b31b1b.svg)](https://doi.org/10.48550/arXiv.2505.02395)
 
 - [SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning](#sigmarl-a-sample-efficient-and-generalizable-multi-agent-reinforcement-learning-framework-for-motion-planning)
   - [Welcome to SigmaRL!](#welcome-to-sigmarl)
@@ -14,17 +15,18 @@
     - [Training](#training)
     - [Testing](#testing)
   - [Customize Your Own Maps](#customize-your-own-maps)
-  - [News](#news)
   - [Papers](#papers)
     - [1. SigmaRL](#1-sigmarl)
     - [2. XP-MARL](#2-xp-marl)
     - [3. MTV-Based CBF](#3-mtv-based-cbf)
     - [4. Truncated Taylor CBF (TTCBF)](#4-truncated-taylor-cbf-ttcbf)
+    - [5. CBF-Based Safety Filter](#5-cbf-based-safety-filter)
   - [TODOs](#todos)
   - [Acknowledgments](#acknowledgments)
 
 > [!NOTE]
-> - Check out our recent work [Truncated Taylor CBF](#4-truncated-taylor-cbf-ttcbf)! It proposes a new notion of high-order CBFs termed Truncated Taylor CBF (TTCBF). TTCBF can handle constraints with arbitrary relative degrees while using only one design parameter to facilitate control design.
+> - Check out our recent work [CBF-Based Safety Filter](#5-cbf-based-safety-filter)! It proposes a real-time CBF-based safety filter for safety verification of learning-based motion planning with road boundary constraints (see also [Fig. 5](#fig-safety-filter)).
+> - Check out our recent work [Truncated Taylor CBF](#4-truncated-taylor-cbf-ttcbf)! It proposes a new notion of high-order CBFs termed Truncated Taylor CBF (TTCBF). TTCBF can handle constraints with arbitrary relative degrees while using only one design parameter to facilitate control design (see also [Fig. 4](#fig-ttcbf)).
 <!-- > - Check out our recent work [MTV-Based CBF](#3-mtv-based-cbf)! It uses a learning-based, *less conservative* distance metric to categorize safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL. -->
 <!-- > - Check out our recent work [XP-MARL](#2-xp-marl)! It augments MARL with learning-based au<ins>x</ins>iliary <ins>p</ins>rioritization to address *non-stationarity*. -->
 
@@ -33,6 +35,7 @@ This repository provides the full code of **SigmaRL**, a <ins>S</ins>ample eff<i
 
 SigmaRL is a decentralized MARL framework designed for motion planning of CAVs. We use <a href="https://github.com/proroklab/VectorizedMultiAgentSimulator" target="_blank">VMAS</a>, a vectorized differentiable simulator designed for efficient MARL benchmarking, as our simulator and customize our own RL environment. The first scenario in [Fig. 1](#) mirrors the real-world conditions of our Cyber-Physical Mobility Lab (<a href="https://cpm.embedded.rwth-aachen.de/" target="_blank">CPM Lab</a>). We also support maps handcrafted in <a href="https://josm.openstreetmap.de/" target="_blank">JOSM</a>, an open-source editor for OpenStreetMap. [Below](#customize-your-own-maps) you will find detailed guidance to create your **OWN** maps.
 
+<a id="fig-generalization"></a>
 <figure>
   <table>
     <tr>
@@ -77,6 +80,7 @@ SigmaRL is a decentralized MARL framework designed for motion planning of CAVs. 
 
 Figure 1: Demonstrating the *generalization* of SigmaRL (speed x2). Only the intersection part of the CPM scenario (the middle part in Fig. 1(a)) is used for training. All other scenarios are completely unseen. See our [SigmaRL paper](#1-sigmarl) for more details.
 
+<a id="fig-xp-marl"></a>
 <figure>
   <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/xp-marl.gif?raw=true" width="400" />
   <!-- <figcaption>Figure 2:.</figcaption> -->
@@ -84,6 +88,7 @@ Figure 1: Demonstrating the *generalization* of SigmaRL (speed x2). Only the int
 
 Figure 2: We use an auxiliary MARL to learn dynamic priority assignments to address *non-stationarity*. Higher-priority agents communicate their actions (depicted by the colored lines) to lower-priority agents to stabilize the environment. See our [XP-MARL paper](#2-xp-marl) for more details.
 
+<a id="fig-mtv-based-cbf"></a>
 <figure>
   <table>
     <tr>
@@ -123,12 +128,11 @@ Figure 2: We use an auxiliary MARL to learn dynamic priority assignments to addr
       </td>
     </tr>
   </table>
-  <!-- <figcaption>Figure 1.</figcaption> -->
 </figure>
-<a id="fig-mtv-based-cbf"></a>
 
 Figure 3: Demonstrating the safety and reduced conservatism of our MTV-based safety margin. In the overtaking scenario, while the traditional approach fails to overtake due to excessive conservatism (see (a)), ours succeeds (see (b)). Note that in the overtaking scenario, the slow-moving vehicle $j$ purposely obstructs vehicle $i$ three times to prevent it from overtaking. In the bypassing scenario, while the traditional approach requires a large lateral space due to excessive conservatism (see (c)), ours requires a smaller one (see (d)). See our [MTV-Based CBF paper](#3-mtv-based-cbf) for more details.
 
+<a id="fig-ttcbf"></a>
 <figure>
   <table>
     <tr>
@@ -155,6 +159,32 @@ Figure 3: Demonstrating the safety and reduced conservatism of our MTV-based saf
 </figure>
 
 Figure 4: Our TTCBF approach reduces the number of parameters to tune when handling constraints with high relative degrees. See our [TTCBF paper](#4-truncated-taylor-cbf-ttcbf) for more details.
+
+<a id="fig-safety-filter"></a>
+<figure>
+  <table>
+    <tr>
+      <td>
+        <a id="fig-ttcbf-hocbf"></a>
+        <figure>
+          <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/safety_filter_without.gif?raw=true" width="400" />
+          <br>
+          <figcaption>(a) An undertrained RL policy without our safety filter often caused collisions with road boundaries.</figcaption>
+        </figure>
+      </td>
+      <td>
+        <a id="fig-ttcbf-taylor"></a>
+        <figure>
+          <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/safety_filter_with.gif?raw=true" width="400"/>
+          <br>
+          <figcaption>(b) Our safety filter successfully avoided all collisions caused by the undertrained RL policy.</figcaption>
+        </figure>
+      </td>
+    </tr>
+  </table>
+</figure>
+
+Figure 5: Demonstration of our safety filter for safety verification of an undertrained RL policy. See our [CBF-Based Safety Filter Paper](#5-cbf-based-safety-filter) for more details.
 
 ## Install
 SigmaRL supports Python versions from 3.9 to 3.12 and is also OS independent (Windows/macOS/Linux). It's recommended to use a virtual environment. For example, if you are using [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html):
@@ -201,22 +231,19 @@ We support maps customized in <a href="https://josm.openstreetmap.de/" target="_
 - Go to `utilities/constants.py` and create a new entry in the dictionary "SCENARIOS" for it. The key of the entry is the name of the map and the value is a dictionary, for which you should at least give the value for the key `map_path`, `lane_width`, and `scale`. Also you should provide a list for `reference_paths_ids` (which paths exist?) and a dictionary for `neighboring_lanelet_ids` (which lanes are adjacent?).
 - Go to `utilities/parse_osm.py`. Adjust the parameters `scenario_type` and run it.
 
-## News
-- [2025-03-21] Check out our recent work [Truncated Taylor CBF](#4-truncated-taylor-cbf-ttcbf)! It proposes a new notion of high-order CBFs termed Truncated Taylor CBF (TTCBF). TTCBF can handle constraints with arbitrary relative degrees while using only one design parameter to facilitate control design.
-- [2025-03-10] Our work [MTV-Based CBF](#3-mtv-based-cbf) was accepted by the 23rd European Control Conference (ECC 2025)! It uses a learning-based, *less conservative* distance metric to quantify safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL.
-- [2024-09-15] Check out our recent work [XP-MARL](#2-xp-marl)! It augments MARL with learning-based au<ins>x</ins>iliary <ins>p</ins>rioritization to address *non-stationarity*.
-- [2024-08-14] We support customized maps in OpenStreetMap now (see [here](#customize-your-own-maps))!
-- [2024-07-10] Our [CPM Scenario](#fig-scenario-cpm) is now available as an MARL benchmark scenario in VMAS (see <a href="https://github.com/proroklab/VectorizedMultiAgentSimulator/releases/tag/1.4.2" target="_blank">here</a>)!
-- [2024-07-10] Our work [SigmaRL](#1-sigmarl) was accepted by the 27th IEEE International Conference on Intelligent Transportation Systems (IEEE ITSC 2024)!
+<img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/maps_overview.jpg?raw=true" alt="Overview Map" style="max-width:800px; width:100%;">
+<a id="fig-maps"></a>
+Figure 6: Overview of currently available maps.
+
 
 ## Papers
-Papers related to this repository are listed below.
+If you use this repository, please consider to cite our papers.
 
 ### 1. SigmaRL
 <div>
 Jianye Xu, Pan Hu, and Bassam Alrifaee, "SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning," <i>2024 IEEE 27th International Conference on Intelligent Transportation Systems (ITSC), in press</i>, 2024.
 
-<a href="https://doi.org/10.48550/arXiv.2408.07644" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/tzaVjol4nhA" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> <a href="https://github.com/bassamlab/SigmaRL/tree/1.2.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+<a href="https://doi.org/10.48550/arXiv.2408.07644" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/tzaVjol4nhA" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> [![Jump to Fig. 1](https://img.shields.io/badge/Jump%20to-Fig.%201-blue)](#fig-generalization) <a href="https://github.com/bassamlab/SigmaRL/tree/1.2.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
 
 - **BibTeX**
@@ -246,7 +273,7 @@ Jianye Xu, Pan Hu, and Bassam Alrifaee, "SigmaRL: A Sample-Efficient and General
 <div>
 Jianye Xu, Omar Sobhy, and Bassam Alrifaee, "XP-MARL: Auxiliary Prioritization in Multi-Agent Reinforcement Learning to Address Non-Stationarity," <i>arXiv preprint arXiv:2409.11852</i>, 2024.
 
-<a href="https://doi.org/10.48550/arXiv.2409.11852" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/GEhjRKY2fTU" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> <a href="https://github.com/bassamlab/SigmaRL/tree/1.2.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+<a href="https://doi.org/10.48550/arXiv.2409.11852" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/GEhjRKY2fTU" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> [![Jump to Fig. 2](https://img.shields.io/badge/Jump%20to-Fig.%202-blue)](#fig-xp-marl) <a href="https://github.com/bassamlab/SigmaRL/tree/1.2.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
 
 - **BibTeX**
@@ -271,7 +298,7 @@ Jianye Xu, Omar Sobhy, and Bassam Alrifaee, "XP-MARL: Auxiliary Prioritization i
 <div>
 Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin," <i>arXiv preprint arXiv:2411.08999</i>, 2024.
 
-<a href="https://doi.org/10.48550/arXiv.2411.08999" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"> </a>[![Jump to Video](https://img.shields.io/badge/Jump%20to-Video-blue)](#fig-mtv-based-cbf)
+<a href="https://doi.org/10.48550/arXiv.2411.08999" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"> </a>[![Jump to Fig. 3](https://img.shields.io/badge/Jump%20to-Fig.%203-blue)](#fig-mtv-based-cbf)
 </div>
 
 - **BibTeX**
@@ -295,7 +322,7 @@ Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Pro
 <div>
 Jianye Xu and Bassam Alrifaee, "High-Order Control Barrier Functions: Insights and a Truncated Taylor-Based Formulation," <i>arXiv preprint arXiv:2503.15014</i>, 2025.
 
-<a href="https://doi.org/10.48550/arXiv.2503.15014" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://github.com/bassamlab/SigmaRL/tree/1.3.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+<a href="https://doi.org/10.48550/arXiv.2503.15014" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> [![Jump to Fig. 4](https://img.shields.io/badge/Jump%20to-Fig.%204-blue)](#fig-ttcbf) <a href="https://github.com/bassamlab/SigmaRL/tree/1.3.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
 
 - **BibTeX**
@@ -312,12 +339,36 @@ Jianye Xu and Bassam Alrifaee, "High-Order Control Barrier Functions: Insights a
   - Git checkout to the corresponding tag using `git checkout 1.3.0`
   - Run `sigmarl/hocbf_taylor.py`.
 
+### 5. CBF-Based Safety Filter
+<div>
+Jianye Xu, Chang Che, and Bassam Alrifaee, "A Real-Time Control Barrier Function-Based Safety Filter for Motion Planning with Arbitrary Road Boundary Constraints," <i>arXiv preprint arXiv:2505.02395</i>, 2025.
+
+<a href="https://arxiv.org/abs/2505.02395" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> [![Jump to Fig. 5](https://img.shields.io/badge/Jump%20to-Fig.%205-blue)](#fig-safety-filter) <a href="https://github.com/bassamlab/SigmaRL/tree/1.4.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+</div>
+
+- **BibTeX**
+  ```bibtex
+  @article{xu2025realtime,
+    title = {A Real-Time Control Barrier Function-Based Safety Filter for Motion Planning with Arbitrary Road Boundary Constraints},
+    author = {Xu, Jianye and Che, Chang and Alrifaee, Bassam},
+    journal = {arXiv preprint arXiv:2505.02395},
+    year = {2025},
+  }
+  ```
+
+- **Reproduce Experimental Results in the Paper:**
+
+  - Git checkout to the corresponding tag using `git checkout 1.4.0`
+  - Go to [this page](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/itsc25.zip) and download the zip file `itsc25.zip`. Unzip it, copy and paste the whole folder to the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/itsc25/`.
+  - Run `sigmarl/evaluation_itsc25.py`.
+
 
 ## TODOs
 - Improve safety
   - [ ] Integrating Control Barrier Functions (CBFs)
     - [x] Proof of concept with two agents (see the MTV-Based CBF paper [here](#3-mtv-based-cbf))
-    - [x] High-Order CBFs [here](#4-truncated-taylor-cbf)
+    - [x] High-Order CBFs (see the TTCBF paper [here](#4-truncated-taylor-cbf))
+    - [x] Collision aovidance with road boundaries (see the CBF-Based Safety Filter paper [here](#5-cbf-based-safety-filter))
   - [ ] Integrating Model Predictive Control (MPC)
 - Address non-stationarity
   - [x] Integrating prioritization (see the XP-MARL paper [here](#2-xp-marl))

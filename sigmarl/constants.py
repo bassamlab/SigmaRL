@@ -57,7 +57,7 @@ SCENARIOS = {
             "8": ["2", "3", "4", "5", "8"],  # Lanelet with ID "8"
         },
         "figsize_x": 3.0,
-        "viewer_zoom": 1.1,  # For VMAS render
+        "viewer_zoom": 1.25,  # For VMAS render
         "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
@@ -599,6 +599,23 @@ SCENARIOS = {
             "16": ["6", "7", "16", "17", "18"],  # Lanelet with ID "16"
             "17": ["16", "17", "18"],  # Lanelet with ID "17"
             "18": ["16", "17", "18"],  # Lanelet with ID "18"
+        },
+        "figsize_x": 2.0,
+        "viewer_zoom": 1.0,  # For VMAS render
+        "lane_width": 0.2,  # [m] Lane width
+        "scale": 1e5,  # Scale the map
+    },
+    "pseudo_distance_example": {
+        "map_path": "pseudo_distance_example.osm",
+        "n_agents": 1,
+        "name": "pseudo_distance_example",
+        "reference_paths_ids": [
+            ["1"],
+            ["2"],
+        ],
+        "neighboring_lanelet_ids": {
+            "1": ["1", "2"],  # Lanelet with ID "1"
+            "2": ["1", "2"],  # Lanelet with ID "2"
         },
         "figsize_x": 2.0,
         "viewer_zoom": 1.0,  # For VMAS render

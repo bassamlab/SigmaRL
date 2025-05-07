@@ -19,7 +19,6 @@ from sigmarl.helper_training import (
     SyncDataCollectorCustom,
     DecisionMakingModule,
     PriorityModule,
-    CBFModule,
 )
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data import TensorDictPrioritizedReplayBuffer
@@ -178,12 +177,6 @@ class PPOGoalReaching:
         """Set up the priority module if prioritized MARL is enabled."""
         if self.parameters.is_using_prioritized_marl:
             return PriorityModule(env=env, mappo=True)
-        return None
-
-    def _setup_cbf_module(self, env):
-        """Set up the Control Barrier Function (CBF) module if enabled."""
-        if self.parameters.is_using_cbf:
-            return CBFModule(env=env, mappo=True)
         return None
 
     def _ensure_save_directory_exists(self):

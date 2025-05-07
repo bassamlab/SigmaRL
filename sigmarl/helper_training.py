@@ -249,7 +249,7 @@ class TransformedEnvCustom(TransformedEnv):
                     priority_module,
                     self.base_env.scenario_name.observations.nearing_agents_indices,
                     self.base_env.scenario_name.parameters.is_communication_noise,
-                    self.base_env.scenario_name.parameters.noise_level,
+                    self.base_env.scenario_name.parameters.communication_noise_level,
                 )
                 # Store priority_rank for later use
                 self.base_env.scenario_name.priority_rank = priority_rank
@@ -265,25 +265,15 @@ class TransformedEnvCustom(TransformedEnv):
                     time_cbf,
                     time_pseudo_dis,
                     tensordict,
-                    priority_rank,
-                    observable_higher_priority_agents,
                 ) = cbf_constrained_decentralized_policy(
                     tensordict,
                     policy,
-                    priority_module,
                     cbf_controllers,
-                    self.base_env.scenario_name.observations.nearing_agents_indices,
-                    self.base_env.scenario_name.parameters.is_communication_noise,
-                    self.base_env.scenario_name.parameters.noise_level,
                 )
                 # Store time for computational efficiency
                 self.time_cbf.append(time_cbf)
                 self.time_pseudo_dis.append(time_pseudo_dis)
-                # Store priority_rank for later use
-                self.base_env.scenario_name.priority_rank = priority_rank
-                self.base_env.scenario_name.observable_higher_priority_agents = (
-                    observable_higher_priority_agents
-                )
+
             elif (
                 self.base_env.scenario_name.parameters.is_using_cbf
                 and self.base_env.scenario_name.parameters.is_using_centralized_cbf
@@ -392,7 +382,7 @@ class TransformedEnvCustom(TransformedEnv):
                     priority_module,
                     self.base_env.scenario_name.observations.nearing_agents_indices,
                     self.base_env.scenario_name.parameters.is_communication_noise,
-                    self.base_env.scenario_name.parameters.noise_level,
+                    self.base_env.scenario_name.parameters.communication_noise_level,
                 )
                 # Store priority_rank for later use
                 self.base_env.scenario_name.priority_rank = priority_rank
@@ -408,28 +398,17 @@ class TransformedEnvCustom(TransformedEnv):
                     time_cbf,
                     time_pseudo_dis,
                     tensordict_,
-                    priority_rank,
-                    observable_higher_priority_agents,
                 ) = cbf_constrained_decentralized_policy(
                     tensordict_,
                     policy,
-                    priority_module,
                     cbf_controllers,
-                    self.base_env.scenario_name.observations.nearing_agents_indices,
-                    self.base_env.scenario_name.parameters.is_communication_noise,
-                    self.base_env.scenario_name.parameters.noise_level,
                 )
                 # Store time for computational efficiency
                 self.time_cbf.append(time_cbf)
                 self.time_pseudo_dis.append(time_pseudo_dis)
-                # Store priority_rank for later use
                 self.base_env.scenario_name.nominal_action = tensordict[
                     "agents", "info", "nominal_action"
                 ]
-                self.base_env.scenario_name.priority_rank = priority_rank
-                self.base_env.scenario_name.observable_higher_priority_agents = (
-                    observable_higher_priority_agents
-                )
             elif (
                 self.base_env.scenario_name.parameters.is_using_cbf
                 and self.base_env.scenario_name.parameters.is_using_centralized_cbf
@@ -792,7 +771,7 @@ class SyncDataCollectorCustom(SyncDataCollector):
                         priority_module=self.priority_module,
                         nearing_agents_indices=self.env.base_env.scenario_name.observations.nearing_agents_indices,
                         is_communication_noise=self.env.base_env.scenario_name.parameters.is_communication_noise,
-                        noise_level=self.env.base_env.scenario_name.parameters.noise_level,
+                        communication_noise_level=self.env.base_env.scenario_name.parameters.communication_noise_level,
                     )
                 elif (
                     self.env.base_env.scenario_name.parameters.is_using_cbf
@@ -801,11 +780,7 @@ class SyncDataCollectorCustom(SyncDataCollector):
                     cbf_constrained_decentralized_policy(
                         tensordict=self._tensordict,
                         policy=self.policy,
-                        priority_module=self.priority_module,
                         cbf_controllers=self.cbf_controllers,
-                        nearing_agents_indices=self.env.base_env.scenario_name.observations.nearing_agents_indices,
-                        is_communication_noise=self.env.base_env.scenario_name.parameters.is_communication_noise,
-                        noise_level=self.env.base_env.scenario_name.parameters.noise_level,
                     )
                 elif (
                     self.env.base_env.scenario_name.parameters.is_using_cbf
@@ -1091,7 +1066,7 @@ class Parameters:
         # General parameters
         n_agents: int = 4,  # Number of agents
         dt: float = 0.05,  # [s] sample time
-        device: str = "cpu",  # Tensor device
+        device: str = "cpu",  # Default tensor device
         scenario_name: str = "road_traffic",  # Scenario name
         # Training parameters
         n_iters: int = 250,  # Number of training iterations
@@ -1131,7 +1106,8 @@ class Parameters:
         is_observe_distance_to_boundaries: bool = True,  # Whether to observe points on lanelet boundaries or observe the distance to labelet boundaries
         is_observe_distance_to_center_line: bool = True,  # Whether to observe the distance to reference path
         is_observe_vertices: bool = True,  # Whether to observe the vertices of other agents (or center point)
-        is_add_noise: bool = True,  # Whether to add noise to observations
+        is_obs_noise: bool = True,  # Whether to add noise to observations
+        obs_noise_level: float = 0.05,  # Defines the variance of the normal distribution modeling the noise.
         is_observe_ref_path_other_agents: bool = False,  # Whether to observe the reference paths of other agents
         is_use_mtv_distance: bool = True,  # Whether to use mtv-based (Minimum Translation Vector) distance or c2c-based (center-to-center) distance.
         # Visu
@@ -1155,7 +1131,7 @@ class Parameters:
         is_using_prioritized_marl: bool = False,  # Whether to use prioritized MARL and action propagation.
         prioritization_method: str = "marl",  # Which method to use for generating priority ranks (options: {"marl", "random"}). Applicable only for prioritized MARL scenarios.
         is_communication_noise: str = False,  # Whether to inject communication noise to propagated actions
-        noise_level: float = 0.1,  # Noise is modeled by a normal distribution. `noise_level` defines the variance of the normal distribution.
+        communication_noise_level: float = 0.1,  # Defines the variance of the normal distribution modeling the noise.
         is_using_cbf: bool = False,  # Whether to use Control Barrier Function (CBF)
         is_using_centralized_cbf: bool = False,  # Whether to use centralized solving for CBF-constrained MARL
         experiment_type: str = "simulation",  # One of {"simulation", "lab"}. If you only use simulation, you do not need to worry about "lab".
@@ -1164,6 +1140,8 @@ class Parameters:
         random_seed: int = 0,  # Random seed,
         is_using_pseudo_distance: bool = False,  # Whether to use pseudo distance
         n_circles_approximate_vehicle: int = 3,  # Number of circles to approximate the vehicle shape
+        lane_width=0.3,  # For custom scenarios only
+        reset_agent_fixed_duration: int = 0,  # Reset agents after fixed duration in seconds. Set to 0 if not used.
     ):
 
         self.n_agents = n_agents
@@ -1218,7 +1196,8 @@ class Parameters:
         self.is_observe_distance_to_boundaries = is_observe_distance_to_boundaries
         self.is_observe_distance_to_center_line = is_observe_distance_to_center_line
         self.is_observe_vertices = is_observe_vertices
-        self.is_add_noise = is_add_noise
+        self.is_obs_noise = is_obs_noise
+        self.obs_noise_level = obs_noise_level
         self.is_observe_ref_path_other_agents = is_observe_ref_path_other_agents
 
         self.is_save_eval_results = is_save_eval_results
@@ -1238,7 +1217,7 @@ class Parameters:
 
         self.prioritization_method = prioritization_method
         self.is_communication_noise = is_communication_noise
-        self.noise_level = noise_level
+        self.communication_noise_level = communication_noise_level
 
         self.is_using_cbf = is_using_cbf
         self.is_using_centralized_cbf = is_using_centralized_cbf
@@ -1252,6 +1231,10 @@ class Parameters:
 
         self.is_using_pseudo_distance = is_using_pseudo_distance
         self.n_circles_approximate_vehicle = n_circles_approximate_vehicle
+
+        self.lane_width = lane_width
+
+        self.reset_agent_fixed_duration = reset_agent_fixed_duration
 
         if (model_name is None) and (scenario_name is not None):
             self.model_name = get_model_name(self)
@@ -1643,118 +1626,6 @@ class PriorityModule:
         self.optim.zero_grad()
 
 
-class CBFModule:
-    def __init__(self, env: TransformedEnvCustom = None, mappo: bool = True):
-        """
-        Initializes the CBFModule, which is responsible for learning a Control Barrier Function (CBF) with a neural network policy.
-        It also sets up a PPO loss module with an actor-critic architecture and GAE (Generalized Advantage Estimation) for RL optimization.
-
-        Parameters:
-        -----------
-        env : TransformedEnvCustom
-            The environment containing the observation specifications and other scenario parameters.
-        mappo : bool, optional
-            Flag to indicate whether to use centralised learning in the critic (MAPPO). Default is True.
-        """
-
-        self.env = env
-        self.parameters = self.env.scenario.parameters
-
-        # Tuple containing the prefix keys relevant to the control barrier values
-        self.prefix_key = ("agents", "info", "cbf")
-
-        observation_key = get_cbf_observation_key()
-
-        policy_net = torch.nn.Sequential(
-            MultiAgentMLP(
-                n_agent_inputs=env.observation_spec[observation_key].shape[-1],
-                n_agent_outputs=2 * 1,  # 2 * n_actions_per_agents
-                n_agents=self.parameters.n_agents,
-                centralised=False,  # the policies are decentralised (ie each agent will act from its observation)
-                share_params=True,
-                device=self.parameters.device,
-                depth=2,
-                num_cells=256,
-                activation_class=torch.nn.Tanh,
-            ),
-            NormalParamExtractor(),  # this will just separate the last dimension into two outputs: a loc and a non-negative scale
-        )
-
-        policy_module = TensorDictModule(
-            policy_net,
-            in_keys=[observation_key],
-            out_keys=[self.prefix_key + ("loc",), self.prefix_key + ("scale",)],
-        )
-
-        policy = ProbabilisticActor(
-            module=policy_module,
-            spec=Unbounded(),
-            in_keys=[self.prefix_key + ("loc",), self.prefix_key + ("scale",)],
-            out_keys=[self.prefix_key + ("scores",)],
-            distribution_class=TanhNormal,
-            distribution_kwargs={},
-            return_log_prob=True,
-            log_prob_key=self.prefix_key + ("sample_log_prob",),
-        )  # we'll need the log-prob for the PPO loss
-
-        critic_net = MultiAgentMLP(
-            n_agent_inputs=env.observation_spec[observation_key].shape[
-                -1
-            ],  # Number of observations
-            n_agent_outputs=1,  # 1 value per agent
-            n_agents=self.parameters.n_agents,
-            centralised=mappo,  # If `centralised` is True (which may help overcome the non-stationary problem in MARL), each agent will use the inputs of all agents to compute its output (n_agent_inputs * n_agents will be the number of inputs for one agent). Otherwise, each agent will only use its data as input.
-            share_params=True,  # If `share_params` is True, the same MLP will be used to make the forward pass for all agents (homogeneous policies). Otherwise, each agent will use a different MLP to process its input (heterogeneous policies).
-            device=self.parameters.device,
-            depth=2,
-            num_cells=256,
-            activation_class=torch.nn.Tanh,
-        )
-
-        critic = TensorDictModule(
-            module=critic_net,
-            in_keys=[
-                observation_key
-            ],  # Note that the critic in PPO only takes the same inputs (observations) as the actor
-            out_keys=[self.prefix_key + ("state_value",)],
-        )
-
-        self.policy = policy
-        self.critic = critic
-
-        loss_module = ClipPPOLoss(
-            actor=policy,
-            critic=critic,
-            clip_epsilon=self.parameters.clip_epsilon,
-            entropy_coef=self.parameters.entropy_eps,
-            normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
-        )
-
-        loss_module.set_keys(  # We have to tell the loss where to find the keys
-            reward=env.reward_key,
-            action=self.prefix_key + ("scores",),
-            sample_log_prob=self.prefix_key + ("sample_log_prob",),
-            value=self.prefix_key + ("state_value",),
-            done=("agents", "done"),
-            terminated=("agents", "terminated"),
-            advantage=self.prefix_key + ("advantage",),
-            value_target=self.prefix_key + ("value_target",),
-        )
-
-        loss_module.make_value_estimator(
-            ValueEstimators.GAE,
-            gamma=self.parameters.gamma,
-            lmbda=self.parameters.lmbda,
-        )  # We build GAE
-        GAE = loss_module.value_estimator  # Generalized Advantage Estimation
-
-        optim = torch.optim.Adam(loss_module.parameters(), self.parameters.lr)
-
-        self.GAE = GAE
-        self.loss_module = loss_module
-        self.optim = optim
-
-
 ##################################################
 ## Helper Functions
 ##################################################
@@ -2041,7 +1912,7 @@ def prioritized_ap_policy(
     priority_module,
     nearing_agents_indices,
     is_communication_noise,
-    noise_level,
+    communication_noise_level,
 ):
     """
     Implements prioritized action propagation (AP) for multiple agents.
@@ -2147,8 +2018,10 @@ def prioritized_ap_policy(
             # Propagate the collected actions into the current agent's observation
             if len(actions_so_far) > 0:
                 if is_communication_noise:
-                    std_noise_speed = AGENTS["max_speed"] * noise_level
-                    std_noise_steering = AGENTS["max_steering"] * noise_level
+                    std_noise_speed = AGENTS["max_speed"] * communication_noise_level
+                    std_noise_steering = (
+                        AGENTS["max_steering"] * communication_noise_level
+                    )
                     noise = torch.cat(
                         [
                             std_noise_speed * torch.randn(action_dim, device=device),
@@ -2191,11 +2064,91 @@ def prioritized_ap_policy(
 def cbf_constrained_decentralized_policy(
     tensordict,
     policy,
+    cbf_controllers,
+):
+    """
+
+    This function is used to make action decisions for multiple agents at each time step,
+    based on their priority, and enforces safety constraints via Control Barrier Functions (CBFs).
+    Each agent makes decisions independently based on its observations
+    and the actions of its neighbors.
+
+    Parameters:
+    ----------
+    tensordict : TensorDict
+        A dictionary-like object that stores the data for all agents and environments.
+    policy : Callable
+        The policy function used to compute the actions for the agents.
+    priority_module : Callable
+        A module that computes the priority rank for agents by wrapping the process
+        of generating priority scores and ranking agents according to these scores.
+    cbf_controllers : List[List[CBFController]]
+        A list of CBF-based controllers for each environment and agent, used to
+        correct the unsafe policy's actions.
+    nearing_agents_indices : Tensor
+        A tensor indicating the neighboring agents for each agent in each environment.
+
+    Returns:
+    ----------
+    tensordict : TensorDict
+        The updated tensordict with corrected safe actions with CBF.
+    """
+    base_observation_key = ("agents", "info", "base_observation")
+
+    # Clone original observation
+    original_obs = tensordict[base_observation_key].clone()
+
+    # Infer parameters
+    n_envs, n_agents, obs_dim, action_dim = (
+        original_obs.shape[0],
+        original_obs.shape[1],
+        original_obs.shape[2],
+        AGENTS["n_actions"],
+    )
+
+    time_cbf = 0
+    time_rl = 0
+    time_pseudo_dis = 0
+
+    # Call the policy to generate actions for the agents
+    time_rl_start = time.time()
+    policy(tensordict)
+    time_rl += time.time() - time_rl_start  # Time for RL policy
+
+    if "nominal_action" not in tensordict[("agents", "info")].keys():
+        nominal_action = torch.zeros(
+            n_envs,
+            n_agents,
+            action_dim,
+            dtype=torch.float32,
+            device=tensordict.device,
+        )
+        tensordict[("agents", "info")].set("nominal_action", nominal_action)
+
+    # CBF-QP solving
+    time_cbf_start = time.time()
+    for i in range(n_envs):
+        for j in range(n_agents):
+            cbf_controllers[i][j].solve_decentralized_cbf_qp(tensordict)
+            time_pseudo_dis += cbf_controllers[i][j].time_pseudo_dis
+    time_cbf += time.time() - time_cbf_start
+
+    return (
+        time_rl,
+        time_cbf,
+        time_pseudo_dis,
+        tensordict,
+    )
+
+
+def cbf_constrained_decentralized_policy_multi_agents(
+    tensordict,
+    policy,
     priority_module,
     cbf_controllers,
     nearing_agents_indices,
     is_communication_noise,
-    noise_level,
+    communication_noise_level,
 ):
     """
 
@@ -2319,8 +2272,10 @@ def cbf_constrained_decentralized_policy(
             # Propagate the collected actions into the current agent's observation
             if len(actions_so_far) > 0:
                 if is_communication_noise:
-                    std_noise_speed = AGENTS["max_speed"] * noise_level
-                    std_noise_steering = AGENTS["max_steering"] * noise_level
+                    std_noise_speed = AGENTS["max_speed"] * communication_noise_level
+                    std_noise_steering = (
+                        AGENTS["max_steering"] * communication_noise_level
+                    )
                     noise = torch.cat(
                         [
                             std_noise_speed * torch.randn(action_dim, device=device),
@@ -2391,6 +2346,22 @@ def cbf_constrained_decentralized_policy(
         priority_rank,
         observable_higher_priority_agents,
     )
+
+
+def cbf_constrained_centralized_policy(
+    tensordict,
+    policy,
+    cbf_controllers,
+):
+    try:
+        raise NotImplementedError(
+            "Function cbf_constrained_centralized_policy is not yet implemented!"
+        )
+    except NotImplementedError as e:
+        print(f"Error: {e}")
+        sys.exit("Exiting program: Function not implemented.")
+
+    return time_rl, tensordict
 
 
 def cbf_constrained_centralized_policy(

@@ -17,6 +17,7 @@ class MapManager:
         )  # One of {"CPM_entire", "CPM_mixed", "intersection_1", "design you own map and name it here"}
 
         self._device = kwargs.pop("device", "cpu")
+        self._width = kwargs.pop("lane_width", None)
         self.current_lanelet_idx = []
 
         self._parse_map_file()
@@ -33,6 +34,7 @@ class MapManager:
             map_parser = ParseOSM(
                 scenario_type=self._scenario_type,
                 device=self._device,
+                lane_width=self._width,
             )
 
         self.parser = map_parser

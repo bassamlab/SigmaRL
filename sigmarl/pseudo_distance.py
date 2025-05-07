@@ -526,12 +526,6 @@ class PseudoDistance:
         2. distance to right boundary
         3. final distance = min(left, right)
         """
-        # All lanelets that are part of the reference path (including the ones that share the same boundaries)
-        (
-            self.map.parser._reference_paths_ids[0]
-            + self.map.parser._reference_paths_ids[1]
-        )
-
         # Overall bounding box
         min_x, min_y = (
             self.map.parser.bounds["min_x"],
@@ -541,6 +535,15 @@ class PseudoDistance:
             self.map.parser.bounds["max_x"],
             self.map.parser.bounds["max_y"],
         )
+
+        # For pseudo_distance_example only
+        if self.scenario_type == "pseudo_distance_example":
+            left_pts = self.map.parser.reference_paths[0]["center_line"]
+            right_pts = self.map.parser.reference_paths[1]["center_line"]
+            grid_resolution = 0.1
+        else:
+            left_pts = self.map.parser.reference_paths[ref_id]["left_boundary_shared"]
+            right_pts = self.map.parser.reference_paths[ref_id]["right_boundary_shared"]
 
         # Sample a uniform grid over the bounding box
         xs = np.arange(min_x, max_x, grid_resolution)
@@ -560,9 +563,6 @@ class PseudoDistance:
         # left_pts = self.map.parser.lanelets_all[lid - 1]["left_boundary"].numpy()
         # right_pts = self.map.parser.lanelets_all[lid - 1]["right_boundary"].numpy()
         # verts = np.vstack([left_pts, right_pts[::-1]])
-
-        left_pts = self.map.parser.reference_paths[ref_id]["left_boundary_shared"]
-        right_pts = self.map.parser.reference_paths[ref_id]["right_boundary_shared"]
 
         verts = np.vstack([left_pts, right_pts.flip(dims=[0])])
 
@@ -640,6 +640,8 @@ class PseudoDistance:
 
         mesh.set_rasterized(True)
 
+        ax.autoscale()
+
         fig_name = f"fig_pseudo_distance_{self.scenario_type}_ref_{ref_id}.pdf"
         fig.savefig(fig_name, dpi=450)
         plt.close(fig)
@@ -648,7 +650,29 @@ class PseudoDistance:
 
 
 if __name__ == "__main__":
-    scenario_type = "interchange_1"  # CPM_entire, interchange_1, intersection_1, on_ramp_1, roundabout_1, etc., see sigmarl/constants.py for more scenario types
-    map = MapManager(scenario_type=scenario_type, device="cpu")
-    pseudo_distance = PseudoDistance(scenario_type, map)
-    pseudo_distance.visualize()
+    scenario_types = [
+        "CPM_entire",
+        # "interchange_1",
+        # "interchange_2",
+        # "interchange_3",
+        # "intersection_1",
+        # "intersection_2",
+        # "intersection_3",
+        # "intersection_4",
+        # "intersection_5",
+        # "intersection_6",
+        # "intersection_7",
+        # "intersection_8",
+        # "on_ramp_1",
+        # "on_ramp_2_multilane",
+        # "roundabout_1",
+        # "roundabout_2",
+        # "pseudo_distance_example",
+    ]  # See sigmarl/constants.py for all available maps
+
+    for scenario_type in scenario_types:
+        map = MapManager(scenario_type=scenario_type, device="cpu", lane_width=0.3)
+        pseudo_distance = PseudoDistance(scenario_type, map)
+
+        for ref_id in range(len(map.parser._reference_paths_ids)):
+            pseudo_distance.visualize(ref_id=ref_id, grid_resolution=0.005)

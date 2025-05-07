@@ -38,11 +38,22 @@ class ParseMapBase(ABC):
         self._is_visualize_random_agents = kwargs.pop(
             "is_visualize_random_agents", False
         )
+        self._n_agents_visu = kwargs.pop("n_agents_visu", None)
         self._is_visualize_intersection = kwargs.pop(
             "is_visualize_intersection", False
         )  # For the CPM Scenario only
+        self._is_visualize_entry_direction = kwargs.pop(
+            "is_visualize_entry_direction", False
+        )  # Use an arrow to indicate the direction of entries
 
-        self._width = SCENARIOS[self._scenario_type]["lane_width"]  # Width of the lane
+        self._width = kwargs.pop("lane_width", None)
+
+        if self._width is None:
+            # Load the lane width from the scenario configuration if not provided
+            self._width = SCENARIOS[self._scenario_type][
+                "lane_width"
+            ]  # Width of the lane
+
         self._scale = SCENARIOS[self._scenario_type]["scale"]  # Scale the map
 
         self._is_share_lanelets = kwargs.pop(
@@ -52,10 +63,6 @@ class ParseMapBase(ABC):
         self._is_show_axis = kwargs.pop(
             "is_show_axis", False
         )  # Whether to show the x- and y- axes of the map
-
-        self._n_agents_visu = kwargs.pop(
-            "n_agents_visu", None
-        )  # Number of agents to be visualized
 
         self.bounds = {
             "min_x": float("inf"),

@@ -167,6 +167,7 @@ if __name__ == "__main__":
         try:
             model = RectangleCircleApproximation(length, width, n)
             print(f"  radius = {model.radius:.4f}")
+            print(f"  distance between circles = {model.segment:.4f}")
             print(f"  diameter-to-width = {2 * model.radius / width:.2f}")
             extra = model.compute_additional_area()
             print(f"  extra area = {extra:.5f}")

@@ -21,7 +21,6 @@ from sigmarl.helper_training import (
     SyncDataCollectorCustom,
     DecisionMakingModule,
     PriorityModule,
-    CBFModule,
 )
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data import TensorDictPrioritizedReplayBuffer
@@ -88,6 +87,14 @@ class MAPPOCAVs:
         self._ensure_save_directory_exists()
 
         if self.parameters.is_using_cbf:
+            if not self.parameters.is_load_model:
+                raise ValueError(
+                    "CBF is currently only supported for online training. Set parameters.is_load_model to True to avoid this error."
+                )
+            if self.parameters.n_agents != 1:
+                raise ValueError(
+                    "CBF is currently only supported for single-agent scenarios."
+                )
             self.cbf_controllers = self._setup_cbf_qp_controller(env)
             self._load_existing_model_for_cbf(decision_making_module, priority_module)
         else:
@@ -539,6 +546,7 @@ class MAPPOCAVs:
             return cbf_controllers
         elif self.parameters.is_using_cbf and self.parameters.is_using_centralized_cbf:
             # Each environment has one CBF-based controller
+            raise NotImplementedError("Centralized CBF is not implemented yet.")
             cbf_controllers = [
                 CBFQP(env=env, env_idx=env_idx)
                 for env_idx in range(self.parameters.num_vmas_envs)

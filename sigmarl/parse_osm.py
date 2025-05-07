@@ -202,8 +202,6 @@ class ParseOSM(ParseMapBase):
             List of dict: Each dict contains information about a reference path.
         """
         for ref_path_ids in self._reference_paths_ids:
-            np.int32(ref_path_ids)
-
             center_line_points = []
 
             # Check if the reference path is a loop
@@ -347,8 +345,10 @@ class ParseOSM(ParseMapBase):
             self.bounds["max_x"] - self.bounds["min_x"]
         )
         figsize_x = SCENARIOS[self._scenario_type]["figsize_x"]
-        fig, ax = plt.subplots(figsize=(figsize_x, figsize_x * aspect_ratio))
-        ax.set_aspect("equal", adjustable="datalim")
+        fig, ax = plt.subplots(
+            figsize=(figsize_x, figsize_x * aspect_ratio), constrained_layout=True
+        )
+        ax.set_aspect("equal")
 
         for path in self.reference_paths:
             center_line = path["center_line"]
@@ -389,27 +389,20 @@ class ParseOSM(ParseMapBase):
             # ax.fill(curve_close[:,0], curve_close[:,1], color="lightgrey", alpha=0.4)
 
             # Add arrows to indicate direction
-            p_start = center_line[0]
-            direction_start = center_line_vec_normalized[0]
-            ax.quiver(
-                p_start[0],
-                p_start[1],
-                direction_start[0],
-                direction_start[1],
-                angles="xy",
-                scale_units="xy",
-                scale=3,
-                color="black",
-                zorder=2,
-            )
-
-            # Calculate the starting point for the ending arrow
-            p_end = center_line[-1]
-            direction_end = center_line_vec_normalized[-1]
-            arrow_length = 0.3  # Adjust here for your case
-            # Starting point for the ending arrow such that it ends at the last point
-            p_end_start = p_end - direction_end * arrow_length
-            # ax.quiver(p_end_start[0], p_end_start[1], direction_end[0], direction_end[1], angles='xy', scale_units='xy', scale=1.5, color='b', alpha=0.2, zorder=2)
+            if self._is_visualize_entry_direction:
+                p_start = center_line[0]
+                direction_start = center_line_vec_normalized[0]
+                ax.quiver(
+                    p_start[0],
+                    p_start[1],
+                    direction_start[0],
+                    direction_start[1],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=3,
+                    color="black",
+                    zorder=2,
+                )
 
             if self._is_visu_lane_ids:
                 ax.text(
@@ -453,13 +446,13 @@ class ParseOSM(ParseMapBase):
 
         ax.set_xlim((self.bounds["min_x"], self.bounds["max_x"]))
         ax.set_ylim((self.bounds["min_y"], self.bounds["max_y"]))
+
         ax.grid(False)
 
         ax.autoscale()
 
         if self._is_save_fig:
             # Save fig
-            plt.tight_layout()  # Set the layout to be tight to minimize white space
             fig_name = "map_" + self._scenario_type + ".pdf"
             plt.savefig(fig_name, format="pdf", bbox_inches="tight")
             print(f"A fig is saved at {fig_name}")
@@ -487,6 +480,7 @@ if __name__ == "__main__":
         "on_ramp_2_multilane",
         "roundabout_1",
         "roundabout_2",
+        # "pseudo_distance_example",
     ]  # See sigmarl/constants.py for all available maps
 
     for scenario_type in scenario_types:
@@ -496,10 +490,12 @@ if __name__ == "__main__":
         print("---------------------------------------------------")
         parser = ParseOSM(
             scenario_type=scenario_type,
+            lane_width=0.2 if scenario_types == "intersection_3" else 0.3,
             device="cpu" if not torch.cuda.is_available() else "cuda:0",
             is_share_lanelets=False,
             is_visualize_map=True,
             is_visualize_random_agents=True,
+            n_agents_visu=1,
             is_save_fig=True,
             is_plt_show=False,
             is_visu_lane_ids=False,

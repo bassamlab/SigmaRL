@@ -463,7 +463,7 @@ class Observations:
         self,
         n_nearing_agents=None,
         nearing_agents_indices=None,
-        noise_level=None,
+        obs_noise_level=None,
         n_stored_steps=None,
         n_observed_steps=None,
         past_pos: CircularBuffer = None,
@@ -487,7 +487,7 @@ class Observations:
     ):
         self.n_nearing_agents = n_nearing_agents
         self.nearing_agents_indices = nearing_agents_indices
-        self.noise_level = noise_level  # Whether to add noise to observations
+        self.obs_noise_level = obs_noise_level  # Whether to add noise to observations
         self.n_stored_steps = n_stored_steps  # Number of past steps to store
         self.n_observed_steps = n_observed_steps  # Number of past steps to observe
 
