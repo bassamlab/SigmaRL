@@ -8,7 +8,7 @@ from tensordict.tensordict import TensorDict
 
 from vmas.simulator.utils import save_video
 
-from sigmarl.helper_training import SaveData
+from sigmarl.helper_training import SaveData, is_latex_available
 from sigmarl.map_manager import MapManager
 from sigmarl.mappo_cavs import mappo_cavs
 from sigmarl.constants import AGENTS
@@ -30,7 +30,7 @@ plt.rcParams.update(
         "ytick.labelsize": 11,
         "legend.fontsize": 11,
         "font.family": "serif",
-        "text.usetex": True,
+        "text.usetex": is_latex_available(),
     }
 )
 

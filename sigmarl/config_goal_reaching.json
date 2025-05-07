@@ -4,7 +4,6 @@
     "dt": 0.05,
     "device": "cpu",
     "n_iters": 100,
-    "frames_per_batch": 4096,
     "num_epochs": 60,
     "minibatch_size": 512,
     "lr": 2e-4,

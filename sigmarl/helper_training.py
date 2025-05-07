@@ -5,10 +5,7 @@
 
 import torch
 import torch.nn as nn
-import sys
 from torch import Tensor
-
-import typing
 
 from vmas.simulator.core import World, AgentState, Agent
 from vmas.simulator.utils import TorchUtils, override
@@ -29,7 +26,6 @@ from torchrl.envs.utils import (
     ExplorationType,
 )
 from torchrl.envs.common import EnvBase
-from torchrl.envs.libs.vmas import VmasEnv
 
 
 # TorchRL Utils
@@ -49,15 +45,18 @@ from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
 from torchrl.data import Unbounded
 
 # Utils
+import subprocess
+import matplotlib
 from matplotlib import pyplot as plt
-from typing import Callable, Optional, Callable, Optional
+
+import typing
+from typing import Callable, Optional, Callable, Optional, Dict, Sequence, Union
 
 import json
 import os
 import re
 import time
-
-from typing import Callable, Dict, Optional, Sequence, Union
+import sys
 
 DEFAULT_EXPLORATION_TYPE: ExplorationType = ExplorationType.RANDOM
 
@@ -2369,3 +2368,20 @@ def cbf_constrained_centralized_policy(
         sys.exit("Exiting program: Function not implemented.")
 
     return time_rl, tensordict
+
+
+def is_latex_available():
+    try:
+        # Try running `latex -version` to check if it's installed
+        subprocess.run(
+            ["latex", "-version"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+matplotlib.rcParams["text.usetex"] = is_latex_available()

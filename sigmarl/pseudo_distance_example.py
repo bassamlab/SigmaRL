@@ -5,6 +5,7 @@
 
 import torch
 
+from sigmarl.helper_training import is_latex_available
 from sigmarl.map_manager import MapManager
 
 import numpy as np
@@ -23,7 +24,7 @@ plt.rcParams.update(
         "ytick.labelsize": 14,
         "legend.fontsize": 14,
         "font.family": "serif",
-        "text.usetex": True,
+        "text.usetex": is_latex_available(),
     }
 )
 

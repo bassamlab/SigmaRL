@@ -6,6 +6,7 @@
 from matplotlib.patches import PathPatch
 import torch
 
+from sigmarl.helper_training import is_latex_available
 from sigmarl.map_manager import MapManager
 from sigmarl.constants import SCENARIOS
 
@@ -24,7 +25,7 @@ plt.rcParams.update(
         "ytick.labelsize": 9,
         "legend.fontsize": 9,
         "font.family": "serif",
-        "text.usetex": True,
+        "text.usetex": is_latex_available(),
     }
 )
 
