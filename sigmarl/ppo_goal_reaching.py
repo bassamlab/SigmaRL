@@ -91,7 +91,6 @@ class PPOGoalReaching:
         save_data = self._initialize_save_data()
         decision_making_module = self._setup_decision_making_module(env)
         priority_module = self._setup_priority_module(env)
-        cbf_module = self._setup_cbf_module(env)
 
         self._ensure_save_directory_exists()
 

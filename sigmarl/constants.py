@@ -625,6 +625,12 @@ SCENARIOS = {
     "goal_reaching_1": {
         "n_agents": 1,
         "name": "",
+        "x_dim_min": 0.0,
+        "x_dim_max": 20.0,
+        "y_dim_min": 0.0,
+        "y_dim_max": 20.0,
+        "world_x_dim": 20.0,
+        "world_y_dim": 20.0,
         "reference_paths_ids": [],
         "neighboring_lanelet_ids": {},
         "figsize_x": 3.0,
