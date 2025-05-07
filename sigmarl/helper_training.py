@@ -13,8 +13,6 @@ import typing
 from vmas.simulator.core import World, AgentState, Agent
 from vmas.simulator.utils import TorchUtils, override
 
-import math
-
 # Tensordict modules
 from tensordict.tensordict import TensorDictBase, TensorDict
 from tensordict.nn import TensorDictModule
@@ -44,11 +42,6 @@ from torchrl.objectives import ClipPPOLoss, ValueEstimators
 
 from torchrl.data.utils import DEVICE_TYPING
 
-from vmas.simulator.utils import (
-    X,
-    Y,
-)
-
 # Multi-agent network
 from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
 
@@ -58,14 +51,13 @@ from torchrl.data import Unbounded
 # Utils
 from matplotlib import pyplot as plt
 from typing import Callable, Optional, Callable, Optional
-from ctypes import byref
 
 import json
 import os
 import re
 import time
 
-from typing import Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, Optional, Sequence, Union
 
 DEFAULT_EXPLORATION_TYPE: ExplorationType = ExplorationType.RANDOM
 
@@ -1639,7 +1631,7 @@ def get_path_to_save_model(parameters: Parameters):
         parameters.where_to_save, parameters.model_name + "_critic.pth"
     )
     PATH_FIG = os.path.join(
-        parameters.where_to_save, parameters.model_name + "_training_process.pdf"
+        parameters.where_to_save, parameters.model_name + "_training_process.jpg"
     )
     PATH_JSON = os.path.join(
         parameters.where_to_save, parameters.model_name + "_data.json"
@@ -1749,8 +1741,7 @@ def save(
     plt.xlabel("Iterations")
     plt.ylabel("Episode mean reward")
     plt.tight_layout()  # Set the layout to be tight to minimize white space !!! deprecated
-    plt.savefig(PATH_FIG, format="pdf", bbox_inches="tight")
-    # plt.savefig(PATH_FIG, format="pdf")
+    plt.savefig(PATH_FIG, format="jpg", dpi=300, bbox_inches="tight")
 
     # Save models
     if (policy != None) & (critic != None):
