@@ -942,7 +942,9 @@ if __name__ == "__main__":
 
     elif user_choice == 2:
         is_using_cbfs = [True, False]
-        random_seeds = [1]
+        random_seeds = [
+            1
+        ]  # Add more random seeds if needed. In our paper, we use [1, 2, 3, 4, 5].
         n_circles_approximate_vehicle_list = [3]
         scenario_types = [
             "CPM_entire",
