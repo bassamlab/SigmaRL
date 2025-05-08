@@ -40,19 +40,15 @@ class TestTrainingScenarios(unittest.TestCase):
                 parameters.n_iters = (
                     5  # Reduce the number of iterations for quick testing
                 )
-                parameters.total_frames = (
-                    parameters.frames_per_batch * parameters.n_iters
-                )
+
+                parameters.max_steps = 128
+                parameters.num_vmas_envs = 32
 
                 # Run training for the scenario
                 if parameters.scenario_type.lower() == "goal_reaching_1":
-                    env, policy, priority_module, parameters = ppo_goal_reaching(
-                        parameters=parameters
-                    )
+                    ppo_goal_reaching(parameters=parameters)
                 else:
-                    env, policy, priority_module, parameters = mappo_cavs(
-                        parameters=parameters
-                    )
+                    mappo_cavs(parameters=parameters)
 
                 self.assertTrue(os.path.exists(parameters.where_to_save))
                 self.assertTrue(len(os.listdir(parameters.where_to_save)) > 1)

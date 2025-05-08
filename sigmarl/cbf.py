@@ -17,10 +17,12 @@ from tensordict.nn.distributions import NormalParamExtractor
 
 from tensordict.tensordict import TensorDict
 
-import matplotlib
+from sigmarl.helper_training import is_latex_available
 
-import matplotlib.pyplot as plt
 import cvxpy as cp
+
+import matplotlib
+import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib import animation
 from matplotlib.patches import FancyArrowPatch
@@ -30,7 +32,7 @@ matplotlib.rcParams["pdf.fonttype"] = 42  # Use Type 1 fonts (vector fonts)
 matplotlib.rcParams["font.family"] = "serif"
 matplotlib.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif", "Georgia"]
 matplotlib.rcParams.update({"font.size": 11})  # Set global font size
-# plt.rcParams["text.usetex"] = True
+matplotlib.rcParams["text.usetex"] = is_latex_available()
 
 from sigmarl.mtv_based_sm_predictor import SafetyMarginEstimatorModule
 

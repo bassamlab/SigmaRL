@@ -40,7 +40,8 @@ try:
             parameters.num_vmas_envs = 1
 
         parameters.scenario_type = "CPM_entire"  # One of "CPM_mixed", "CPM_entire", "intersection_1", "on_ramp_1", "roundabout_1", "goal_reaching_1", etc. See sigmarl/constants.py for more scenario types
-        parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
+        # parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
+        parameters.n_agents = 1
 
         parameters.is_save_simulation_video = False
         parameters.is_visualize_short_term_path = True
@@ -52,7 +53,9 @@ try:
                 parameters=parameters
             )
         else:
-            env, policy, priority_module, parameters = mappo_cavs(parameters=parameters)
+            env, policy, priority_module, _, parameters = mappo_cavs(
+                parameters=parameters
+            )
 
         out_td, frame_list = env.rollout(
             max_steps=parameters.max_steps - 1,

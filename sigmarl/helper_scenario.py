@@ -463,7 +463,7 @@ class Observations:
         self,
         n_nearing_agents=None,
         nearing_agents_indices=None,
-        noise_level=None,
+        obs_noise_level=None,
         n_stored_steps=None,
         n_observed_steps=None,
         past_pos: CircularBuffer = None,
@@ -487,7 +487,7 @@ class Observations:
     ):
         self.n_nearing_agents = n_nearing_agents
         self.nearing_agents_indices = nearing_agents_indices
-        self.noise_level = noise_level  # Whether to add noise to observations
+        self.obs_noise_level = obs_noise_level  # Whether to add noise to observations
         self.n_stored_steps = n_stored_steps  # Number of past steps to store
         self.n_observed_steps = n_observed_steps  # Number of past steps to observe
 
@@ -1288,3 +1288,36 @@ def get_current_lanelet_id(
     ).squeeze(-1)
 
     return current_id
+
+
+def compute_pseudo_tangent_vector(points: torch.Tensor) -> torch.Tensor:
+    """
+    Approximate the tangent vector at each point of a 2D polyline.
+
+    The tangent at a given point is estimated as follows:
+    - For the first point: forward difference with the next point.
+    - For the last point: backward difference with the previous point.
+    - For all interior points: central difference using the next and previous points.
+
+    Args:
+        points (torch.Tensor): Tensor of shape (N, 2) representing a polyline with N points in 2D space.
+
+    Returns:
+        torch.Tensor: Tensor of shape (N, 2) where each row is the approximate tangent vector at the corresponding point.
+    """
+    num_points = points.size(0)
+    # Allocate tensor for storing the tangent vectors
+    tangent_vector = torch.zeros_like(points)
+
+    if num_points >= 2:
+        # Approximate the tangent vector at the first point
+        tangent_vector[0] = points[1] - points[0]
+        # Approximate the tangent vector at the last point
+        tangent_vector[-1] = points[-1] - points[-2]
+
+    if num_points >= 3:
+        # For interior points, use central differences (next - previous)
+        # Vectorized computation from index 1 to N-2
+        tangent_vector[1:-1] = points[2:] - points[:-2]
+
+    return tangent_vector

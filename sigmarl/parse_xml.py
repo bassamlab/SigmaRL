@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import os
 import xml.etree.ElementTree as ET
 from importlib import resources
 
@@ -18,6 +19,11 @@ from sigmarl.constants import SCENARIOS, AGENTS, THRESHOLD
 
 
 class ParseXML(ParseMapBase):
+    """
+    This class is used to parse the XML file of the map of the CPM Scenario.
+    See https://github.com/bassamlab/assets/blob/main/sigmarl/media/cpm_scenario_all_lanelets_only_center_line.pdf for an visualization of the map.
+    """
+
     def __init__(self, scenario_type, device="cpu", **kwargs):
         super().__init__(scenario_type, device, **kwargs)  # Initialize base class
 
@@ -45,9 +51,14 @@ class ParseXML(ParseMapBase):
         self.bounds["min_y"] = SCENARIOS[self._scenario_type]["y_dim_min"]
         self.bounds["max_y"] = SCENARIOS[self._scenario_type]["y_dim_max"]
 
+        self.bounds["world_x_dim"] = self.bounds["min_x"] + self.bounds["max_x"]
+        self.bounds["world_y_dim"] = self.bounds["min_y"] + self.bounds["max_y"]
+
         self._parse_map_file()
 
         self._get_reference_paths(is_show_each_ref_path=False)
+
+        self._compute_pseudo_tangent_vectors()
 
         if self._is_visualize_map:
             self.visualize_map()
@@ -197,8 +208,9 @@ class ParseXML(ParseMapBase):
             figsize=(figsize_x, figsize_x * aspect_ratio), constrained_layout=True
         )  # Size in inches, adjusted for 4.0m x 4.5m dimensions
 
-        ax.set_aspect("equal", adjustable="box")  # Ensures equal scaling
-        ax.grid(True, linewidth=0.3)
+        ax.set_aspect("equal")  # Ensures equal scaling
+
+        ax.tick_params(axis="both", direction="in")
 
         for lanelet in self.lanelets_all:
             # Extract coordinates for left, right, and center lines
@@ -209,7 +221,6 @@ class ParseXML(ParseMapBase):
             # Extract line markings
             left_line_marking = lanelet["left_line_marking"]
             right_line_marking = lanelet["right_line_marking"]
-            center_line_marking = lanelet["center_line_marking"]
 
             is_use_random_color = False
             # Choose color
@@ -249,41 +260,58 @@ class ParseXML(ParseMapBase):
                     fontsize=self._fontsize,
                 )
 
-        n_agents = SCENARIOS[self._scenario_type]["n_agents"]
-
         if self._is_visualize_intersection:
             self._visualize_intersection()
 
-        if self._scenario_type == "CPM_mixed":
-            if self._is_visualize_random_agents:
-                self._visualize_random_agents(
-                    ax, self.reference_paths_intersection, n_agents
-                )
+        if self._is_visualize_random_agents:
+            if self._n_agents_visu is None:
+                self._n_agents_visu = SCENARIOS[self._scenario_type]["n_agents"]
+
+            if self._scenario_type == "CPM_mixed":
+                self._visualize_random_agents(ax, self.reference_paths_intersection)
+            else:
+                self._visualize_random_agents(ax, self.reference_paths)
+
+        if self._is_show_axis:
+            ax.set_xlabel(r"$x$ [m]", fontsize=self._fontsize)
+            ax.set_ylabel(r"$y$ [m]", fontsize=self._fontsize)
+            ax.set_xticks(
+                np.arange(self.bounds["min_x"], self.bounds["max_x"] + 0.05, 1.0)
+            )
+            ax.set_yticks(
+                np.arange(self.bounds["min_y"], self.bounds["max_y"] + 0.05, 1.0)
+            )
+
+            # Set all spines (outer box lines) to gray
+            ax = plt.gca()
+            for spine in ax.spines.values():
+                spine.set_color("gray")  # or use a specific shade, e.g., '#888888'
+            # Set tick marks and labels to gray
+            ax.tick_params(axis="both", colors="gray")  # both ticks and tick labels
+            ax.xaxis.label.set_color("gray")
+            ax.yaxis.label.set_color("gray")
         else:
-            if self._is_visualize_random_agents:
-                self._visualize_random_agents(ax, self.reference_paths, n_agents)
+            ax.set_xticks([])
+            ax.set_yticks([])
 
-        # ax.xlabel(r"$x$ [m]", fontsize=self._fontsize)
-        # ax.ylabel(r"$y$ [m]", fontsize=self._fontsize)
-        ax.set_xlim((0, self.bounds["max_x"]))
-        ax.set_ylim((0, self.bounds["max_y"]))
-        # ax.xticks(np.arange(0, self.bounds["max_x"]+0.05, 0.5), fontsize=self._fontsize)
-        # ax.yticks(np.arange(0, self.bounds["max_y"]+0.05, 0.5), fontsize=self._fontsize)
-        ax.set_xticks([])
-        ax.set_yticks([])
+            # Remove the outer box
+            for spine in ax.spines.values():
+                spine.set_visible(False)
 
-        # Remove the outer box
-        for spine in ax.spines.values():
-            spine.set_visible(False)
+        ax.set_xlim((self.bounds["min_x"], self.bounds["max_x"]))
+        ax.set_ylim((self.bounds["min_y"], self.bounds["max_y"]))
+        ax.grid(False)
 
         # Save fig
         if self._is_save_fig:
-            plt.tight_layout()  # Set the layout to be tight to minimize white space
-            plt.savefig(self._scenario_type + ".pdf", format="pdf", bbox_inches="tight")
-            print(f"A fig is saved at {self._scenario_type + '.pdf'}")
+            path = os.path.join("map_" + self._scenario_type + ".pdf")
+            plt.savefig(path, format="pdf", bbox_inches="tight")
+            print(f"A fig is saved at {path}")
 
         if self._is_plt_show:
             plt.show()
+
+        return fig, ax
 
     def _visualize_intersection(self):
         intersection_boundary = []
@@ -400,6 +428,67 @@ class ParseXML(ParseMapBase):
             [24, 19],
             [98, 99],  # intersection: incoming 7 and incoming 8
         ]
+
+        # Do not consider merge-in and merge-out lanelets
+        lanelets_share_same_boundaries_list_without_merges = [
+            [4, 3],
+            [22, 3],
+            [6, 5],
+            [23, 5],
+            [8, 7],
+            [60, 59],
+            [58, 57],
+            [75, 57],
+            [56, 55],
+            [74, 55],
+            [54, 53],
+            [80, 79],
+            [82, 81],
+            [100, 81],
+            [84, 83],
+            [101, 83],
+            [86, 85],
+            [34, 33],
+            [32, 31],
+            [31, 49],
+            [30, 29],
+            [29, 48],
+            [28, 27],
+            [2, 1],  # outer circle (urban)
+            [13, 14],
+            [15, 16],
+            [9, 10],
+            [11, 12],  # inner circle (top right)
+            [63, 64],
+            [61, 62],
+            [67, 68],
+            [65, 66],  # inner circle (bottom right)
+            [91, 92],
+            [93, 94],
+            [87, 88],
+            [89, 90],  # inner circle (bottom left)
+            [37, 38],
+            [35, 36],
+            [41, 42],
+            [39, 40],  # inner circle (top left)
+            [25, 18],
+            [26, 17],
+            [52, 43],
+            [72, 73],  # intersection: incoming 1 and incoming 2
+            [51, 44],
+            [50, 45],
+            [102, 97],
+            [20, 21],  # intersection: incoming 3 and incoming 4
+            [103, 96],
+            [104, 95],
+            [78, 69],
+            [46, 47],  # intersection: incoming 5 and incoming 6
+            [77, 70],
+            [76, 71],
+            [24, 19],
+            [98, 99],  # intersection: incoming 7 and incoming 8
+        ]
+
         path_intersection = [
             [11, 25, 13],
             [11, 26, 52, 37],
@@ -522,32 +611,49 @@ class ParseXML(ParseMapBase):
                     left_boundaries = torch.cat(
                         (left_boundaries, left_bound[1:, :]), dim=0
                     )
+                else:
+                    left_boundaries = torch.cat((left_boundaries, left_bound), dim=0)
+                    print(
+                        f"[WARNING] The left boundaries of lanelet {lanelet} are not connected to the previous lanelet."
+                    )
+                if (
+                    torch.norm(left_boundaries_shared[-1, :] - left_bound_shared[0, :])
+                    < 1e-4
+                ):
                     left_boundaries_shared = torch.cat(
                         (left_boundaries_shared, left_bound_shared[1:, :]), dim=0
                     )
                 else:
-                    left_boundaries = torch.cat((left_boundaries, left_bound), dim=0)
-                    left_boundaries_shared = torch.cat(
-                        (left_boundaries_shared, left_bound_shared), dim=0
+                    # Enable smooth transition by linear interpolation
+                    left_boundaries_shared = self.smooth_concatenate(
+                        left_boundaries_shared, left_bound_shared, overlap=4
                     )
 
                 if torch.norm(right_boundaries[-1, :] - right_bound[0, :]) < 1e-4:
                     right_boundaries = torch.cat(
                         (right_boundaries, right_bound[1:, :]), dim=0
                     )
+                else:
+                    right_boundaries = torch.cat((right_boundaries, right_bound), dim=0)
+                    print(
+                        f"[WARNING] The right boundaries of lanelet {lanelet} are not connected to the previous lanelet."
+                    )
+                if (
+                    torch.norm(
+                        right_boundaries_shared[-1, :] - right_bound_shared[0, :]
+                    )
+                    < 1e-4
+                ):
                     right_boundaries_shared = torch.cat(
                         (right_boundaries_shared, right_bound_shared[1:, :]), dim=0
                     )
                 else:
-                    right_boundaries = torch.cat((right_boundaries, right_bound), dim=0)
-                    right_boundaries_shared = torch.cat(
-                        (right_boundaries_shared, right_bound_shared), dim=0
+                    # Enable smooth transition by linear interpolation
+                    right_boundaries_shared = self.smooth_concatenate(
+                        right_boundaries_shared, right_bound_shared, overlap=4
                     )
 
         center_lines = (left_boundaries + right_boundaries) / 2
-
-        # Check if the center line is a loop
-        is_loop = (center_lines[0, :] - center_lines[-1, :]).norm() <= 1e-4
 
         center_lines_vec = torch.diff(
             center_lines, dim=0
@@ -563,6 +669,32 @@ class ParseXML(ParseMapBase):
         )
 
         center_line_yaw = torch.atan2(center_lines_vec[:, 1], center_lines_vec[:, 0])
+
+        # Check if the center line is a loop
+        is_loop = (center_lines[0, :] - center_lines[-1, :]).norm() <= 1e-4
+
+        if lanelet == 2:
+            print(f"[INFO] The center line is a loop: {is_loop}")
+        if is_loop:
+            # Check if the first and last points are the same
+            if (
+                torch.norm(left_boundaries_shared[0, :] - left_boundaries_shared[-1, :])
+                > 0.1
+            ):
+                left_boundaries_shared = self.smooth_loop_boundary(
+                    left_boundaries_shared
+                )
+            if (
+                torch.norm(
+                    right_boundaries_shared[0, :] - right_boundaries_shared[-1, :]
+                )
+                > 0.1
+            ):
+                right_boundaries_shared = self.smooth_loop_boundary(
+                    right_boundaries_shared
+                )
+
+            # plt.plot(right_boundaries_shared[:, 0], right_boundaries_shared[:, 1])
 
         assert left_boundaries.shape == left_boundaries.shape
         assert left_boundaries.shape[1] == 2  # Must be a two-column array
@@ -658,6 +790,85 @@ class ParseXML(ParseMapBase):
         else:
             return []  # Return empty list if ref_path_id is not found
 
+    @staticmethod
+    def smooth_concatenate(
+        left_boundaries_shared: torch.Tensor, left_bound: torch.Tensor, overlap: int = 4
+    ) -> torch.Tensor:
+        """
+        Concatenate two tensors smoothly by interpolating between the last few points
+        of the first tensor and the first few points of the second tensor.
+
+        Parameters:
+        - left_boundaries_shared (torch.Tensor): Tensor of shape (N1, 2)
+        - left_bound (torch.Tensor): Tensor of shape (N2, 2)
+        - overlap (int): Number of points to interpolate for smooth transition
+
+        Returns:
+        - torch.Tensor: Concatenated tensor with smooth transition
+        """
+
+        # Get the end point of the first tensor and start point of the second tensor for interpolation
+        start_point = left_boundaries_shared[-overlap]
+        end_point = left_bound[overlap - 1]
+
+        # Create interpolation weights
+        t = torch.linspace(
+            0, 1, steps=2 * overlap, device=left_boundaries_shared.device
+        ).unsqueeze(
+            1
+        )  # Shape: (2*overlap, 1)
+
+        # Linear interpolation
+        interpolated = (1 - t) * start_point + t * end_point  # Shape: (2*overlap, 2)
+
+        # Concatenate:
+        # - everything in `left_boundaries_shared` except the last `overlap` points
+        # - interpolated transition
+        # - everything in `left_bound` except the first `overlap` points
+        result = torch.cat(
+            [left_boundaries_shared[:-overlap], interpolated, left_bound[overlap:]],
+            dim=0,
+        )
+
+        return result
+
+    @staticmethod
+    def smooth_loop_boundary(boundary: torch.Tensor, overlap: int = 4) -> torch.Tensor:
+        """
+        Smooth a looped boundary by replacing the first and last `overlap` points
+        with interpolated points between the end and start of the boundary.
+
+        Parameters:
+        - boundary (torch.Tensor): Tensor of shape (N, 2), assumed to be a closed loop.
+        - overlap (int): Number of points to replace at both ends.
+
+        Returns:
+        - torch.Tensor: Modified boundary with smooth loop transition.
+        """
+        # Define interpolation start and end
+        start_point = boundary[-overlap]  # A bit before the end
+        end_point = boundary[overlap - 1]  # A bit after the beginning
+
+        # Generate interpolation weights
+        t = torch.linspace(0, 1, steps=2 * overlap, device=boundary.device).unsqueeze(
+            1
+        )  # Shape: (2*overlap, 1)
+
+        # Linear interpolation from end to start
+        interpolated = (1 - t) * start_point + t * end_point  # Shape: (2*overlap, 2)
+
+        # Replace:
+        # - first `overlap` points with first half of interpolated
+        # - last `overlap` points with second half of interpolated
+        modified_boundary = boundary.clone()
+        modified_boundary[:overlap] = interpolated[overlap:]
+        modified_boundary[-overlap:] = interpolated[:overlap]
+
+        # Append the first point to the end to close the loop
+        modified_boundary = torch.cat([modified_boundary, modified_boundary[:1]], dim=0)
+
+        return modified_boundary
+
 
 if __name__ == "__main__":
     parser = ParseXML(
@@ -668,7 +879,8 @@ if __name__ == "__main__":
         is_plt_show=False,
         is_visu_lane_ids=False,
         is_visualize_random_agents=True,
-        is_visualize_intersection=True,
+        n_agents_visu=1,
+        is_visualize_intersection=False,
     )
 
     # print(parser.lanelets_all)

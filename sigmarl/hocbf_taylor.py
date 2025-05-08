@@ -14,6 +14,8 @@ import multiprocessing as mp
 import pickle
 import time
 
+from sigmarl.helper_training import is_latex_available
+
 
 plt.rcParams.update(
     {
@@ -24,7 +26,7 @@ plt.rcParams.update(
         "ytick.labelsize": 16,
         "legend.fontsize": 16,
         "font.family": "serif",
-        "text.usetex": True,
+        "text.usetex": is_latex_available(),
     }
 )
 
