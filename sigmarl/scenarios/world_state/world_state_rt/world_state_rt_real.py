@@ -73,10 +73,13 @@ class WorldStateRTReal(WorldStateRT):
                                           ref_paths_scenario[path_idx]["center_line_yaw"][point_idx - 1])
                              for path_idx, point_idx in enumerate(point_indices)]
 
-        costs = [distance**2 + yaw for distance, yaw in zip(distances, rel_yaws)]
+        costs = [(distance * 100)**2 + yaw for distance, yaw in zip(distances, rel_yaws)]
 
         path_id = torch.argmin(torch.tensor(costs)).item()
         ref_path = ref_paths_scenario[path_id]
+
+        self.ref_paths_agent_related.path_id[:, agent_index] = path_id
+        self.ref_paths_agent_related.point_id[:, agent_index] = point_indices[path_id]
 
         return ref_path, path_id
 
@@ -89,8 +92,12 @@ class WorldStateRTReal(WorldStateRT):
             else self.vertices,
             distance_type=self.distances.type,
             is_set_diagonal=True,
-            x_semidim=SCENARIOS["CPM_entire"]["world_x_dim"], # currently we only support the full map for real world applications
-            y_semidim=SCENARIOS["CPM_entire"]["world_x_dim"], # currently we only support the full map for real world applications
+            x_semidim=torch.tensor(
+                SCENARIOS["CPM_entire"]["world_x_dim"], device=self.device, dtype=torch.float32
+            ), # currently we only support the full map for real world applications
+            y_semidim=torch.tensor(
+                SCENARIOS["CPM_entire"]["world_x_dim"], device=self.device, dtype=torch.float32
+            ) # currently we only support the full map for real world applications
         )
 
         self.distances.agents[env_index, :, :] = mutual_distances[env_index, :, :]

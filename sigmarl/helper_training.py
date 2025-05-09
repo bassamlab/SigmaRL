@@ -66,6 +66,7 @@ import re
 from typing import Callable, Dict, Optional, Sequence, Tuple, Union
 
 from sigmarl.modules.decision_making_module import DecisionMakingModule
+from sigmarl.modules.optimization_module import OptimizationModule
 from sigmarl.modules.priority_module import PriorityModule
 
 DEFAULT_EXPLORATION_TYPE: ExplorationType = ExplorationType.RANDOM
@@ -1231,6 +1232,7 @@ def save(
     parameters: Parameters,
     save_data: SaveData,
     decision_making_module: DecisionMakingModule,
+    optimization_module: OptimizationModule,
     priority_module: PriorityModule
 ):
     # Get paths
@@ -1262,10 +1264,10 @@ def save(
     # plt.savefig(PATH_FIG, format="pdf")
 
     # Save models
-    if decision_making_module and decision_making_module.policy and decision_making_module.critic:
+    if decision_making_module and optimization_module and decision_making_module.policy and optimization_module.critic:
         # Save current models
         torch.save(decision_making_module.policy.state_dict(), PATH_POLICY)
-        torch.save(decision_making_module.critic.state_dict(), PATH_CRITIC)
+        torch.save(optimization_module.critic.state_dict(), PATH_CRITIC)
 
         if (parameters.is_using_prioritized_marl and
                 parameters.prioritization_method.lower() == "marl" and

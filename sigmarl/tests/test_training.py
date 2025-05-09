@@ -50,7 +50,7 @@ class TestTrainingScenarios(unittest.TestCase):
                         parameters=parameters
                     )
                 else:
-                    env, decision_making_module, priority_module, parameters = mappo_cavs(
+                    env, decision_making_module, optimization_module, priority_module, parameters = mappo_cavs(
                         parameters=parameters
                     )
 

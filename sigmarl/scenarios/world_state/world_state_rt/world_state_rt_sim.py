@@ -16,8 +16,6 @@ class WorldStateRTSimParameters(WorldStateRTParameters):
     cpm_scenario_probabilities: List[float]
     reset_agent_min_distance: torch.Tensor
 
-
-
 class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
     def __init__(self, params: WorldStateRTSimParameters, map: MapManager):
@@ -127,7 +125,6 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
                                                                               env_index,
                                                                               agent_index,
                                                                               is_reset_single_agent)
-
         rot_start = ref_path["center_line_yaw"][random_point_id]
         steering_start = torch.zeros_like(rot_start, device=self.world.device)
         sideslip_start = torch.zeros_like(

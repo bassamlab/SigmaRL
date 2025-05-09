@@ -52,8 +52,8 @@ try:
                 parameters=parameters
             )
         else:
-            env, decision_making_module, priority_module, parameters = mappo_cavs(
-            parameters=parameters
+            env, decision_making_module, optimization_module, priority_module, parameters = mappo_cavs(
+                parameters=parameters
             )
 
         out_td, frame_list = env.rollout(

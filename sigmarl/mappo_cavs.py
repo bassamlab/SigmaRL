@@ -45,6 +45,7 @@ from sigmarl.helper_training import (
 )
 from sigmarl.modules.cbf_module import CBFModule
 from sigmarl.modules.decision_making_module import DecisionMakingModule
+from sigmarl.modules.optimization_module import OptimizationModule
 from sigmarl.modules.priority_module import PriorityModule
 
 from sigmarl.scenarios.road_traffic import ScenarioRoadTraffic
@@ -78,18 +79,20 @@ class MAPPOCAVs:
         env = self._setup_environment()
         save_data = self._initialize_save_data()
         decision_making_module = self._setup_decision_making_module(env)
+        optimization_module = self._setup_optimization_module(env, decision_making_module)
         priority_module = self._setup_priority_module(env)
         cbf_module = self._setup_cbf_module(env)
 
         self._ensure_save_directory_exists()
 
         if self.parameters.is_load_model:
-            self._load_existing_model(decision_making_module, priority_module)
+            self._load_existing_model(decision_making_module, optimization_module, priority_module)
             if not self.parameters.is_continue_train:
                 cprint("[INFO] Training will not continue.", "blue")
                 return (
                     env,
                     decision_making_module,
+                    optimization_module,
                     priority_module,
                     self.parameters,
                 )
@@ -104,30 +107,31 @@ class MAPPOCAVs:
         t_start = time.time()
         for tensordict_data in collector:
             self._process_tensordict_data(tensordict_data, env)
-            self._compute_gae(tensordict_data, decision_making_module, priority_module)
+            self._compute_gae(tensordict_data, optimization_module, priority_module)
             self._update_priorities(tensordict_data)
 
             data_view = tensordict_data.reshape(-1)
             replay_buffer.extend(data_view)
 
-            self._train_epoch(decision_making_module, priority_module, replay_buffer)
+            self._train_epoch(optimization_module, priority_module, replay_buffer)
 
             collector.update_policy_weights_()
 
             self._log_and_save(
                 tensordict_data,
                 decision_making_module,
+                optimization_module,
                 priority_module,
                 save_data,
                 pbar,
             )
-            self._update_learning_rate(decision_making_module, pbar)
+            self._update_learning_rate(optimization_module, pbar)
             pbar.update()  # Increment the progress bar
 
-        self._save_final_model(decision_making_module, priority_module)
+        self._save_final_model(decision_making_module, optimization_module, priority_module)
         self._print_training_summary(t_start)
 
-        return env, decision_making_module, priority_module, self.parameters
+        return env, decision_making_module, optimization_module, priority_module, self.parameters
 
     def _setup_environment(self):
         """Set up the training environment."""
@@ -158,13 +162,16 @@ class MAPPOCAVs:
 
     def _setup_decision_making_module(self, env):
         """Set up the decision-making module."""
+        return DecisionMakingModule.from_env(env, env.scenario.parameters)
+
+    def _setup_optimization_module(self, env, decision_module: DecisionMakingModule):
         mappo = True
-        return DecisionMakingModule(env=env, mappo=mappo)
+        return OptimizationModule(env=env, decision_module=decision_module, mappo=mappo)
 
     def _setup_priority_module(self, env):
         """Set up the priority module if prioritized MARL is enabled."""
         if self.parameters.is_using_prioritized_marl:
-            return PriorityModule(env=env, mappo=True)
+            return PriorityModule(env=env, Fpo=True)
         return None
 
     def _setup_cbf_module(self, env):
@@ -184,25 +191,25 @@ class MAPPOCAVs:
                 colored(f"{self.parameters.where_to_save}", "blue"),
             )
 
-    def _load_existing_model(self, decision_making_module, priority_module):
+    def _load_existing_model(self, decision_making_module, optimization_module, priority_module):
         """Load an existing model if find one."""
         highest_reward = find_the_highest_reward_among_all_models(
             self.parameters.where_to_save
         )
         self.parameters.episode_reward_mean_current = highest_reward
         if highest_reward is not float("-inf"):
-            self._load_model(decision_making_module, priority_module)
+            self._load_model(decision_making_module, optimization_module, priority_module)
         else:
             raise ValueError("No valid model found in the specified directory.")
 
-    def _load_model(self, decision_making_module, priority_module):
+    def _load_model(self, decision_making_module, optimization_module, priority_module):
         """Load either the final or an intermediate model based on parameters."""
         if self.parameters.is_load_final_model:
             self._load_final_model(decision_making_module, priority_module)
         else:
-            self._load_intermediate_model(decision_making_module, priority_module)
+            self._load_intermediate_model(decision_making_module, optimization_module, priority_module)
 
-    def _load_final_model(self, decision_making_module, priority_module):
+    def _load_final_model(self, decision_making_module: DecisionMakingModule, priority_module):
         """Load the final model."""
         decision_making_module.policy.load_state_dict(
             torch.load(self.parameters.where_to_save + "final_policy.pth")
@@ -214,7 +221,10 @@ class MAPPOCAVs:
             )
             cprint("[INFO] Loaded the final priority model", "red")
 
-    def _load_intermediate_model(self, decision_making_module, priority_module = None):
+    def _load_intermediate_model(self,
+                                 decision_making_module: DecisionMakingModule,
+                                 optimization_module: OptimizationModule,
+                                 priority_module = None):
         """Load an intermediate model."""
         (
             PATH_POLICY,
@@ -226,6 +236,7 @@ class MAPPOCAVs:
         ) = get_path_to_save_model(parameters=self.parameters)
 
         decision_making_module.policy.load_state_dict(torch.load(PATH_POLICY))
+        #decision_making_module.policy = torch.load("outputs/interface_test/policy.pt", weights_only=False)
         cprint(f"[INFO] Loaded the intermediate model '{PATH_POLICY}'", "blue")
 
         if priority_module and self.parameters.prioritization_method.lower() == "marl":
@@ -237,7 +248,7 @@ class MAPPOCAVs:
 
         if self.parameters.is_continue_train:
             cprint("[INFO] Training will continue with the loaded model.", "red")
-            decision_making_module.critic.load_state_dict(torch.load(PATH_CRITIC))
+            optimization_module.critic.load_state_dict(torch.load(PATH_CRITIC))
             if (
                 priority_module
                 and self.parameters.prioritization_method.lower() == "marl"
@@ -292,13 +303,16 @@ class MAPPOCAVs:
             .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
         )
 
-    def _compute_gae(self, tensordict_data, decision_making_module, priority_module):
+    def _compute_gae(self,
+                     tensordict_data,
+                     optimization_module: OptimizationModule,
+                     priority_module: PriorityModule):
         """Compute Generalized Advantage Estimation (GAE)."""
         with torch.no_grad():
-            decision_making_module.GAE(
+            optimization_module.GAE(
                 tensordict_data,
-                params=decision_making_module.loss_module.critic_network_params,
-                target_params=decision_making_module.loss_module.target_critic_network_params,
+                params=optimization_module.loss_module.critic_network_params,
+                target_params=optimization_module.loss_module.target_critic_network_params,
             )
             if (
                 priority_module
@@ -319,7 +333,10 @@ class MAPPOCAVs:
                 tensordict_data["td_error"].min() >= 0
             ), "TD error must be greater than 0"
 
-    def _train_epoch(self, decision_making_module, priority_module, replay_buffer):
+    def _train_epoch(self,
+                     optimization_module : OptimizationModule,
+                     priority_module,
+                     replay_buffer):
         """Train for one epoch."""
         for _ in range(self.parameters.num_epochs):
             for _ in range(
@@ -327,19 +344,22 @@ class MAPPOCAVs:
             ):
                 mini_batch_data, info = replay_buffer.sample(return_info=True)
                 self._train_on_batch(
-                    decision_making_module, priority_module, mini_batch_data
+                    optimization_module, priority_module, mini_batch_data
                 )
                 if self.parameters.is_prb:
                     self._update_priorities_after_training(
-                        decision_making_module,
+                        optimization_module,
                         priority_module,
                         mini_batch_data,
                         replay_buffer,
                     )
 
-    def _train_on_batch(self, decision_making_module, priority_module, mini_batch_data):
+    def _train_on_batch(self,
+                        optimization_module: OptimizationModule,
+                        priority_module,
+                        mini_batch_data):
         """Train on a single batch of data."""
-        loss_vals = decision_making_module.loss_module(mini_batch_data)
+        loss_vals = optimization_module.loss_module(mini_batch_data)
         loss_value = (
             loss_vals["loss_objective"]
             + loss_vals["loss_critic"]
@@ -348,24 +368,26 @@ class MAPPOCAVs:
         assert not loss_value.isnan().any() and not loss_value.isinf().any()
         loss_value.backward()
         torch.nn.utils.clip_grad_norm_(
-            decision_making_module.loss_module.parameters(),
+            optimization_module.loss_module.parameters(),
             self.parameters.max_grad_norm,
         )
-        decision_making_module.optim.step()
-        decision_making_module.optim.zero_grad()
+        optimization_module.optim.step()
+        optimization_module.optim.zero_grad()
 
         if priority_module and self.parameters.prioritization_method.lower() == "marl":
             priority_module.compute_losses_and_optimize(mini_batch_data)
 
-    def _update_priorities_after_training(
-        self, decision_making_module, priority_module, mini_batch_data, replay_buffer
-    ):
+    def _update_priorities_after_training(self,
+                                          optimization_module: OptimizationModule,
+                                          priority_module,
+                                          mini_batch_data,
+                                          replay_buffer):
         """Update priorities in the replay buffer after training."""
         with torch.no_grad():
-            decision_making_module.GAE(
+            optimization_module.GAE(
                 mini_batch_data,
-                params=decision_making_module.loss_module.critic_params,
-                target_params=decision_making_module.loss_module.target_critic_params,
+                params=optimization_module.loss_module.critic_params,
+                target_params=optimization_module.loss_module.target_critic_params,
             )
             if (
                 priority_module
@@ -381,7 +403,7 @@ class MAPPOCAVs:
         replay_buffer.update_tensordict_priority(mini_batch_data)
 
     def _log_and_save(
-        self, tensordict_data, decision_making_module, priority_module, save_data, pbar
+        self, tensordict_data, decision_making_module, optimization_module, priority_module, save_data, pbar
     ):
         """Log training progress and save intermediate models."""
         done = tensordict_data.get(("next", "agents", "done"))
@@ -400,6 +422,7 @@ class MAPPOCAVs:
             self._save_intermediate_model(
                 decision_making_module,
                 priority_module,
+                optimization_module,
                 save_data,
                 episode_reward_mean_current,
             )
@@ -407,6 +430,7 @@ class MAPPOCAVs:
     def _save_intermediate_model(
         self,
         decision_making_module,
+        optimization_module,
         priority_module,
         save_data,
         episode_reward_mean_current,
@@ -421,6 +445,7 @@ class MAPPOCAVs:
                 self.parameters,
                 save_data,
                 decision_making_module,
+                optimization_module,
                 priority_module if priority_module else None,
             )
         else:
@@ -428,11 +453,17 @@ class MAPPOCAVs:
             self.parameters.episode_reward_mean_current = (
                 self.parameters.episode_reward_intermediate
             )
-            save(self.parameters, save_data, None, None)
+            save(
+                self.parameters,
+                save_data,
+                None,
+                None,
+                None
+            )
 
-    def _update_learning_rate(self, decision_making_module, pbar):
+    def _update_learning_rate(self, optimization_module: OptimizationModule, pbar):
         """Update the learning rate based on training progress."""
-        for param_group in decision_making_module.optim.param_groups:
+        for param_group in optimization_module.optim.param_groups:
             lr_decay = (self.parameters.lr - self.parameters.lr_min) * (
                 1 - (pbar.n / self.parameters.n_iters)
             )
@@ -440,14 +471,17 @@ class MAPPOCAVs:
             if pbar.n % 10 == 0:
                 print(f"Learning rate updated to {param_group['lr']}.")
 
-    def _save_final_model(self, decision_making_module, priority_module):
+    def _save_final_model(self,
+                          decision_making_module: DecisionMakingModule,
+                          optimization_module: OptimizationModule,
+                          priority_module):
         """Save the final trained model."""
         torch.save(
             decision_making_module.policy.state_dict(),
             os.path.join(self.parameters.where_to_save, "final_policy.pth"),
         )
         torch.save(
-            decision_making_module.critic.state_dict(),
+            optimization_module.critic.state_dict(),
             os.path.join(self.parameters.where_to_save, "final_critic.pth"),
         )
 

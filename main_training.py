@@ -22,4 +22,4 @@ if not parameters.where_to_save:
 if parameters.scenario_type.lower() == "goal_reaching_1":
     env, decision_making_module, priority_module, parameters = ppo_goal_reaching(parameters=parameters)
 else:
-    env, decision_making_module, priority_module, parameters = mappo_cavs(parameters=parameters)
+    env, decision_making_module, optimization_module, priority_module, parameters = mappo_cavs(parameters=parameters)
