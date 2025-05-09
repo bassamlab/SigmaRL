@@ -65,10 +65,6 @@ import re
 
 from typing import Callable, Dict, Optional, Sequence, Tuple, Union
 
-from sigmarl.modules.decision_making_module import DecisionMakingModule
-from sigmarl.modules.optimization_module import OptimizationModule
-from sigmarl.modules.priority_module import PriorityModule
-
 DEFAULT_EXPLORATION_TYPE: ExplorationType = ExplorationType.RANDOM
 
 import warnings
@@ -1231,9 +1227,9 @@ def find_the_highest_reward_among_all_models(path):
 def save(
     parameters: Parameters,
     save_data: SaveData,
-    decision_making_module: DecisionMakingModule,
-    optimization_module: OptimizationModule,
-    priority_module: PriorityModule
+    decision_making_module,
+    optimization_module,
+    priority_module
 ):
     # Get paths
     (
