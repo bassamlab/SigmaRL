@@ -236,7 +236,7 @@ class MAPPOCAVs:
         ) = get_path_to_save_model(parameters=self.parameters)
 
         decision_making_module.policy.load_state_dict(torch.load(PATH_POLICY))
-        #decision_making_module.policy = torch.load("outputs/interface_test/policy.pt", weights_only=False)
+
         cprint(f"[INFO] Loaded the intermediate model '{PATH_POLICY}'", "blue")
 
         if priority_module and self.parameters.prioritization_method.lower() == "marl":
