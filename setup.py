@@ -34,7 +34,7 @@ setup(
     python_requires=">=3.9, <3.13",
     install_requires=[
         "gym==0.26.2",
-        "numpy==2.0.2",
+        "numpy==1.24.4",
         "tensordict==0.6.2",
         "torch==2.5.1",
         "torchrl==0.6.0",
