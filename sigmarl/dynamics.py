@@ -117,7 +117,7 @@ class KinematicBicycleModel(Dynamics):
         else:
             return dx
 
-    def step(self, x0, u, dt, tick_per_step=5):
+    def step(self, x0, u, dt, tick_per_step=5, is_return_end_state=True):
         """
         Perform a discrete integration step using the ODE solver for batch processing across different environments.
 
@@ -126,6 +126,7 @@ class KinematicBicycleModel(Dynamics):
             u (torch.Tensor): Input tensor of shape [batch_size, 2] where batch_size is the number of environments.
             dt (float): Sample time [s].
             tick_per_step (int): Number of integration ticks within the step.
+            is_return_end_state (bool): Whether to return the end state or the entire trajectory along the ticks.
 
         Returns:
             x (torch.Tensor): Final state tensor after integration of shape [batch_size, 5].
@@ -157,25 +158,38 @@ class KinematicBicycleModel(Dynamics):
         x[..., 4] = (x[..., 4] + torch.pi) % (2 * torch.pi) - torch.pi  # [-pi, pi]
 
         # Calculate beta (also called sideslip angle) for the final state
-        beta = torch.atan(self.l_r / self.l_wb * torch.tan(x[-1][:, 4]))
+        beta = torch.atan(
+            self.l_r / self.l_wb * torch.tan(x[..., 4])
+        )  # [tick_per_step, batch_size]
 
         # Compute velocity components
-        course_angle = x[-1][:, 2] + beta
-        velocity_x = x[-1][:, 3] * torch.cos(course_angle)  # Velocity in x direction
-        velocity_y = x[-1][:, 3] * torch.sin(course_angle)  # Velocity in y direction
+        course_angle = x[..., 2] + beta
+        velocity_x = x[..., 3] * torch.cos(course_angle)  # [tick_per_step, batch_size]
+        velocity_y = x[..., 3] * torch.sin(course_angle)  # [tick_per_step, batch_size]
         velocity = torch.stack(
-            (velocity_x, velocity_y), dim=1
-        )  # Stack to create [batch_size, 2] tensor
+            (velocity_x, velocity_y), dim=-1
+        )  # Stack to create [tick_per_step, batch_size, 2] tensor
 
         # Return the final state and velocity
-        if is_batch_size_none:
-            return (
-                x[-1].squeeze(0),
-                beta.squeeze(0),
-                velocity.squeeze(0),
-            )  # Remove the first dimension
+        if is_return_end_state:
+            # If we want to return the end state only
+            if is_batch_size_none:
+                return (
+                    x[-1].squeeze(0),
+                    beta[-1].squeeze(0),
+                    velocity[-1].squeeze(0),
+                )  # Remove the first dimension
+            else:
+                return x[-1], beta[-1], velocity[-1]
         else:
-            return x[-1], beta, velocity
+            if is_batch_size_none:
+                return (
+                    x.squeeze(0),
+                    beta.squeeze(0),
+                    velocity.squeeze(0),
+                )  # Remove the first dimension
+            else:
+                return x, beta, velocity
 
     def process_action(self):
         pass
