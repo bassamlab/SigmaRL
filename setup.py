@@ -35,7 +35,7 @@ setup(
     install_requires=[
         "gym==0.26.2",
         "numpy==1.24.4",
-        "tensordict==0.6.2",
+        "tensordict>=0.6.2,<0.7",
         "torch==2.5.1",
         "torchrl==0.6.0",
         "torchdiffeq==0.2.4",
