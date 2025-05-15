@@ -153,7 +153,7 @@ class KinematicBicycleModel(Dynamics):
             return self.ode(t, x, u)
 
         # Integrate the ODE
-        x = odeint(model, x0, t, rtol=1e-8, atol=1e-8)
+        x = odeint(model, x0, t, rtol=1e-8, atol=1e-8, method="euler")
 
         x[..., 4] = (x[..., 4] + torch.pi) % (2 * torch.pi) - torch.pi  # [-pi, pi]
 
