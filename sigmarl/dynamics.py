@@ -117,7 +117,7 @@ class KinematicBicycleModel(Dynamics):
         else:
             return dx
 
-    def step(self, x0, u, dt, tick_per_step=5, is_return_end_state=True):
+    def step(self, x0, u, dt, tick_per_step=1, is_return_end_state=True):
         """
         Perform a discrete integration step using the ODE solver for batch processing across different environments.
 

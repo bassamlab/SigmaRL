@@ -1036,7 +1036,7 @@ class WorldCustom(World):
                 x0=x0,  # [x, y, yaw, speed, steering]
                 u=u,  #  [acceleration, steering_rate]
                 dt=self.dt,  # Sample time in [s]
-                tick_per_step=5,  # Ticks per time step controling the fedelity of the ODE
+                tick_per_step=1,  # Ticks per time step controling the fedelity of the ODE
             )
             # Update states
             entity.state.pos = x1[:, 0:2]
@@ -1069,7 +1069,7 @@ class Parameters:
         clip_epsilon: float = 0.2,  # Clip value for PPO loss
         gamma: float = 0.99,  # Discount factor from 0 to 1. A greater value corresponds to a better farsight
         lmbda: float = 0.9,  # lambda for generalised advantage estimation
-        entropy_eps: float = 1e-4,  # Coefficient of the entropy term in the PPO loss
+        entropy_eps: float = 1e-4,  # Controls the trade-off between trying new actions (exploration) and optimizing known good actions (exploitation). Higher entropy_coef encourages more exploration by favoring stochastic (less certain) policies.
         max_steps: int = 128,  # Episode steps before done
         num_vmas_envs: int = 32,  # Number of vectorized environments
         scenario_type: str = "intersection_1",  # One of {"CPM_entire", "CPM_mixed", "intersection_1", ...}. See SCENARIOS in utilities/constants.py for more scenarios.
