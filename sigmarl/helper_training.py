@@ -1304,7 +1304,7 @@ def get_path_to_save_model(parameters: Parameters, absolute=True):
         where_to_save, f"{parameters.model_name}_critic.{file_ext}"
     )
     PATH_FIG = os.path.join(
-        where_to_save, parameters.model_name + "_training_process.pdf"
+        where_to_save, parameters.model_name + "_training_process.jpg"
     )
     PATH_JSON = os.path.join(where_to_save, parameters.model_name + "_data.json")
     PATH_PRIORITY_POLICY = (

@@ -488,8 +488,8 @@ class MAPPOCAVs:
         if self.parameters.is_save_intermediate_model:
             self._save_intermediate_model(
                 decision_making_module,
-                priority_module,
                 optimization_module,
+                priority_module,
                 save_data,
                 episode_reward_mean_current,
             )
