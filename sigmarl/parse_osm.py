@@ -21,6 +21,8 @@ from sigmarl.colors import Color
 
 from sigmarl.constants import SCENARIOS
 
+import numpy as np
+
 
 class ParseOSM(ParseMapBase):
     """
@@ -54,14 +56,19 @@ class ParseOSM(ParseMapBase):
         self._parse_map_file()
         self._process_map_data()
         self._get_reference_paths()
+        self._compute_pseudo_tangent_vectors()
         self._determine_neighboring_lanelets()
 
+        self._get_map_dimension()
+
         if self._is_visualize_map:
-            self._visualize_map()
+            self.visualize_map()
 
     def _parse_map_file(self):
         """Parse the OSM file and extract bounds, nodes, and ways."""
-        with resources.open_binary("sigmarl.assets.maps", self._map_path) as map_file:
+        with resources.open_binary(
+            "sigmarl.scenarios.assets.maps", self._map_path
+        ) as map_file:
             tree = ET.parse(map_file)
         root = tree.getroot()
 
@@ -104,11 +111,10 @@ class ParseOSM(ParseMapBase):
         Calculate the relevant data for each center line and store them in self.lanelets_all.
         """
         lanelets_all_tmp = []
-        self._lanelet_id_to_index = {}  # Dictionary to store the mapping
+        # self._lanelet_id_to_index = {}  # Dictionary to store the mapping
 
         for _, way in self._ways.items():
             lanelet_id = way["lanes"]
-
             if lanelet_id is not None:
                 # Only lanelets with IDs will be considered, i.e., only ways in JOSM that have a tag will be considered
                 if not isinstance(lanelet_id, int):
@@ -126,6 +132,12 @@ class ParseOSM(ParseMapBase):
                 ) = self._compute_center_line_info(center_line)
                 left_boundary, right_boundary = self._compute_boundaries(center_line)
 
+                # Find predecessors
+                (
+                    predecessors,
+                    successors,
+                ) = self._find_direct_predecessors_and_successors(lanelet_id)
+
                 lanelets_all_tmp.append(
                     {
                         str(lanelet_id): {
@@ -137,6 +149,8 @@ class ParseOSM(ParseMapBase):
                             "right_boundary": right_boundary,
                             "left_boundary_shared": left_boundary,  # Should be calculated if they are not the same
                             "right_boundary_shared": right_boundary,  # Should be calculated if they are not the same
+                            "predecessor": predecessors,  # Predecessor lanelets
+                            "successor": successors,  # Successor lanelets
                         }
                     }
                 )
@@ -150,10 +164,35 @@ class ParseOSM(ParseMapBase):
         # Extracting the values from the list of dictionaries
         self.lanelets_all = [list(d.values())[0] for d in lanelets_all_tmp]
 
-        # Creating the mapping from way["lanes"] to the index after sorting
-        for index, lanelet_dict in enumerate(lanelets_all_tmp):
-            lanelet_id = next(iter(lanelet_dict))
-            self._lanelet_id_to_index[lanelet_id] = index
+        # Convert to a dict
+        tmp_dict = {int(k): v for d in lanelets_all_tmp for k, v in d.items()}
+
+        # Create a sorted list where index = key - 1, and keep only the value
+        max_index = max(tmp_dict.keys())
+        self.lanelets_all = [tmp_dict[i + 1] for i in range(max_index)]
+
+        # # Creating the mapping from way["lanes"] to the index after sorting
+        # for index, lanelet_dict in enumerate(lanelets_all_tmp):
+        #     lanelet_id = next(iter(lanelet_dict))
+        #     self._lanelet_id_to_index[lanelet_id] = index
+
+    def _find_direct_predecessors_and_successors(self, lanelet_id: int):
+        target_id = str(lanelet_id)
+
+        predecessors = set()
+        successors = set()
+
+        for path in self._reference_paths_ids:
+            for i in range(len(path)):
+                if path[i] == target_id:
+                    # Check direct predecessor
+                    if i > 0:
+                        predecessors.add(int(path[i - 1]))
+                    # Check direct successor
+                    if i < len(path) - 1:
+                        successors.add(int(path[i + 1]))
+
+        return list(predecessors), list(successors)
 
     def _get_reference_paths(self):
         """
@@ -163,7 +202,6 @@ class ParseOSM(ParseMapBase):
             List of dict: Each dict contains information about a reference path.
         """
         for ref_path_ids in self._reference_paths_ids:
-
             center_line_points = []
 
             # Check if the reference path is a loop
@@ -171,7 +209,10 @@ class ParseOSM(ParseMapBase):
 
             for path_idx in range(len(ref_path_ids)):
                 way_id = str(ref_path_ids[path_idx])
-                way_idx = self._lanelet_id_to_index[way_id]
+                # way_idx = self._lanelet_id_to_index[way_id]
+                way_idx = (
+                    int(way_id) - 1
+                )  # Convert lanelet ID to index (lanelet ID = index + 1
 
                 way_data = self.lanelets_all[way_idx]
                 nodes_to_add = way_data["center_line"]
@@ -196,9 +237,10 @@ class ParseOSM(ParseMapBase):
                 ) = self._compute_center_line_info(center_line)
                 left_boundary, right_boundary = self._compute_boundaries(center_line)
 
+                ref_path_ids_int = [int(k) - 1 for k in ref_path_ids]
                 self.reference_paths.append(
                     {
-                        "lanelet_IDs": ref_path_ids,
+                        "lanelet_IDs": ref_path_ids_int,
                         "center_line": center_line,
                         "center_line_yaw": center_line_yaw,
                         "center_line_vec_normalized": center_line_vec_normalized,
@@ -212,21 +254,11 @@ class ParseOSM(ParseMapBase):
                 )
 
     def _determine_neighboring_lanelets(self):
-        # Map from lanelet IDs to indices
-        neighboring_lanelets_idx_dict = {
-            lanelet_id: [
-                self._lanelet_id_to_index[neighbor_id] for neighbor_id in neighbor_list
-            ]
-            for lanelet_id, neighbor_list in self._neighboring_lanelet_ids.items()
-        }
-
-        # Sort the keys in `neighboring_lanelets_idx_dict` based on `self._lanelet_id_to_index`
+        # Convert to list of lists of int(n) - 1, where n is the lanelet ID
+        max_index = max(int(k) for k in self._neighboring_lanelet_ids.keys())
         self.neighboring_lanelets_idx = [
-            neighboring_lanelets_idx_dict[k]
-            for k in sorted(
-                neighboring_lanelets_idx_dict,
-                key=lambda x: self._lanelet_id_to_index[x],
-            )
+            [int(n) - 1 for n in self._neighboring_lanelet_ids[str(i + 1)]]
+            for i in range(max_index)
         ]
 
     def _compute_center_line_info(self, center_line):
@@ -273,11 +305,7 @@ class ParseOSM(ParseMapBase):
 
         return torch.stack(left_boundary), torch.stack(right_boundary)
 
-    def _visualize_map(self):
-        """
-        Visualize the map.
-        """
-
+    def _get_map_dimension(self):
         # Collect all x and y coordinates to determine limits
         all_x = []
         all_y = []
@@ -300,22 +328,27 @@ class ParseOSM(ParseMapBase):
         y_lim_min = min(all_y)
         y_lim_max = max(all_y)
 
-        print(f"x_lim_min: {x_lim_min} m")
-        print(f"x_lim_max: {x_lim_max} m")
-        print(f"y_lim_min: {y_lim_min} m")
-        print(f"y_lim_max: {y_lim_max} m")
+        self.bounds["min_x"] = x_lim_min
+        self.bounds["max_x"] = x_lim_max
+        self.bounds["min_y"] = y_lim_min
+        self.bounds["max_y"] = y_lim_max
+        self.bounds["world_x_dim"] = x_lim_max + x_lim_min
+        self.bounds["world_y_dim"] = y_lim_max + y_lim_min
 
-        print(
-            f"x_world_dim: {x_lim_max + x_lim_min}"
-        )  # A workaround because VMAS assumes (0, 0) is the origin of the map
-        print(f"y_world_dim: {y_lim_max + y_lim_min}")
+    def visualize_map(self):
+        """
+        Visualize the map.
+        """
 
         # Set up the plot
-        aspect_ratio = (y_lim_max - y_lim_min) / (x_lim_max - x_lim_min)
+        aspect_ratio = (self.bounds["max_y"] - self.bounds["min_y"]) / (
+            self.bounds["max_x"] - self.bounds["min_x"]
+        )
         figsize_x = SCENARIOS[self._scenario_type]["figsize_x"]
-        fig, ax = plt.subplots(figsize=(figsize_x, figsize_x * aspect_ratio))
-        ax.set_aspect("equal", adjustable="box")  # Ensures equal scaling
-        ax.grid(True, linewidth=0.3)
+        fig, ax = plt.subplots(
+            figsize=(figsize_x, figsize_x * aspect_ratio), constrained_layout=True
+        )
+        ax.set_aspect("equal")
 
         for path in self.reference_paths:
             center_line = path["center_line"]
@@ -356,27 +389,20 @@ class ParseOSM(ParseMapBase):
             # ax.fill(curve_close[:,0], curve_close[:,1], color="lightgrey", alpha=0.4)
 
             # Add arrows to indicate direction
-            p_start = center_line[0]
-            direction_start = center_line_vec_normalized[0]
-            ax.quiver(
-                p_start[0],
-                p_start[1],
-                direction_start[0],
-                direction_start[1],
-                angles="xy",
-                scale_units="xy",
-                scale=3,
-                color="black",
-                zorder=2,
-            )
-
-            # Calculate the starting point for the ending arrow
-            p_end = center_line[-1]
-            direction_end = center_line_vec_normalized[-1]
-            arrow_length = 0.3  # Adjust here for your case
-            # Starting point for the ending arrow such that it ends at the last point
-            p_end_start = p_end - direction_end * arrow_length
-            # ax.quiver(p_end_start[0], p_end_start[1], direction_end[0], direction_end[1], angles='xy', scale_units='xy', scale=1.5, color='b', alpha=0.2, zorder=2)
+            if self._is_visualize_entry_direction:
+                p_start = center_line[0]
+                direction_start = center_line_vec_normalized[0]
+                ax.quiver(
+                    p_start[0],
+                    p_start[1],
+                    direction_start[0],
+                    direction_start[1],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=3,
+                    color="black",
+                    zorder=2,
+                )
 
             if self._is_visu_lane_ids:
                 ax.text(
@@ -387,50 +413,90 @@ class ParseOSM(ParseMapBase):
                     zorder=2,
                 )
 
-            # ax.set_xlabel(r'$x$ [m]')
-            # ax.set_ylabel(r'$y$ [m]')
-
-            offset = 0.05
-            ax.set_xlim(x_lim_min - offset, x_lim_max + offset)
-            ax.set_ylim(y_lim_min - offset, y_lim_max + offset)
-        # plt.title(self._fig_title, fontsize=self._fontsize)
-
         if self._is_visualize_random_agents:
-            n_agents = SCENARIOS[self._scenario_type]["n_agents"]
-            self._visualize_random_agents(ax, self.reference_paths, n_agents)
+            if self._n_agents_visu is None:
+                self._n_agents_visu = SCENARIOS[self._scenario_type]["n_agents"]
+            self._visualize_random_agents(ax, self.reference_paths)
 
-        # Use MaxNLocator to ensure ticks are at readable intervals
-        # ax = plt.gca()
-        # ax.xaxis.set_major_locator(MaxNLocator(integer=False, prune='both', nbins='auto'))
-        # ax.yaxis.set_major_locator(MaxNLocator(integer=False, prune='both', nbins='auto'))
-        ax.set_xticks([])
-        ax.set_yticks([])
+        if self._is_show_axis:
+            ax.set_xlabel(r"$x$ [m]", fontsize=self._fontsize)
+            ax.set_ylabel(r"$y$ [m]", fontsize=self._fontsize)
+            ax.set_xticks(
+                np.arange(self.bounds["min_x"], self.bounds["max_x"] + 0.05, 1.0)
+            )
+            ax.set_yticks(
+                np.arange(self.bounds["min_y"], self.bounds["max_y"] + 0.05, 1.0)
+            )
 
-        # Remove the outer box
-        for spine in ax.spines.values():
-            spine.set_visible(False)
+            # Set all spines (outer box lines) to gray
+            ax = plt.gca()
+            for spine in ax.spines.values():
+                spine.set_color("gray")  # or use a specific shade, e.g., '#888888'
+            # Set tick marks and labels to gray
+            ax.tick_params(axis="both", colors="gray")  # both ticks and tick labels
+            ax.xaxis.label.set_color("gray")
+            ax.yaxis.label.set_color("gray")
+        else:
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            # Remove the outer box
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+        ax.set_xlim((self.bounds["min_x"], self.bounds["max_x"]))
+        ax.set_ylim((self.bounds["min_y"], self.bounds["max_y"]))
+
+        ax.grid(False)
+
+        ax.autoscale()
 
         if self._is_save_fig:
             # Save fig
-            plt.tight_layout()  # Set the layout to be tight to minimize white space
-            plt.savefig(self._scenario_type + ".pdf", format="pdf", bbox_inches="tight")
-            print(f"A fig is saved at {self._scenario_type + '.pdf'}")
+            fig_name = "map_" + self._scenario_type + ".pdf"
+            plt.savefig(fig_name, format="pdf", bbox_inches="tight")
+            print(f"A fig is saved at {fig_name}")
 
         if self._is_plt_show:
             plt.show()
 
+        return fig, ax
+
 
 if __name__ == "__main__":
-    parser = ParseOSM(
-        scenario_type="intersection_2",  # intersection_1, intersection_2, intersection_3, on_ramp_1, roundabout_1
-        device="cpu" if not torch.cuda.is_available() else "cuda:0",
-        is_share_lanelets=False,
-        is_visualize_map=True,
-        is_visualize_random_agents=True,
-        is_save_fig=True,
-        is_plt_show=True,
-        is_visu_lane_ids=False,
-    )
+    scenario_types = [
+        "interchange_1",
+        "interchange_2",
+        "interchange_3",
+        "intersection_1",
+        "intersection_2",
+        "intersection_3",
+        "intersection_4",
+        "intersection_5",
+        "intersection_6",
+        "intersection_7",
+        "intersection_8",
+        "on_ramp_1",
+        "on_ramp_2_multilane",
+        "roundabout_1",
+        "roundabout_2",
+        # "pseudo_distance_example",
+    ]  # See sigmarl/constants.py for all available maps
 
-    # print(parser.lanelets_all)
-    # print(parser.reference_paths)
+    for scenario_type in scenario_types:
+        # scenario_type = "intersection_2"
+        print("---------------------------------------------------")
+        print(f"---------------- Scenario: {scenario_type} -------------------")
+        print("---------------------------------------------------")
+        parser = ParseOSM(
+            scenario_type=scenario_type,
+            lane_width=0.2 if scenario_types == "intersection_3" else 0.3,
+            device="cpu" if not torch.cuda.is_available() else "cuda:0",
+            is_share_lanelets=False,
+            is_visualize_map=True,
+            is_visualize_random_agents=True,
+            n_agents_visu=1,
+            is_save_fig=True,
+            is_plt_show=False,
+            is_visu_lane_ids=False,
+        )

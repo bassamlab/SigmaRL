@@ -47,6 +47,7 @@ setup(
         "pre-commit==4.0.1",
         "cvxpy==1.5.3",
         "scikit-learn==1.5.2",
+        "opencv-python==4.11.0.86",
     ],
     extras_require={
         "dev": ["pytest", "sphinx"],

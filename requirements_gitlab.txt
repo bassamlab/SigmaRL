@@ -1,15 +1,15 @@
 gym==0.26.2
-numpy==1.24.4
-tensordict>=0.6.2,<0.7
-torch==2.5.1
+numpy==2.0.2
+tensordict==0.6.2
+torch==2.5.1+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
 torchrl==0.6.0
 torchdiffeq==0.2.4
 tqdm==4.67.0
-typing_extensions==4.12.2
+typing_extensions==4.8.0
 vmas==1.4.3
 matplotlib==3.9.2
 termcolor==2.5.0
 pre-commit==4.0.1
 cvxpy==1.5.3
 scikit-learn==1.5.2
-opencv-python==4.11.0.86

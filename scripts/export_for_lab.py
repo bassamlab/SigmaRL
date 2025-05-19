@@ -10,7 +10,7 @@ from sigmarl.mappo_cavs import mappo_cavs
 
 from pathlib import Path
 
-#make path relative to project root
+# make path relative to project root
 project_root = Path(__file__).parent.parent
 os.chdir(project_root)
 sys.path.append(str(project_root))
@@ -30,9 +30,16 @@ if __name__ == "__main__":
         parameters.is_load_final_model = False
 
         if parameters.scenario_type.lower() == "goal_reaching_1":
-            env, decision_making_module, priority_module, parameters = ppo_goal_reaching(parameters=parameters)
+            (
+                env,
+                decision_making_module,
+                priority_module,
+                parameters,
+            ) = ppo_goal_reaching(parameters=parameters)
         else:
-            env, decision_making_module, priority_module, parameters = mappo_cavs(parameters=parameters)
+            env, decision_making_module, priority_module, parameters = mappo_cavs(
+                parameters=parameters
+            )
 
         policy_path_out = os.path.join(dir_out, "policy.pt")
         data_path_out = os.path.join(dir_out, "data.json")
@@ -40,8 +47,10 @@ if __name__ == "__main__":
         if not os.path.exists(dir_out):
             os.makedirs(dir_out)
 
-        torch.save(decision_making_module.policy, policy_path_out) # save policy
+        torch.save(decision_making_module.policy, policy_path_out)  # save policy
 
         json_object = json.dumps(saved_data.to_dict(), indent=4)  # Serializing json
-        with open(data_path_out, "w") as outfile:  # Writing to json file in corresponding directory
+        with open(
+            data_path_out, "w"
+        ) as outfile:  # Writing to json file in corresponding directory
             outfile.write(json_object)

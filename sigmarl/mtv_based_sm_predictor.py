@@ -4,12 +4,18 @@
 # LICENSE file in the root directory of this source tree.
 
 import os
+from termcolor import colored
 import torch
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
+import matplotlib
+import time
+
+matplotlib.rcParams.update({"font.size": 14})  # Set global font size
+
 from sigmarl.helper_scenario import get_distances_between_agents
 
 import random
@@ -338,6 +344,7 @@ class SafetyMarginEstimatorModule:
         self.train_losses_history = []
         self.val_losses_history = []
 
+        training_start_time = time.time()
         for fold in range(k_folds):
             print(f"Fold {fold + 1}/{k_folds}")
             X_train, X_val, y_train, y_val = train_test_split(
@@ -408,6 +415,9 @@ class SafetyMarginEstimatorModule:
                 # Load the best model state for the current fold
                 self.net.load_state_dict(best_model_state)
 
+        training_end_time = time.time()
+        print(f"Training time: {training_end_time - training_start_time:.2f} seconds")
+
         # Save the best model checkpoint
         torch.save(
             {
@@ -439,10 +449,20 @@ class SafetyMarginEstimatorModule:
         plt.plot(epochs, self.val_losses_history, label="Validation Loss")
         plt.xlabel("Epoch")
         plt.ylabel("Loss")
-        plt.title(f"Training and Validation Loss over Epochs")
+        plt.title(f"Training and Validation Loss")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
+
+        # Save the plot
+        plt.savefig("mtv_training_losses.png", bbox_inches="tight", dpi=600)
+        plt.savefig(
+            "mtv_training_losses.pdf", bbox_inches="tight", dpi=300, pad_inches=0
+        )
+        print(
+            colored(f"[INFO] A fig has been saved under", "black"),
+            colored(f"mtv_training_losses.png", "blue"),
+        )
         plt.show()
 
     def load_model(self):
@@ -456,7 +476,7 @@ class SafetyMarginEstimatorModule:
             DistancePredictor: Loaded model.
         """
         # Load the best model
-        checkpoint = torch.load(self.path_nn)
+        checkpoint = torch.load(self.path_nn, weights_only=False)
         self.net = DistancePredictor(self.n_features)
         self.net.load_state_dict(checkpoint["model_state_dict"])
         self.val_losses_history = checkpoint["val_losses_history"]
@@ -464,9 +484,9 @@ class SafetyMarginEstimatorModule:
         self.error_upper_bound = checkpoint["error_upper_bound"]
 
         self.net.eval()
-        print(
-            f"Model loaded from {self.path_nn}, with an error upper bound of {self.error_upper_bound:.6f}"
-        )
+        # print(
+        # f"Model loaded from {self.path_nn}, with an error upper bound of {self.error_upper_bound:.6f}"
+        # )
         return self.net
 
     def test_model(self, net):
@@ -607,19 +627,38 @@ class SafetyMarginEstimatorModule:
         y = features[:, 1]
         heading = features[:, 2]
 
+        x_relative = x / self.length
+        y_relative = y / self.length
+
         fig = plt.figure(figsize=(12, 8))
         ax = fig.add_subplot(111, projection="3d")
 
+        relative_errors = errors / self.length * 100
+
         scatter = ax.scatter(
-            x, y, heading, c=errors, cmap="viridis", marker="o", alpha=0.6, s=20
+            x_relative,
+            y_relative,
+            heading,
+            c=relative_errors,
+            cmap="viridis",
+            marker="o",
+            alpha=0.6,
+            s=20,
         )
 
-        ax.set_xlabel("X Position (m)")
-        ax.set_ylabel("Y Position (m)")
-        ax.set_zlabel("Heading (rad)")
-        ax.set_title("3D Visualization of Prediction Errors")
-        fig.colorbar(scatter, ax=ax, label="Absolute Error (m)")
+        ax.set_xlabel(r"Relative $x$ position (%)")
+        ax.set_ylabel(r"Relative $y$ position (%)")
+        ax.set_zlabel(r"Heading (rad)")
+        ax.set_title("Prediction Errors (all relative data based on vehicle length)")
+        fig.colorbar(scatter, ax=ax, label="Relative error (%)")
         plt.tight_layout()
+        # Save the plot
+        plt.savefig("mtv_errors_3d.png", bbox_inches="tight", dpi=600)
+        plt.savefig("mtv_errors_3d.pdf", bbox_inches="tight", dpi=300, pad_inches=0)
+        print(
+            colored(f"[INFO] A fig has been saved under", "black"),
+            colored(f"mtv_errors_3d.png", "blue"),
+        )
         plt.show()
 
 
@@ -639,10 +678,11 @@ def main(load_model_flag, is_run_testing, path_nn):
             SME.net = SME.load_model()
         else:
             input(
-                f"Model file already exists at {path_nn}. Press Enter if you want to train a new one and rewrite the existing one:"
+                f"Model file already exists at {path_nn}. Press Enter if you want to train a new one and rewrite the existing one..."
             )
             features, labels = SME.generate_training_data()
             SME.net = SME.train_model(features, labels)
+
     else:
         if load_model_flag:
             print(f"Model file at {path_nn} not found. Training a new model instead.")

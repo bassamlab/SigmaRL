@@ -6,17 +6,16 @@ from torchrl.data import TensorSpec
 from torchrl.envs import VmasEnv
 from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
 
-#from sigmarl.helper_training import Parameters, TransformedEnvCustom
+# from sigmarl.helper_training import Parameters, TransformedEnvCustom
 from sigmarl.modules.module import Module
 
 from dataclasses import dataclass
 
 from sigmarl.scenarios.road_traffic import ScenarioRoadTraffic
 
+
 class DecisionMakingModule(Module):
-    def __init__(self,
-                 env,
-                 parameters):
+    def __init__(self, env, parameters):
         """
         Initializes the DecisionMakingModule, which is responsible for generating decisions using a neural network policy.
         It also sets up a PPO loss module with an actor-critic architecture and GAE (Generalized Advantage Estimation) for RL optimization.
@@ -34,7 +33,9 @@ class DecisionMakingModule(Module):
 
         policy_net = torch.nn.Sequential(
             MultiAgentMLP(
-                n_agent_inputs=env.observation_spec[self.get_observation_key()].shape[-1],  # n_obs_per_agent
+                n_agent_inputs=env.observation_spec[self.get_observation_key()].shape[
+                    -1
+                ],  # n_obs_per_agent
                 n_agent_outputs=(
                     2 * env.action_spec.shape[-1]
                 ),  # 2 * n_actions_per_agent
@@ -69,7 +70,7 @@ class DecisionMakingModule(Module):
             distribution_class=TanhNormal,
             distribution_kwargs={
                 "low": env.unbatched_action_spec[env.action_key].space.low,
-                "high": env.unbatched_action_spec[env.action_key].space.high
+                "high": env.unbatched_action_spec[env.action_key].space.high,
             },
             return_log_prob=True,
             log_prob_key=(

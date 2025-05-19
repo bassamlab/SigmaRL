@@ -15,8 +15,9 @@ class ObservationProviderParameters:
     device: torch.device
     # observation specific
     n_stored_steps: int
-    noise_level: float
+    obs_noise_level: float
     is_add_noise: bool
+
 
 @dataclass
 class AgentState:
@@ -25,8 +26,14 @@ class AgentState:
     steering: torch.tensor
     vel: torch.tensor
 
+
 class ObservationProvider:
-    def __init__(self, params: ObservationProviderParameters, constants: Constants, normalizers: Normalizers):
+    def __init__(
+        self,
+        params: ObservationProviderParameters,
+        constants: Constants,
+        normalizers: Normalizers,
+    ):
         self.batch_dim = params.batch_dim
         self.n_agents = params.n_agents
         self.device = params.device
@@ -47,4 +54,3 @@ class ObservationProvider:
     @abstractmethod
     def get_observation(self, agent_index: int) -> torch.Tensor:
         pass
-

@@ -15,7 +15,6 @@ tmp
 *.pth
 venv/
 *.pdf
-*.txt
 *.pkl
 .idea
 

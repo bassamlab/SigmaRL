@@ -16,10 +16,21 @@ parameters = Parameters.from_json(config_file)
 parameters.scenario_type = scenario_type
 parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
 
-if not parameters.where_to_save:
-    parameters.where_to_save = "outputs/tmp/"
+
+parameters.where_to_save = "outputs/tmp/"
+parameters.n_iters = 5
+parameters.random_seed = 0
+parameters.is_using_cbf = False
 
 if parameters.scenario_type.lower() == "goal_reaching_1":
-    env, decision_making_module, priority_module, parameters = ppo_goal_reaching(parameters=parameters)
+    env, decision_making_module, priority_module, parameters = ppo_goal_reaching(
+        parameters=parameters
+    )
 else:
-    env, decision_making_module, optimization_module, priority_module, parameters = mappo_cavs(parameters=parameters)
+    (
+        env,
+        decision_making_module,
+        optimization_module,
+        priority_module,
+        parameters,
+    ) = mappo_cavs(parameters=parameters)

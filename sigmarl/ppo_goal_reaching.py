@@ -15,9 +15,7 @@ import torch
 # torch.autograd.set_detect_anomaly(True)
 
 # Data collection
-from sigmarl.helper_training import (
-    SyncDataCollectorCustom
-)
+from sigmarl.helper_training import SyncDataCollectorCustom
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data import TensorDictPrioritizedReplayBuffer
 from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
@@ -57,7 +55,7 @@ from sigmarl.helper_training import (
     get_path_to_save_model,
     find_the_highest_reward_among_all_models,
     save,
-    compute_td_error
+    compute_td_error,
 )
 
 from sigmarl.scenarios.goal_reaching import GoalReaching
@@ -92,7 +90,6 @@ class PPOGoalReaching:
         save_data = self._initialize_save_data()
         decision_making_module = self._setup_decision_making_module(env)
         priority_module = self._setup_priority_module(env)
-        cbf_module = self._setup_cbf_module(env)
 
         self._ensure_save_directory_exists()
 
@@ -180,12 +177,6 @@ class PPOGoalReaching:
             return PriorityModule(env=env, mappo=True)
         return None
 
-    def _setup_cbf_module(self, env):
-        """Set up the Control Barrier Function (CBF) module if enabled."""
-        if self.parameters.is_using_cbf:
-            return CBFModule(env=env, mappo=True)
-        return None
-
     def _ensure_save_directory_exists(self):
         """Ensure the directory for saving models exists."""
         if not os.path.exists(self.parameters.where_to_save):
@@ -242,7 +233,6 @@ class PPOGoalReaching:
             PATH_FIG,
             PATH_JSON,
         ) = get_path_to_save_model(parameters=self.parameters)
-
 
         decision_making_module.policy.load_state_dict(
             torch.load(PATH_POLICY, weights_only=True)
@@ -448,7 +438,7 @@ class PPOGoalReaching:
                 self.parameters,
                 save_data,
                 decision_making_module,
-                priority_module if priority_module else None
+                priority_module if priority_module else None,
             )
         else:
             # Otherwise only save parameters and episode mean reward values
@@ -519,4 +509,6 @@ def ppo_goal_reaching(parameters: Parameters):
 if __name__ == "__main__":
     config_file = "sigmarl/config_goal_reaching.json"
     parameters = Parameters.from_json(config_file)
-    env, decision_making_module, priority_module, parameters = ppo_goal_reaching(parameters=parameters)
+    env, decision_making_module, priority_module, parameters = ppo_goal_reaching(
+        parameters=parameters
+    )

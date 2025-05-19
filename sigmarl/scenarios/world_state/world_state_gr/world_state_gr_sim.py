@@ -3,7 +3,6 @@ from sigmarl.scenarios.world_state.world_state_sim import WorldStateSim
 
 
 class WorldStateGRSimulation(WorldStateGR, WorldStateSim):
-
     def update_state_before_rewarding(self, agent_index: int):
         """
         Update some states (such as vertices of the agent) that will be used before rewarding agents.

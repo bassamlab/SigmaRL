@@ -4,12 +4,12 @@ from torchrl.data import UnboundedContinuousTensorSpec
 from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
 from torchrl.objectives import ClipPPOLoss, ValueEstimators
 
-#from sigmarl.helper_training import TransformedEnvCustom TODO OOP
+# from sigmarl.helper_training import TransformedEnvCustom TODO OOP
 from sigmarl.modules.module import Module
 
 
 class PriorityModule(Module):
-    def __init__(self, env = None, mappo: bool = True):
+    def __init__(self, env=None, mappo: bool = True):
         """
         Initializes the PriorityModule, which is responsible for computing the priority rank of agents
         and their scores using a neural network policy. It also sets up a PPO loss module with an actor-critic
@@ -225,4 +225,3 @@ class PriorityModule(Module):
 
     def get_observation_key(self) -> tuple:
         return ("agents", "info", "priority_observation")
-

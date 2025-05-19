@@ -7,15 +7,18 @@ import torch
 
 from dataclasses import dataclass
 
+
 @dataclass
 class WorldStateParameters:
     batch_dim: int
     n_agents: int
     device: torch.device
 
+
 """
 This class contains the stateful attributes of an environment (real or simulated).
 """
+
 
 class WorldState(ABC):
     def __init__(self, params: WorldStateParameters):
@@ -32,11 +35,13 @@ class WorldState(ABC):
     Depending on the environment there are different stateful attributes.
     However, all environments keep track of the stateful attributes distances and vertices.
     """
+
     @abstractmethod
     def _init_stateful_parameters(self):
         pass
 
     """Methods in this class are concerned with updating the stateful values of the environment"""
+
     @abstractmethod
     def reset(self, agent_states: List[AgentState]):
         pass

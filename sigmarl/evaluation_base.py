@@ -8,16 +8,11 @@ import torch
 import numpy as np
 from termcolor import colored, cprint
 
+from vmas.simulator.utils import save_video
+
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import matplotlib
-
-# Set up font
-matplotlib.rcParams["pdf.fonttype"] = 42  # Use Type 1 fonts (vector fonts)
-matplotlib.rcParams["font.family"] = "serif"
-matplotlib.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif", "Georgia"]
-matplotlib.rcParams.update({"font.size": 11})  # Set global font size
-plt.rcParams["text.usetex"] = True
 
 import os
 import time
@@ -28,11 +23,19 @@ from sigmarl.helper_training import (
     SaveData,
     find_the_highest_reward_among_all_models,
     get_model_name,
+    is_latex_available,
 )
 
 from sigmarl.constants import SCENARIOS, AGENTS
 
 from sigmarl.colors import Color, colors
+
+# Set up font
+matplotlib.rcParams["pdf.fonttype"] = 42  # Use Type 1 fonts (vector fonts)
+matplotlib.rcParams["font.family"] = "serif"
+matplotlib.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif", "Georgia"]
+matplotlib.rcParams.update({"font.size": 11})  # Set global font size
+matplotlib.rcParams["text.usetex"] = is_latex_available()
 
 
 class Evaluation:
@@ -168,9 +171,6 @@ class Evaluation:
         else:
             # Otherwise run multiple parallel envs and average the evaluation results
             self.parameters.num_vmas_envs = self.num_simulations_per_model
-        self.parameters.frames_per_batch = (
-            self.parameters.max_steps * self.parameters.num_vmas_envs
-        )
 
         # The two parameters below are only used in training. Set them to False so that they do not effect testing
         self.parameters.is_prb = False
@@ -232,7 +232,13 @@ class Evaluation:
             cprint("[INFO] Simulation outputs exist and will be loaded.", "grey")
             out_td = torch.load(path_eval_out_td)
         else:
-            env, decision_making_module, optimization_module, priority_module, _ = mappo_cavs(parameters=self.parameters)
+            (
+                env,
+                decision_making_module,
+                optimization_module,
+                priority_module,
+                _,
+            ) = mappo_cavs(parameters=self.parameters)
 
             cprint("[INFO] Run simulation...", "grey")
             sim_begin = time.time()

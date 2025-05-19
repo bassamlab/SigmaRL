@@ -4,12 +4,12 @@ from torchrl.data import UnboundedContinuousTensorSpec
 from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
 from torchrl.objectives import ClipPPOLoss, ValueEstimators
 
-#from sigmarl.helper_training import TransformedEnvCustom TODO OOP
+# from sigmarl.helper_training import TransformedEnvCustom TODO OOP
 from sigmarl.modules.module import Module
 
 
 class CBFModule(Module):
-    def __init__(self, env = None, mappo: bool = True):
+    def __init__(self, env=None, mappo: bool = True):
         """
         Initializes the CBFModule, which is responsible for learning a Control Barrier Function (CBF) with a neural network policy.
         It also sets up a PPO loss module with an actor-critic architecture and GAE (Generalized Advantage Estimation) for RL optimization.

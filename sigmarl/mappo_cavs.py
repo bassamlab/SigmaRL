@@ -8,6 +8,8 @@ import time
 
 from termcolor import colored, cprint
 
+import random
+
 # Torch
 import torch
 
@@ -15,9 +17,7 @@ import torch
 # torch.autograd.set_detect_anomaly(True)
 
 # Data collection
-from sigmarl.helper_training import (
-    SyncDataCollectorCustom
-)
+from sigmarl.helper_training import SyncDataCollectorCustom
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data import TensorDictPrioritizedReplayBuffer
 from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
@@ -41,7 +41,7 @@ from sigmarl.helper_training import (
     get_path_to_save_model,
     find_the_highest_reward_among_all_models,
     save,
-    compute_td_error
+    compute_td_error,
 )
 from sigmarl.modules.cbf_module import CBFModule
 from sigmarl.modules.decision_making_module import DecisionMakingModule
@@ -50,8 +50,7 @@ from sigmarl.modules.priority_module import PriorityModule
 
 from sigmarl.scenarios.road_traffic import ScenarioRoadTraffic
 
-# Reproducibility
-torch.manual_seed(0)
+from sigmarl.cbf_qp import CBFQP
 
 
 class MAPPOCAVs:
@@ -69,6 +68,10 @@ class MAPPOCAVs:
         """
         self.parameters = parameters
 
+        # Reproducibility
+        torch.manual_seed(self.parameters.random_seed)
+        random.seed(self.parameters.random_seed)
+
     def train(self):
         """
         Execute the main training loop for MAPPO.
@@ -79,14 +82,31 @@ class MAPPOCAVs:
         env = self._setup_environment()
         save_data = self._initialize_save_data()
         decision_making_module = self._setup_decision_making_module(env)
-        optimization_module = self._setup_optimization_module(env, decision_making_module)
+        optimization_module = self._setup_optimization_module(
+            env, decision_making_module
+        )
         priority_module = self._setup_priority_module(env)
-        cbf_module = self._setup_cbf_module(env)
 
         self._ensure_save_directory_exists()
 
+        if self.parameters.is_using_cbf:
+            if not self.parameters.is_load_model:
+                raise ValueError(
+                    "CBF is currently only supported for online training. Set parameters.is_load_model to True to avoid this error."
+                )
+            if self.parameters.n_agents != 1:
+                raise ValueError(
+                    "CBF is currently only supported for single-agent scenarios."
+                )
+            self.cbf_controllers = self._setup_cbf_qp_controller(env)
+            self._load_existing_model_for_cbf(decision_making_module, priority_module)
+        else:
+            self.cbf_controllers = None
+
         if self.parameters.is_load_model:
-            self._load_existing_model(decision_making_module, optimization_module, priority_module)
+            self._load_existing_model(
+                decision_making_module, optimization_module, priority_module
+            )
             if not self.parameters.is_continue_train:
                 cprint("[INFO] Training will not continue.", "blue")
                 return (
@@ -94,6 +114,7 @@ class MAPPOCAVs:
                     decision_making_module,
                     optimization_module,
                     priority_module,
+                    self.cbf_controllers,
                     self.parameters,
                 )
 
@@ -128,10 +149,18 @@ class MAPPOCAVs:
             self._update_learning_rate(optimization_module, pbar)
             pbar.update()  # Increment the progress bar
 
-        self._save_final_model(decision_making_module, optimization_module, priority_module)
+        self._save_final_model(
+            decision_making_module, optimization_module, priority_module
+        )
         self._print_training_summary(t_start)
 
-        return env, decision_making_module, optimization_module, priority_module, self.parameters
+        return (
+            env,
+            decision_making_module,
+            optimization_module,
+            priority_module,
+            self.parameters,
+        )
 
     def _setup_environment(self):
         """Set up the training environment."""
@@ -171,14 +200,9 @@ class MAPPOCAVs:
     def _setup_priority_module(self, env):
         """Set up the priority module if prioritized MARL is enabled."""
         if self.parameters.is_using_prioritized_marl:
-            return PriorityModule(env=env, Fpo=True)
-        return None
-
-    def _setup_cbf_module(self, env):
-        """Set up the Control Barrier Function (CBF) module if enabled."""
-        if self.parameters.is_using_cbf:
-            return CBFModule(env=env, mappo=True)
-        return None
+            return PriorityModule(env=env, mappo=True)
+        else:
+            return None
 
     def _ensure_save_directory_exists(self):
         """Ensure the directory for saving models exists."""
@@ -191,14 +215,18 @@ class MAPPOCAVs:
                 colored(f"{self.parameters.where_to_save}", "blue"),
             )
 
-    def _load_existing_model(self, decision_making_module, optimization_module, priority_module):
+    def _load_existing_model(
+        self, decision_making_module, optimization_module, priority_module
+    ):
         """Load an existing model if find one."""
         highest_reward = find_the_highest_reward_among_all_models(
             self.parameters.where_to_save
         )
         self.parameters.episode_reward_mean_current = highest_reward
         if highest_reward is not float("-inf"):
-            self._load_model(decision_making_module, optimization_module, priority_module)
+            self._load_model(
+                decision_making_module, optimization_module, priority_module
+            )
         else:
             raise ValueError("No valid model found in the specified directory.")
 
@@ -207,24 +235,35 @@ class MAPPOCAVs:
         if self.parameters.is_load_final_model:
             self._load_final_model(decision_making_module, priority_module)
         else:
-            self._load_intermediate_model(decision_making_module, optimization_module, priority_module)
+            self._load_intermediate_model(
+                decision_making_module, optimization_module, priority_module
+            )
 
-    def _load_final_model(self, decision_making_module: DecisionMakingModule, priority_module):
+    def _load_final_model(
+        self, decision_making_module: DecisionMakingModule, priority_module
+    ):
         """Load the final model."""
         decision_making_module.policy.load_state_dict(
-            torch.load(self.parameters.where_to_save + "final_policy.pth")
+            torch.load(
+                self.parameters.where_to_save + "final_policy.pth", weights_only=True
+            )
         )
         cprint("[INFO] Loaded the final model", "red")
         if priority_module and self.parameters.prioritization_method.lower() == "marl":
             priority_module.policy.load_state_dict(
-                torch.load(self.parameters.where_to_save + "final_priority_policy.pth")
+                torch.load(
+                    self.parameters.where_to_save + "final_priority_policy.pth",
+                    weights_only=True,
+                )
             )
             cprint("[INFO] Loaded the final priority model", "red")
 
-    def _load_intermediate_model(self,
-                                 decision_making_module: DecisionMakingModule,
-                                 optimization_module: OptimizationModule,
-                                 priority_module = None):
+    def _load_intermediate_model(
+        self,
+        decision_making_module: DecisionMakingModule,
+        optimization_module: OptimizationModule,
+        priority_module=None,
+    ):
         """Load an intermediate model."""
         (
             PATH_POLICY,
@@ -235,12 +274,15 @@ class MAPPOCAVs:
             PATH_JSON,
         ) = get_path_to_save_model(parameters=self.parameters)
 
-        decision_making_module.policy.load_state_dict(torch.load(PATH_POLICY))
-
+        decision_making_module.policy.load_state_dict(
+            torch.load(PATH_POLICY, weights_only=True)
+        )
         cprint(f"[INFO] Loaded the intermediate model '{PATH_POLICY}'", "blue")
 
         if priority_module and self.parameters.prioritization_method.lower() == "marl":
-            priority_module.policy.load_state_dict(torch.load(PATH_PRIORITY_POLICY))
+            priority_module.policy.load_state_dict(
+                torch.load(PATH_PRIORITY_POLICY, weights_only=True)
+            )
             cprint(
                 f"[INFO] Loaded the intermediate priority model '{PATH_PRIORITY_POLICY}'",
                 "blue",
@@ -248,24 +290,41 @@ class MAPPOCAVs:
 
         if self.parameters.is_continue_train:
             cprint("[INFO] Training will continue with the loaded model.", "red")
-            optimization_module.critic.load_state_dict(torch.load(PATH_CRITIC))
+            optimization_module.critic.load_state_dict(
+                torch.load(PATH_CRITIC), weights_only=True
+            )
             if (
                 priority_module
                 and self.parameters.prioritization_method.lower() == "marl"
             ):
-                priority_module.critic.load_state_dict(torch.load(PATH_PRIORITY_CRITIC))
+                priority_module.critic.load_state_dict(
+                    torch.load(PATH_PRIORITY_CRITIC, weights_only=True)
+                )
 
     def _setup_data_collector(self, env, decision_making_module, priority_module):
         """Set up the data collector for gathering experience."""
-        return SyncDataCollectorCustom(
-            env,
-            decision_making_module.policy,
-            priority_module=priority_module,
-            device=self.parameters.device,
-            storing_device=self.parameters.device,
-            frames_per_batch=self.parameters.frames_per_batch,
-            total_frames=self.parameters.total_frames,
-        )
+        if self.parameters.is_using_cbf:
+            self.cbf_controllers = self._setup_cbf_qp_controller(env)
+            return SyncDataCollectorCustom(
+                env,
+                decision_making_module.policy,
+                priority_module=priority_module,
+                cbf_controllers=self.cbf_controllers,
+                device=self.parameters.device,
+                storing_device=self.parameters.device,
+                frames_per_batch=self.parameters.frames_per_batch,
+                total_frames=self.parameters.total_frames,
+            )
+        else:
+            return SyncDataCollectorCustom(
+                env,
+                decision_making_module.policy,
+                priority_module=priority_module,
+                device=self.parameters.device,
+                storing_device=self.parameters.device,
+                frames_per_batch=self.parameters.frames_per_batch,
+                total_frames=self.parameters.total_frames,
+            )
 
     def _setup_replay_buffer(self):
         """Set up the replay buffer for storing experiences."""
@@ -303,10 +362,12 @@ class MAPPOCAVs:
             .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
         )
 
-    def _compute_gae(self,
-                     tensordict_data,
-                     optimization_module: OptimizationModule,
-                     priority_module: PriorityModule):
+    def _compute_gae(
+        self,
+        tensordict_data,
+        optimization_module: OptimizationModule,
+        priority_module: PriorityModule,
+    ):
         """Compute Generalized Advantage Estimation (GAE)."""
         with torch.no_grad():
             optimization_module.GAE(
@@ -321,7 +382,7 @@ class MAPPOCAVs:
                 priority_module.GAE(
                     tensordict_data,
                     params=priority_module.loss_module.critic_network_params,
-                    target_params=priority_module.loss_module.target_network_critic_params,
+                    target_params=priority_module.loss_module.target_critic_network_params,
                 )
 
     def _update_priorities(self, tensordict_data):
@@ -333,10 +394,9 @@ class MAPPOCAVs:
                 tensordict_data["td_error"].min() >= 0
             ), "TD error must be greater than 0"
 
-    def _train_epoch(self,
-                     optimization_module : OptimizationModule,
-                     priority_module,
-                     replay_buffer):
+    def _train_epoch(
+        self, optimization_module: OptimizationModule, priority_module, replay_buffer
+    ):
         """Train for one epoch."""
         for _ in range(self.parameters.num_epochs):
             for _ in range(
@@ -354,10 +414,9 @@ class MAPPOCAVs:
                         replay_buffer,
                     )
 
-    def _train_on_batch(self,
-                        optimization_module: OptimizationModule,
-                        priority_module,
-                        mini_batch_data):
+    def _train_on_batch(
+        self, optimization_module: OptimizationModule, priority_module, mini_batch_data
+    ):
         """Train on a single batch of data."""
         loss_vals = optimization_module.loss_module(mini_batch_data)
         loss_value = (
@@ -377,11 +436,13 @@ class MAPPOCAVs:
         if priority_module and self.parameters.prioritization_method.lower() == "marl":
             priority_module.compute_losses_and_optimize(mini_batch_data)
 
-    def _update_priorities_after_training(self,
-                                          optimization_module: OptimizationModule,
-                                          priority_module,
-                                          mini_batch_data,
-                                          replay_buffer):
+    def _update_priorities_after_training(
+        self,
+        optimization_module: OptimizationModule,
+        priority_module,
+        mini_batch_data,
+        replay_buffer,
+    ):
         """Update priorities in the replay buffer after training."""
         with torch.no_grad():
             optimization_module.GAE(
@@ -403,7 +464,13 @@ class MAPPOCAVs:
         replay_buffer.update_tensordict_priority(mini_batch_data)
 
     def _log_and_save(
-        self, tensordict_data, decision_making_module, optimization_module, priority_module, save_data, pbar
+        self,
+        tensordict_data,
+        decision_making_module,
+        optimization_module,
+        priority_module,
+        save_data,
+        pbar,
     ):
         """Log training progress and save intermediate models."""
         done = tensordict_data.get(("next", "agents", "done"))
@@ -453,13 +520,7 @@ class MAPPOCAVs:
             self.parameters.episode_reward_mean_current = (
                 self.parameters.episode_reward_intermediate
             )
-            save(
-                self.parameters,
-                save_data,
-                None,
-                None,
-                None
-            )
+            save(self.parameters, save_data, None, None, None)
 
     def _update_learning_rate(self, optimization_module: OptimizationModule, pbar):
         """Update the learning rate based on training progress."""
@@ -471,10 +532,12 @@ class MAPPOCAVs:
             if pbar.n % 10 == 0:
                 print(f"Learning rate updated to {param_group['lr']}.")
 
-    def _save_final_model(self,
-                          decision_making_module: DecisionMakingModule,
-                          optimization_module: OptimizationModule,
-                          priority_module):
+    def _save_final_model(
+        self,
+        decision_making_module: DecisionMakingModule,
+        optimization_module: OptimizationModule,
+        priority_module,
+    ):
         """Save the final trained model."""
         torch.save(
             decision_making_module.policy.state_dict(),
@@ -512,6 +575,59 @@ class MAPPOCAVs:
         training_duration = (time.time() - t_start) / 3600
         cprint(f"[INFO] Training duration: {training_duration:.2f} hours.", "blue")
 
+    def _setup_cbf_qp_controller(self, env):
+        """Set up the cbf_qp_controller if cbf constrained MARL is enabled."""
+        if (
+            self.parameters.is_using_cbf
+            and not self.parameters.is_using_centralized_cbf
+        ):
+            # Each agent in each environment has one CBF-based controller
+            cbf_controllers = [
+                [
+                    CBFQP(env=env, env_idx=env_idx, agent_idx=agent_idx)
+                    for agent_idx in range(self.parameters.n_agents)
+                ]
+                for env_idx in range(self.parameters.num_vmas_envs)
+            ]
+            return cbf_controllers
+        elif self.parameters.is_using_cbf and self.parameters.is_using_centralized_cbf:
+            # Each environment has one CBF-based controller
+            raise NotImplementedError("Centralized CBF is not implemented yet.")
+            cbf_controllers = [
+                CBFQP(env=env, env_idx=env_idx)
+                for env_idx in range(self.parameters.num_vmas_envs)
+            ]
+            return cbf_controllers
+        else:
+            return None
+
+    def _load_existing_model_for_cbf(self, decision_making_module, priority_module):
+        """Load RL decision making and priority policy model"""
+        decision_making_module.policy.load_state_dict(
+            torch.load(self.parameters.where_to_save + "final_policy.pth")
+        )
+
+        cprint(
+            "[INFO] Loaded decision-making model for CBF-constrained MARL",
+            "red",
+        )
+
+        if (
+            self.parameters.is_using_prioritized_marl
+            and self.parameters.prioritization_method.lower() == "marl"
+        ):
+            priority_module.policy.load_state_dict(
+                torch.load(self.parameters.where_to_save + "final_priority_policy.pth")
+            )
+            cprint("[INFO] Loaded priority model for CBF-constrained MARL", "red")
+        else:
+            priority_module = None
+
+            cprint(
+                "[INFO] Use random priority model for priority-based solving",
+                "red",
+            )
+
 
 def mappo_cavs(parameters: Parameters):
     """
@@ -530,4 +646,6 @@ def mappo_cavs(parameters: Parameters):
 if __name__ == "__main__":
     config_file = "config.json"
     parameters = Parameters.from_json(config_file)
-    env, decision_making_module, priority_module, parameters = mappo_cavs(parameters=parameters)
+    env, decision_making_module, priority_module, parameters = mappo_cavs(
+        parameters=parameters
+    )

@@ -4,11 +4,20 @@ from typing import List
 import torch
 from termcolor import cprint
 
-from sigmarl.helper_scenario import get_distances_between_agents, InitialStateBuffer, interX, Collisions
+from sigmarl.helper_scenario import (
+    get_distances_between_agents,
+    InitialStateBuffer,
+    interX,
+    Collisions,
+)
 from sigmarl.map_manager import MapManager
 from sigmarl.scenarios.observations.observation_provider import AgentState
-from sigmarl.scenarios.world_state.world_state_rt.world_state_rt import WorldStateRT, WorldStateRTParameters
+from sigmarl.scenarios.world_state.world_state_rt.world_state_rt import (
+    WorldStateRT,
+    WorldStateRTParameters,
+)
 from sigmarl.scenarios.world_state.world_state_sim import WorldStateSim
+
 
 @dataclass
 class WorldStateRTSimParameters(WorldStateRTParameters):
@@ -16,8 +25,8 @@ class WorldStateRTSimParameters(WorldStateRTParameters):
     cpm_scenario_probabilities: List[float]
     reset_agent_min_distance: torch.Tensor
 
-class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
+class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
     def __init__(self, params: WorldStateRTSimParameters, map: MapManager):
         super().__init__(params, map)
 
@@ -44,33 +53,40 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
             ),
         )
 
-    def init_ref_paths_agent_related_from_buffer(self, env_index: int, initial_state_buffer: InitialStateBuffer):
+    def init_ref_paths_agent_related_from_buffer(
+        self, env_index: int, initial_state_buffer: InitialStateBuffer
+    ):
         initial_state = initial_state_buffer.get_random()
         self.ref_paths_agent_related.scenario_id[env_index] = initial_state[
-                                                              :, initial_state_buffer.idx_scenario
-                                                              ]  # Update
+            :, initial_state_buffer.idx_scenario
+        ]  # Update
         self.ref_paths_agent_related.path_id[env_index] = initial_state[
-                                                          :, initial_state_buffer.idx_path
-                                                          ]  # Update
+            :, initial_state_buffer.idx_path
+        ]  # Update
         self.ref_paths_agent_related.point_id[env_index] = initial_state[
-                                                           :, initial_state_buffer.idx_point
-                                                           ]  # Update
+            :, initial_state_buffer.idx_point
+        ]  # Update
 
         return initial_state
 
-    def reset(self,
-              agent_states: List[AgentState],
-              env_index: int = None,
-              agent_index: int = None,
-              initial_state = None,
-              initial_state_buffer = None):
+    def reset(
+        self,
+        agent_states: List[AgentState],
+        env_index: int = None,
+        agent_index: int = None,
+        initial_state=None,
+        initial_state_buffer=None,
+    ):
 
-        reset_indices = range(self.n_agents) if agent_index is None else agent_index.unsqueeze(0)
+        reset_indices = (
+            range(self.n_agents) if agent_index is None else agent_index.unsqueeze(0)
+        )
 
         is_reset_single_agent = agent_index is not None
 
-        (ref_paths_scenario, extended_points) = self._reset_scenario_related_ref_paths(env_index=env_index,
-                                                                                      agent_index=agent_index)
+        (ref_paths_scenario, extended_points) = self._reset_scenario_related_ref_paths(
+            env_index=env_index, agent_index=agent_index
+        )
 
         for i_agent in reset_indices:
             ref_path, path_id = self._reset_init_state(
@@ -80,23 +96,23 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
                 agent_index=i_agent,
                 is_reset_single_agent=is_reset_single_agent,
                 initial_state=initial_state,
-                initial_state_buffer=initial_state_buffer
+                initial_state_buffer=initial_state_buffer,
             )
 
-            self._reset_agent_related_ref_path(env_index,
-                                              i_agent,
-                                              ref_path,
-                                              path_id,
-                                              extended_points)
+            self._reset_agent_related_ref_path(
+                env_index, i_agent, ref_path, path_id, extended_points
+            )
 
-    def _reset_init_state(self,
-                         agent_states: List[AgentState],
-                         ref_paths_scenario,
-                         agent_index: int,
-                         env_index: int = None,
-                         is_reset_single_agent: bool = False,
-                         initial_state = None,
-                         initial_state_buffer = None):
+    def _reset_init_state(
+        self,
+        agent_states: List[AgentState],
+        ref_paths_scenario,
+        agent_index: int,
+        env_index: int = None,
+        is_reset_single_agent: bool = False,
+        initial_state=None,
+        initial_state_buffer=None,
+    ):
         """
         This function resets the initial position, rotation, and velocity for an agent based on the provided
         initial state buffer if it is used. Otherwise, it randomly generates initial states ensuring they
@@ -107,24 +123,26 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
         if initial_state:
             # fetch reference path from buffer
-            path_id = initial_state[
-                agent_index, initial_state_buffer.idx_path
-            ].int()
+            path_id = initial_state[agent_index, initial_state_buffer.idx_path].int()
             ref_path = ref_paths_scenario[path_id]
 
             # apply state to world
-            agents[agent_index].set_pos(initial_state[agent_index, 0:2], batch_index=env_index)
-            agents[agent_index].set_pos(initial_state[agent_index, 2], batch_index=env_index)
-            agents[agent_index].set_pos(initial_state[agent_index, 3:5], batch_index=env_index)
+            agents[agent_index].set_pos(
+                initial_state[agent_index, 0:2], batch_index=env_index
+            )
+            agents[agent_index].set_pos(
+                initial_state[agent_index, 2], batch_index=env_index
+            )
+            agents[agent_index].set_pos(
+                initial_state[agent_index, 3:5], batch_index=env_index
+            )
 
             return ref_path, path_id
 
         # generate feasible initial positions for vehicles
-        ref_path, path_id, random_point_id = self._generate_feasible_initial_positions(agents,
-                                                                              ref_paths_scenario,
-                                                                              env_index,
-                                                                              agent_index,
-                                                                              is_reset_single_agent)
+        ref_path, path_id, random_point_id = self._generate_feasible_initial_positions(
+            agents, ref_paths_scenario, env_index, agent_index, is_reset_single_agent
+        )
         rot_start = ref_path["center_line_yaw"][random_point_id]
         steering_start = torch.zeros_like(rot_start, device=self.world.device)
         sideslip_start = torch.zeros_like(
@@ -132,8 +150,8 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
         )  # Sideslip angle is zero since the steering is zero
 
         speed_start = (
-                torch.rand(1, dtype=torch.float32, device=self.world.device)
-                * agents[agent_index].max_speed
+            torch.rand(1, dtype=torch.float32, device=self.world.device)
+            * agents[agent_index].max_speed
         )  # Random initial velocity
         vel_start = torch.hstack(
             [
@@ -151,12 +169,9 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
         return ref_path, path_id
 
-    def _generate_feasible_initial_positions(self,
-                                             agents,
-                                             ref_paths_scenario,
-                                             env_index,
-                                             agent_index,
-                                             is_reset_single_agent):
+    def _generate_feasible_initial_positions(
+        self, agents, ref_paths_scenario, env_index, agent_index, is_reset_single_agent
+    ):
         is_feasible_initial_position_found = False
         random_count = 0
 
@@ -176,9 +191,7 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
                 0, len(ref_paths_scenario), (1,)
             ).item()  # Select randomly a path
 
-            self.ref_paths_agent_related.path_id[
-                env_index, agent_index
-            ] = path_id
+            self.ref_paths_agent_related.path_id[env_index, agent_index] = path_id
 
             ref_path = ref_paths_scenario[path_id]
 
@@ -194,7 +207,7 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
             random_point_id = torch.randint(
                 start_point_idx, end_point_idx, (1,)
-            ).item() # choose random point from previously defined range
+            ).item()  # choose random point from previously defined range
 
             self.ref_paths_agent_related.point_id[
                 env_index, agent_index
@@ -225,22 +238,26 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
                     ]
                 )
 
-            diff_sq = (positions[agent_index, :] - positions) ** 2  # Calculate pairwise squared differences in positions
+            diff_sq = (
+                positions[agent_index, :] - positions
+            ) ** 2  # Calculate pairwise squared differences in positions
             initial_mutual_distances_sq = torch.sum(diff_sq, dim=-1)
 
             initial_mutual_distances_sq[agent_index] = (
-                    torch.max(initial_mutual_distances_sq) + 1
+                torch.max(initial_mutual_distances_sq) + 1
             )  # Set self-to-self distance to a sufficiently high value
 
             min_distance_sq = torch.min(initial_mutual_distances_sq)
 
             is_feasible_initial_position_found = min_distance_sq >= (
-                    self.params.reset_agent_min_distance ** 2
+                self.params.reset_agent_min_distance**2
             )
 
         return ref_path, path_id, random_point_id
 
-    def _reset_scenario_related_ref_paths(self, env_index: int = None, agent_index: int = None) -> tuple:
+    def _reset_scenario_related_ref_paths(
+        self, env_index: int = None, agent_index: int = None
+    ) -> tuple:
 
         if self.params.scenario_type != "CPM_mixed":
             ref_paths_scenario = self.ref_paths_map_related.long_term_all
@@ -251,19 +268,21 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
             return ref_paths_scenario, extended_points
 
         if agent_index is not None:
-            scenario_id = self.ref_paths_agent_related.scenario_id[env_index, agent_index]  # Keep the same scenario
+            scenario_id = self.ref_paths_agent_related.scenario_id[
+                env_index, agent_index
+            ]  # Keep the same scenario
         else:
             scenario_id = (
-                    torch.multinomial(
-                        torch.tensor(
-                            self.params.cpm_scenario_probabilities,
-                            device=self.world.device,
-                            dtype=torch.float32,
-                        ),
-                        1,
-                        replacement=True,
-                    ).item()
-                    + 1
+                torch.multinomial(
+                    torch.tensor(
+                        self.params.cpm_scenario_probabilities,
+                        device=self.world.device,
+                        dtype=torch.float32,
+                    ),
+                    1,
+                    replacement=True,
+                ).item()
+                + 1
             )  # A random integer {1, 2, 3}
 
             self.ref_paths_agent_related.scenario_id[env_index, :] = scenario_id
@@ -276,7 +295,7 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
             # Merge-in scenario
             ref_paths_scenario = self.ref_paths_map_related.long_term_merge_in
             extended_points = self.ref_paths_map_related.point_extended_merge_in
-        else: #scenario_id == 3
+        else:  # scenario_id == 3
             # Merge-out scenario
             ref_paths_scenario = self.ref_paths_map_related.long_term_merge_out
             extended_points = self.ref_paths_map_related.point_extended_merge_out
@@ -299,7 +318,7 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
         self.distances.agents[env_index, :, :] = mutual_distances[env_index, :, :]
 
     """
-    
+
     """
 
     def update_collisions(self):

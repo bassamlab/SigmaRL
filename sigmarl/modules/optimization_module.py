@@ -6,6 +6,7 @@ from torchrl.objectives import ClipPPOLoss, ValueEstimators
 from sigmarl.modules.decision_making_module import DecisionMakingModule
 from sigmarl.modules.module import Module
 
+
 class OptimizationModule(Module):
     def __init__(self, env, decision_module: DecisionMakingModule, mappo=True):
 
@@ -59,7 +60,9 @@ class OptimizationModule(Module):
         )
 
         loss_module.make_value_estimator(
-            ValueEstimators.GAE, gamma=self.parameters.gamma, lmbda=self.parameters.lmbda
+            ValueEstimators.GAE,
+            gamma=self.parameters.gamma,
+            lmbda=self.parameters.lmbda,
         )  # We build GAE
         GAE = loss_module.value_estimator  # Generalized Advantage Estimation
 

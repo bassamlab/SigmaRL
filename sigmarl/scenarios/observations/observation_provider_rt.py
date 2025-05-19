@@ -5,14 +5,26 @@ import torch
 import torch.nn.functional as F
 
 from sigmarl.constants import AGENTS
-from sigmarl.helper_scenario import Thresholds, Constants, Normalizers, Observations, CircularBuffer, \
-    angle_eliminate_two_pi, transform_from_global_to_local_coordinate
+from sigmarl.helper_scenario import (
+    Thresholds,
+    Constants,
+    Normalizers,
+    Observations,
+    CircularBuffer,
+    angle_eliminate_two_pi,
+    transform_from_global_to_local_coordinate,
+)
 from sigmarl.helper_training import WorldCustom
 from sigmarl.map_manager import MapManager
-from sigmarl.scenarios.observations.observation_provider import ObservationProviderParameters, ObservationProvider, \
-    AgentState
+from sigmarl.scenarios.observations.observation_provider import (
+    ObservationProviderParameters,
+    ObservationProvider,
+    AgentState,
+)
 from sigmarl.scenarios.world_state.world_state_rt.world_state_rt import WorldStateRT
-from sigmarl.scenarios.world_state.world_state_rt.world_state_rt_sim import WorldStateRTSimulation
+from sigmarl.scenarios.world_state.world_state_rt.world_state_rt_sim import (
+    WorldStateRTSimulation,
+)
 
 
 @dataclass
@@ -32,10 +44,17 @@ class ObservationProviderParametersRT(ObservationProviderParameters):
     is_observe_ref_path_other_agents: bool
     is_observe_distance_to_center_line: bool
 
-class ObservationProviderRT(ObservationProvider):
 
-    def __init__(self, params: ObservationProviderParametersRT, constants: Constants, normalizers: Normalizers,
-                 thresholds: Thresholds, map: MapManager, world_state: WorldStateRT):
+class ObservationProviderRT(ObservationProvider):
+    def __init__(
+        self,
+        params: ObservationProviderParametersRT,
+        constants: Constants,
+        normalizers: Normalizers,
+        thresholds: Thresholds,
+        map: MapManager,
+        world_state: WorldStateRT,
+    ):
 
         super().__init__(params, constants, normalizers)
 
@@ -51,7 +70,9 @@ class ObservationProviderRT(ObservationProvider):
                 device=self.device,
                 dtype=torch.int32,
             ),
-            noise_level=torch.tensor(params.noise_level, device=self.device, dtype=torch.float32),
+            obs_noise_level=torch.tensor(
+                params.obs_noise_level, device=self.device, dtype=torch.float32
+            ),
             n_stored_steps=torch.tensor(
                 params.n_stored_steps, device=self.device, dtype=torch.int32
             ),
@@ -67,40 +88,64 @@ class ObservationProviderRT(ObservationProvider):
 
         # initialize observations
         assert (
-                self.observations.n_stored_steps >= 1
+            self.observations.n_stored_steps >= 1
         ), "The number of stored steps should be at least 1."
         assert (
-                self.observations.n_observed_steps >= 1
+            self.observations.n_observed_steps >= 1
         ), "The number of observed steps should be at least 1."
         assert (
-                self.observations.n_stored_steps >= self.observations.n_observed_steps
+            self.observations.n_stored_steps >= self.observations.n_observed_steps
         ), "The number of stored steps should be greater or equal than the number of observed steps."
 
         if self.params.is_ego_view:
             self.observations.past_pos = CircularBuffer(
                 torch.zeros(
-                    (self.params.n_stored_steps, self.batch_dim, self.n_agents, self.n_agents, 2),
+                    (
+                        self.params.n_stored_steps,
+                        self.batch_dim,
+                        self.n_agents,
+                        self.n_agents,
+                        2,
+                    ),
                     device=self.device,
                     dtype=torch.float32,
                 )
             )
             self.observations.past_rot = CircularBuffer(
                 torch.zeros(
-                    (self.params.n_stored_steps, self.batch_dim, self.n_agents, self.n_agents),
+                    (
+                        self.params.n_stored_steps,
+                        self.batch_dim,
+                        self.n_agents,
+                        self.n_agents,
+                    ),
                     device=self.device,
                     dtype=torch.float32,
                 )
             )
             self.observations.past_vertices = CircularBuffer(
                 torch.zeros(
-                    (self.params.n_stored_steps, self.batch_dim, self.n_agents, self.n_agents, 4, 2),
+                    (
+                        self.params.n_stored_steps,
+                        self.batch_dim,
+                        self.n_agents,
+                        self.n_agents,
+                        4,
+                        2,
+                    ),
                     device=self.device,
                     dtype=torch.float32,
                 )
             )
             self.observations.past_vel = CircularBuffer(
                 torch.zeros(
-                    (self.params.n_stored_steps, self.batch_dim, self.n_agents, self.n_agents, 2),
+                    (
+                        self.params.n_stored_steps,
+                        self.batch_dim,
+                        self.n_agents,
+                        self.n_agents,
+                        2,
+                    ),
                     device=self.device,
                     dtype=torch.float32,
                 )
@@ -261,7 +306,12 @@ class ObservationProviderRT(ObservationProvider):
         )
         self.observations.past_distance_to_agents = CircularBuffer(
             torch.zeros(
-                (self.params.n_stored_steps, self.batch_dim, self.n_agents, self.n_agents),
+                (
+                    self.params.n_stored_steps,
+                    self.batch_dim,
+                    self.n_agents,
+                    self.n_agents,
+                ),
                 device=self.device,
                 dtype=torch.float32,
             )
@@ -293,9 +343,9 @@ class ObservationProviderRT(ObservationProvider):
     """
 
     def update_state(self, agent_states: List[AgentState]):
-        positions_global = torch.stack(
-            [s.pos for s in agent_states], dim=0
-        ).transpose(0, 1)
+        positions_global = torch.stack([s.pos for s in agent_states], dim=0).transpose(
+            0, 1
+        )
         rotations_global = (
             torch.stack([s.rot for s in agent_states], dim=0)
             .transpose(0, 1)
@@ -391,9 +441,7 @@ class ObservationProviderRT(ObservationProvider):
                 for a_j in range(self.n_agents):
                     # Store new observation - velocities
                     rot_rel = rot_i_others[:, a_i, a_j].unsqueeze(1)
-                    vel_abs = torch.norm(
-                        agent_states[a_j].vel, dim=1
-                    ).unsqueeze(
+                    vel_abs = torch.norm(agent_states[a_j].vel, dim=1).unsqueeze(
                         1
                     )  # TODO Check if relative velocities here are better
                     vel_i_others[:, a_i, a_j] = torch.hstack(
@@ -402,39 +450,41 @@ class ObservationProviderRT(ObservationProvider):
 
                     # Store new observation - reference paths
                     ref_i_others[
-                    :, a_i, a_j
+                        :, a_i, a_j
                     ] = transform_from_global_to_local_coordinate(
                         pos_i=pos_i,
-                        pos_j=self.world_state.ref_paths_agent_related.short_term[:, a_j],
+                        pos_j=self.world_state.ref_paths_agent_related.short_term[
+                            :, a_j
+                        ],
                         rot_i=rot_i,
                     )
 
                     # Store new observation - left boundary
                     if not self.params.is_observe_distance_to_boundaries:
                         l_b_i_others[
-                        :, a_i, a_j
+                            :, a_i, a_j
                         ] = transform_from_global_to_local_coordinate(
                             pos_i=pos_i,
                             pos_j=self.world_state.ref_paths_agent_related.nearing_points_left_boundary[
-                                  :, a_j
-                                  ],
+                                :, a_j
+                            ],
                             rot_i=rot_i,
                         )
 
                         # Store new observation - right boundary
                         r_b_i_others[
-                        :, a_i, a_j
+                            :, a_i, a_j
                         ] = transform_from_global_to_local_coordinate(
                             pos_i=pos_i,
                             pos_j=self.world_state.ref_paths_agent_related.nearing_points_right_boundary[
-                                  :, a_j
-                                  ],
+                                :, a_j
+                            ],
                             rot_i=rot_i,
                         )
 
                     # Store new observation - vertices
                     ver_i_others[
-                    :, a_i, a_j
+                        :, a_i, a_j
                     ] = transform_from_global_to_local_coordinate(
                         pos_i=pos_i,
                         pos_j=self.world_state.vertices[:, a_j, 0:4, :],
@@ -495,8 +545,7 @@ class ObservationProviderRT(ObservationProvider):
                 )
             )
             self.observations.past_vel.add(
-                torch.stack([s.vel for s in agent_states], dim=1)
-                / self.normalizers.v
+                torch.stack([s.vel for s in agent_states], dim=1) / self.normalizers.v
             )
             self.observations.past_rot.add(
                 angle_eliminate_two_pi(rotations_global[:]) / self.normalizers.rot
@@ -552,7 +601,7 @@ class ObservationProviderRT(ObservationProvider):
 
         obs_all = [o for o in obs_self if o is not None]  # Filter out None values
 
-        obs = torch.hstack(obs_all) # Convert from list to tensor
+        obs = torch.hstack(obs_all)  # Convert from list to tensor
 
         if self.params.is_using_opponent_modeling:
             # Zero-padding as a placeholder for actions of surrounding agents
@@ -564,7 +613,7 @@ class ObservationProviderRT(ObservationProvider):
         if self.params.is_add_noise:
             # Add sensor noise if required
             obs = obs + (
-                self.observations.noise_level
+                self.observations.obs_noise_level
                 * torch.rand_like(obs, device=self.device, dtype=torch.float32)
             )
 
@@ -878,9 +927,15 @@ class ObservationProviderRT(ObservationProvider):
 
 # todo maybe put into own file
 class RoadTrafficObservationProviderSimulation(ObservationProviderRT):
-
-    def __init__(self, params: ObservationProviderParametersRT, constants: Constants, normalizers: Normalizers,
-                 thresholds: Thresholds, map: MapManager, world_state: WorldStateRTSimulation):
+    def __init__(
+        self,
+        params: ObservationProviderParametersRT,
+        constants: Constants,
+        normalizers: Normalizers,
+        thresholds: Thresholds,
+        map: MapManager,
+        world_state: WorldStateRTSimulation,
+    ):
         super().__init__(params, constants, normalizers, thresholds, map, world_state)
 
         self.world_state = world_state
@@ -904,6 +959,7 @@ class RoadTrafficObservationProviderSimulation(ObservationProviderRT):
                 torch.stack([a.action.u[:, 1] for a in world.agents], dim=1)
                 / self.normalizers.steering
             )
+
 
 # todo maybe put into own file
 class RoadTrafficObservationProviderReal(ObservationProviderRT):

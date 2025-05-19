@@ -2,12 +2,8 @@ from abc import abstractmethod
 
 import torch
 
-class Module:
 
+class Module:
     @abstractmethod
     def get_observation_key(self) -> tuple:
         pass
-
-
-
-

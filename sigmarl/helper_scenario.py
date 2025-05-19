@@ -175,6 +175,9 @@ class ReferencePathsAgentRelated:
         scenario_id: torch.Tensor = None,
         path_id: torch.Tensor = None,
         point_id: torch.Tensor = None,
+        ref_lanelet_ids: torch.Tensor = None,
+        n_ref_lanelet_ids: torch.Tensor = None,
+        ref_lanelet_segment_points: torch.Tensor = None,
     ):
         self.long_term = long_term  # Actual long-term reference paths of agents
         self.long_term_vec_normalized = (
@@ -204,6 +207,14 @@ class ReferencePathsAgentRelated:
         self.scenario_id = scenario_id  # Which scenarios agents are (current implementation includes (1) intersection, (2) merge-in, and (3) merge-out)
         self.path_id = path_id  # Which paths agents are
         self.point_id = point_id  # Which points agents are
+
+        self.ref_lanelet_ids = ref_lanelet_ids  # Lanelet IDs of the reference path
+        self.n_ref_lanelet_ids = (
+            n_ref_lanelet_ids  # Number of lanelets in the reference path
+        )
+        self.ref_lanelet_segment_points = (
+            ref_lanelet_segment_points  # Connection points between lanelets
+        )
 
 
 class Distances:
@@ -449,7 +460,7 @@ class Observations:
         self,
         n_nearing_agents=None,
         nearing_agents_indices=None,
-        noise_level=None,
+        obs_noise_level=None,
         n_stored_steps=None,
         n_observed_steps=None,
         past_pos: CircularBuffer = None,
@@ -469,10 +480,11 @@ class Observations:
         past_widths: CircularBuffer = None,
         past_left_boundary: CircularBuffer = None,
         past_right_boundary: CircularBuffer = None,
+        past_id: CircularBuffer = None,
     ):
         self.n_nearing_agents = n_nearing_agents
         self.nearing_agents_indices = nearing_agents_indices
-        self.noise_level = noise_level  # Whether to add noise to observations
+        self.obs_noise_level = obs_noise_level  # Whether to add noise to observations
         self.n_stored_steps = n_stored_steps  # Number of past steps to store
         self.n_observed_steps = n_observed_steps  # Number of past steps to observe
 
@@ -507,6 +519,7 @@ class Observations:
         )
         self.past_lengths = past_lengths  # Past lengths of agents (although they do not change, but for the reason of keeping consistence)
         self.past_widths = past_widths  # Past widths of agents (although they do not change, but for the reason of keeping consistence)
+        self.past_id = past_id  # Past lanelet IDs
 
 
 class Noise:
@@ -543,7 +556,11 @@ class Noise:
 ## Helper Functions
 ##################################################
 def get_rectangle_vertices(
-    center: torch.Tensor, yaw, width, length, is_close_shape: bool = True
+    center: torch.Tensor,
+    yaw: torch.Tensor,
+    width: float,
+    length: float,
+    is_close_shape: bool = True,
 ):
     """Compute the vertices of rectangles for a batch of agents given their centers, yaws (rotations),
     widths, and lengths, using PyTorch tensors.
@@ -617,6 +634,140 @@ def get_rectangle_vertices(
     )
 
     # Add center positions to the rotated vertices
+    vertices_global = vertices_rotated + center.unsqueeze(1)
+
+    return vertices_global
+
+
+def get_rectangle_vertices(
+    center: torch.Tensor,
+    yaw: torch.Tensor,
+    width: float,
+    length: float,
+    is_close_shape: bool = True,
+    num_point_length_side: int = 0,
+    num_point_width_side: int = 0,
+):
+    """
+    Compute the vertices (and optionally intermediate points) of rectangles for a batch of agents
+    given their centers, yaws (rotations), widths, and lengths, using PyTorch tensors.
+    It can include uniformly distributed intermediate points along the length and width sides.
+
+    Args:
+        center: [batch_dim, 2] or [2] center positions of the rectangles. If [2], batch_dim is 1.
+        yaw: [batch_dim, 1] or [1] or [] Rotation angles in radians.
+        width: scalar width of the rectangles.
+        length: scalar length of the rectangles.
+        is_close_shape: if True, the returned vertices will close the shape by repeating the first vertex.
+        num_point_length_side: number of uniformly distributed intermediate points on each length side.
+        num_point_width_side: number of uniformly distributed intermediate points on each width side.
+
+    Returns:
+        Tensor of shape [batch_dim, N, 2] containing vertex (and intermediate) points of the rectangles
+        for each agent, where N depends on the number of requested intermediate points.
+    """
+
+    # Ensure center has batch dimension
+    if center.ndim == 1:
+        center = center.unsqueeze(0)
+
+    # Normalize yaw dimensions to [batch_dim, 1]
+    if yaw.ndim == 0:
+        yaw = yaw.unsqueeze(0).unsqueeze(0)
+    elif yaw.ndim == 1:
+        yaw = yaw.unsqueeze(0)
+
+    if num_point_length_side != 0 or num_point_width_side != 0:
+        # Closed shape is required for the intermediate points
+        is_close_shape = True
+
+    batch_dim = center.shape[0]
+    width_half = width / 2
+    length_half = length / 2
+
+    # Define base vertices relative to the center in local coordinates
+    if is_close_shape:
+        base_vertices = torch.tensor(
+            [
+                [length_half, width_half],
+                [length_half, -width_half],
+                [-length_half, -width_half],
+                [-length_half, width_half],
+                [length_half, width_half],  # repeat first to close the shape
+            ],
+            dtype=center.dtype,
+            device=center.device,
+        )
+    else:
+        base_vertices = torch.tensor(
+            [
+                [length_half, width_half],
+                [length_half, -width_half],
+                [-length_half, -width_half],
+                [-length_half, width_half],
+            ],
+            dtype=center.dtype,
+            device=center.device,
+        )
+
+    # If no intermediate points are requested, use original vertices
+    if num_point_length_side == 0 and num_point_width_side == 0:
+        vertices = base_vertices
+    else:
+        # List to collect sampled points along each edge
+        edge_points = []
+        # Iterate over each consecutive pair of vertices to sample points on edges
+        for i in range(len(base_vertices) - 1):
+            start = base_vertices[i]
+            end = base_vertices[i + 1]
+            # Determine if edge is horizontal or vertical in local frame
+            if torch.isclose(start[1], end[1]):  # horizontal edge: constant y, vary x
+                n_points = num_point_length_side + 2
+            elif torch.isclose(start[0], end[0]):  # vertical edge: constant x, vary y
+                n_points = num_point_width_side + 2
+            else:
+                # This should not happen for axis-aligned rectangle edges
+                n_points = 2
+
+            # Create linearly spaced points along the edge
+            # linspace returns points including both endpoints
+            t = torch.linspace(
+                0, 1, steps=n_points, device=center.device, dtype=center.dtype
+            ).unsqueeze(1)
+            pts = start + t * (end - start)
+
+            # Avoid duplicate vertices by dropping the first point after the first edge
+            if i > 0:
+                pts = pts[1:]
+            edge_points.append(pts)
+
+        # Concatenate all sampled points along edges to form the full set of vertices for one rectangle
+        vertices = torch.cat(edge_points, dim=0)
+
+    # Expand vertices to match batch size: shape becomes [batch_dim, num_vertices, 2]
+    vertices = vertices.unsqueeze(0).repeat(batch_dim, 1, 1)
+
+    # Create rotation matrices for each agent
+    # Squeeze yaw to shape [batch_dim] for trigonometric computations
+    cos_yaw = torch.cos(yaw).squeeze(-1)
+    sin_yaw = torch.sin(yaw).squeeze(-1)
+
+    # Build rotation matrices of shape [batch_dim, 2, 2]
+    rot_matrix = torch.stack(
+        [
+            torch.stack([cos_yaw, -sin_yaw], dim=-1),
+            torch.stack([sin_yaw, cos_yaw], dim=-1),
+        ],
+        dim=1,
+    )
+
+    # Apply rotation: use batch matrix multiplication
+    # vertices.transpose(1, 2) shape [batch_dim, 2, num_vertices], then multiply, then transpose back
+    vertices_rotated = torch.matmul(rot_matrix, vertices.transpose(1, 2)).transpose(
+        1, 2
+    )
+
+    # Add center positions to rotated vertices: broadcasting center to match vertices shape
     vertices_global = vertices_rotated + center.unsqueeze(1)
 
     return vertices_global
@@ -1057,3 +1208,113 @@ def angle_eliminate_two_pi(angle):
     angle = angle % two_pi  # Normalize angle to be within 0 and 2*pi
     angle[angle > torch.pi] -= two_pi  # Shift to -pi to pi range
     return angle
+
+
+def get_current_lanelet_id(
+    point: torch.Tensor,
+    ref_lanelet_segment_point: torch.Tensor,
+    n_ref_lanelet_ids: torch.Tensor,
+    ref_lanelet_ids: torch.Tensor,
+):
+    """
+    Get the current lanelet ID for each agent based on their location.
+    This function computes the closest lanelet to each agent by projecting
+    their location onto the lanelet's polyline segments.
+
+    Parameters:
+    ----------
+    point : torch.Tensor
+        A tensor containing the coordinates of the points (agents' locations).
+    ref_lanelet_segment_point : torch.Tensor
+        A tensor containing the start and end points of each segment of the reference path polyline.
+    n_ref_lanelet_ids : torch.Tensor
+        A tensor containing the number of lanelets for each path.
+    ref_lanelet_ids : torch.Tensor
+        A tensor containing the IDs of the reference path.
+
+    Returns:
+    -------
+    current_id : torch.Tensor
+        The lanelet ID of the closest lanelet to the agent's location.
+    """
+
+    # Expand and repeat for broadcasting
+    max_num_lanelets = ref_lanelet_segment_point.shape[2] - 1
+
+    # Mask valid lanelets based on n_ref_lanelet_ids
+    mask = (
+        torch.arange(max_num_lanelets + 1 - 1, device=n_ref_lanelet_ids.device)
+        .unsqueeze(0)
+        .unsqueeze(0)
+    )
+    mask = mask < (n_ref_lanelet_ids).unsqueeze(-1)
+
+    # Split the polyline into line segments
+    line_starts = ref_lanelet_segment_point[:, :, :-1, :]
+    line_ends = ref_lanelet_segment_point[:, :, 1:, :]
+
+    # Expand point for broadcasting
+    point_expanded = point.unsqueeze(2)
+
+    # Create vectors for each line segment and for the point to the start of each segment
+    line_vecs = line_ends - line_starts
+    point_vecs = point_expanded - line_starts
+
+    # Project point_vecs onto line_vecs
+    line_lens_squared = torch.sum(line_vecs**2, dim=-1)
+    projected_lengths = torch.sum(point_vecs * line_vecs, dim=-1) / line_lens_squared
+
+    # Clamp the projections to lie within the line segments
+    clamped_lengths = torch.clamp(projected_lengths, 0, 1)
+
+    # Find the closest points on the line segments to the given points
+    closest_points = line_starts + (line_vecs * clamped_lengths.unsqueeze(-1))
+
+    # Calculate the distances from the given points to these closest points
+    distances = torch.norm(closest_points - point_expanded, dim=-1)
+
+    # Apply mask to distances
+    distances[~mask] = float("inf")  # Ignore invalid lanelets
+
+    # Get the index of the nearest lanelet
+    _, nearest_idx = torch.min(distances, dim=-1)
+
+    # Gather the corresponding lanelet IDs
+    current_id = torch.gather(
+        ref_lanelet_ids, dim=2, index=nearest_idx.unsqueeze(-1)
+    ).squeeze(-1)
+
+    return current_id
+
+
+def compute_pseudo_tangent_vector(points: torch.Tensor) -> torch.Tensor:
+    """
+    Approximate the tangent vector at each point of a 2D polyline.
+
+    The tangent at a given point is estimated as follows:
+    - For the first point: forward difference with the next point.
+    - For the last point: backward difference with the previous point.
+    - For all interior points: central difference using the next and previous points.
+
+    Args:
+        points (torch.Tensor): Tensor of shape (N, 2) representing a polyline with N points in 2D space.
+
+    Returns:
+        torch.Tensor: Tensor of shape (N, 2) where each row is the approximate tangent vector at the corresponding point.
+    """
+    num_points = points.size(0)
+    # Allocate tensor for storing the tangent vectors
+    tangent_vector = torch.zeros_like(points)
+
+    if num_points >= 2:
+        # Approximate the tangent vector at the first point
+        tangent_vector[0] = points[1] - points[0]
+        # Approximate the tangent vector at the last point
+        tangent_vector[-1] = points[-1] - points[-2]
+
+    if num_points >= 3:
+        # For interior points, use central differences (next - previous)
+        # Vectorized computation from index 1 to N-2
+        tangent_vector[1:-1] = points[2:] - points[:-2]
+
+    return tangent_vector

@@ -5,8 +5,14 @@ from typing import List
 import torch
 
 from sigmarl.constants import AGENTS
-from sigmarl.helper_scenario import Distances, ReferencePathsAgentRelated, get_perpendicular_distances, \
-    get_rectangle_vertices, get_short_term_reference_path, ReferencePathsMapRelated
+from sigmarl.helper_scenario import (
+    Distances,
+    ReferencePathsAgentRelated,
+    get_perpendicular_distances,
+    get_rectangle_vertices,
+    get_short_term_reference_path,
+    ReferencePathsMapRelated,
+)
 from sigmarl.map_manager import MapManager
 from sigmarl.scenarios.observations.observation_provider import AgentState
 from sigmarl.scenarios.world_state.world_state import WorldState, WorldStateParameters
@@ -23,17 +29,20 @@ class WorldStateRTParameters(WorldStateParameters):
     sample_interval_ref_path: int
     observe_distance_to_boundaries: bool
 
+
 """
 Implementation of the world state class for the road_traffic scenario.
 """
-class WorldStateRT(WorldState):
 
+
+class WorldStateRT(WorldState):
     def __init__(self, params: WorldStateRTParameters, map: MapManager):
+        self.map = (
+            map  # Do not move this line, it is needed for the super().__init__() call
+        )
         super().__init__(params)
 
         self.params = params
-
-        self.map = map
 
         self.ref_paths_map_related = ReferencePathsMapRelated(
             long_term_all=self.map.parser.reference_paths,
@@ -43,7 +52,8 @@ class WorldStateRT(WorldState):
             point_extended_all=torch.zeros(
                 (
                     len(self.map.parser.reference_paths),
-                    self.params.n_points_short_term * self.params.sample_interval_ref_path,
+                    self.params.n_points_short_term
+                    * self.params.sample_interval_ref_path,
                     2,
                 ),
                 device=self.device,
@@ -52,7 +62,8 @@ class WorldStateRT(WorldState):
             point_extended_intersection=torch.zeros(
                 (
                     len(self.map.parser.reference_paths_intersection),
-                    self.params.n_points_short_term * self.params.sample_interval_ref_path,
+                    self.params.n_points_short_term
+                    * self.params.sample_interval_ref_path,
                     2,
                 ),
                 device=self.device,
@@ -61,7 +72,8 @@ class WorldStateRT(WorldState):
             point_extended_merge_in=torch.zeros(
                 (
                     len(self.map.parser.reference_paths_merge_in),
-                    self.params.n_points_short_term * self.params.sample_interval_ref_path,
+                    self.params.n_points_short_term
+                    * self.params.sample_interval_ref_path,
                     2,
                 ),
                 device=self.device,
@@ -70,14 +82,17 @@ class WorldStateRT(WorldState):
             point_extended_merge_out=torch.zeros(
                 (
                     len(self.map.parser.reference_paths_merge_out),
-                    self.params.n_points_short_term * self.params.sample_interval_ref_path,
+                    self.params.n_points_short_term
+                    * self.params.sample_interval_ref_path,
                     2,
                 ),
                 device=self.device,
                 dtype=torch.float32,
             ),
             sample_interval=torch.tensor(
-                self.params.sample_interval_ref_path, device=self.device, dtype=torch.int32
+                self.params.sample_interval_ref_path,
+                device=self.device,
+                dtype=torch.int32,
             ),
         )
 
@@ -92,16 +107,14 @@ class WorldStateRT(WorldState):
         pass
 
     @abstractmethod
-    def _reset_init_state(self,
-                         agent_states: List[AgentState],
-                         ref_paths_scenario,
-                         agent_index: int):
+    def _reset_init_state(
+        self, agent_states: List[AgentState], ref_paths_scenario, agent_index: int
+    ):
         pass
 
     @abstractmethod
     def update_mutual_distances(self, agent_states, env_index=slice(None)):
         pass
-
 
     def _init_stateful_parameters(self):
         self.distances = Distances(
@@ -110,10 +123,14 @@ class WorldStateRT(WorldState):
                 self.batch_dim, self.n_agents, self.n_agents, dtype=torch.float32
             ),
             left_boundaries=torch.zeros(
-                (self.batch_dim, self.n_agents, 1 + 4), device=self.device, dtype=torch.float32
+                (self.batch_dim, self.n_agents, 1 + 4),
+                device=self.device,
+                dtype=torch.float32,
             ),  # The first entry for the center, the last 4 entries for the four vertices
             right_boundaries=torch.zeros(
-                (self.batch_dim, self.n_agents, 1 + 4), device=self.device, dtype=torch.float32
+                (self.batch_dim, self.n_agents, 1 + 4),
+                device=self.device,
+                dtype=torch.float32,
             ),
             boundaries=torch.zeros(
                 (self.batch_dim, self.n_agents), device=self.device, dtype=torch.float32
@@ -131,6 +148,8 @@ class WorldStateRT(WorldState):
                 (self.batch_dim, self.n_agents), device=self.device, dtype=torch.int32
             ),
         )
+
+        max_num_lanelets = len(self.map.parser.lanelets_all)
 
         # Initialize agent-specific reference paths, which will be determined in `reset_world_at` function
         self.ref_paths_agent_related = ReferencePathsAgentRelated(
@@ -155,10 +174,14 @@ class WorldStateRT(WorldState):
                 dtype=torch.float32,
             ),
             entry=torch.zeros(
-                (self.batch_dim, self.n_agents, 2, 2), device=self.device, dtype=torch.float32
+                (self.batch_dim, self.n_agents, 2, 2),
+                device=self.device,
+                dtype=torch.float32,
             ),
             exit=torch.zeros(
-                (self.batch_dim, self.n_agents, 2, 2), device=self.device, dtype=torch.float32
+                (self.batch_dim, self.n_agents, 2, 2),
+                device=self.device,
+                dtype=torch.float32,
             ),
             is_loop=torch.zeros(
                 (self.batch_dim, self.n_agents), device=self.device, dtype=torch.bool
@@ -183,15 +206,27 @@ class WorldStateRT(WorldState):
                 dtype=torch.int32,
             ),
             n_points_nearing_boundary=torch.tensor(
-                self.params.n_points_nearing_boundary, device=self.device, dtype=torch.int32
+                self.params.n_points_nearing_boundary,
+                device=self.device,
+                dtype=torch.int32,
             ),
             nearing_points_left_boundary=torch.zeros(
-                (self.batch_dim, self.n_agents, self.params.n_points_nearing_boundary, 2),
+                (
+                    self.batch_dim,
+                    self.n_agents,
+                    self.params.n_points_nearing_boundary,
+                    2,
+                ),
                 device=self.device,
                 dtype=torch.float32,
             ),  # Nearing left boundary
             nearing_points_right_boundary=torch.zeros(
-                (self.batch_dim, self.n_agents, self.params.n_points_nearing_boundary, 2),
+                (
+                    self.batch_dim,
+                    self.n_agents,
+                    self.params.n_points_nearing_boundary,
+                    2,
+                ),
                 device=self.device,
                 dtype=torch.float32,
             ),  # Nearing right boundary
@@ -204,12 +239,27 @@ class WorldStateRT(WorldState):
             point_id=torch.zeros(
                 (self.batch_dim, self.n_agents), device=self.device, dtype=torch.int32
             ),  # Which points agents are
+            ref_lanelet_ids=torch.zeros(
+                (self.batch_dim, self.n_agents, max_num_lanelets),
+                device=self.device,
+                dtype=torch.int32,
+            ),  # Lanelet IDs of the reference path
+            n_ref_lanelet_ids=torch.zeros(
+                (self.batch_dim, self.n_agents), device=self.device, dtype=torch.int32
+            ),  # Number of lanelet IDs in the reference path (used for slicing later)
+            ref_lanelet_segment_points=torch.zeros(
+                (self.batch_dim, self.n_agents, max_num_lanelets + 1, 2),
+                device=self.device,
+                dtype=torch.float32,
+            ),  # Connection points (segment startpoints and endpoints) of the lanelets for the reference path
         )
 
         # The shape of each agent is considered a rectangle with 4 vertices.
         # The first vertex is repeated at the end to close the shape.
         self.vertices = torch.zeros(
-            (self.batch_dim, self.n_agents, 5, 2), device=self.device, dtype=torch.float32
+            (self.batch_dim, self.n_agents, 5, 2),
+            device=self.device,
+            dtype=torch.float32,
         )
 
     def _extend_map_related_ref_path(self):
@@ -225,33 +275,29 @@ class WorldStateRT(WorldState):
             center_line_i = i_path["center_line"]
             direction = center_line_i[-1] - center_line_i[-2]
             self.ref_paths_map_related.point_extended_all[idx, :] = (
-                    center_line_i[-1] + idx_broadcasting_entend * direction
+                center_line_i[-1] + idx_broadcasting_entend * direction
             )
         for idx, i_path in enumerate(self.map.parser.reference_paths_intersection):
             center_line_i = i_path["center_line"]
             direction = center_line_i[-1] - center_line_i[-2]
             self.ref_paths_map_related.point_extended_intersection[idx, :] = (
-                    center_line_i[-1] + idx_broadcasting_entend * direction
+                center_line_i[-1] + idx_broadcasting_entend * direction
             )
         for idx, i_path in enumerate(self.map.parser.reference_paths_merge_in):
             center_line_i = i_path["center_line"]
             direction = center_line_i[-1] - center_line_i[-2]
             self.ref_paths_map_related.point_extended_merge_in[idx, :] = (
-                    center_line_i[-1] + idx_broadcasting_entend * direction
+                center_line_i[-1] + idx_broadcasting_entend * direction
             )
         for idx, i_path in enumerate(self.map.parser.reference_paths_merge_out):
             center_line_i = i_path["center_line"]
             direction = center_line_i[-1] - center_line_i[-2]
             self.ref_paths_map_related.point_extended_merge_out[idx, :] = (
-                    center_line_i[-1] + idx_broadcasting_entend * direction
+                center_line_i[-1] + idx_broadcasting_entend * direction
             )
 
-    def _reset_agent_related_ref_path(self,
-                                      env_i,
-                                      agent_index,
-                                      ref_path,
-                                      path_id,
-                                      extended_points
+    def _reset_agent_related_ref_path(
+        self, env_i, agent_index, ref_path, path_id, extended_points
     ):
         """
         This function resets the agent-related reference paths and updates various related attributes
@@ -260,30 +306,28 @@ class WorldStateRT(WorldState):
         # Long-term reference paths for agents
         n_points_long_term = ref_path["center_line"].shape[0]
 
-        self.ref_paths_agent_related.long_term[env_i,
-        agent_index, 0:n_points_long_term, :
+        self.ref_paths_agent_related.long_term[
+            env_i, agent_index, 0:n_points_long_term, :
         ] = ref_path["center_line"]
 
         self.ref_paths_agent_related.long_term[
-        env_i,
-        agent_index,
-        n_points_long_term: (
+            env_i,
+            agent_index,
+            n_points_long_term : (
                 n_points_long_term
-                + self.params.n_points_short_term
-                * self.params.sample_interval_ref_path
-        ),
-        :,
+                + self.params.n_points_short_term * self.params.sample_interval_ref_path
+            ),
+            :,
         ] = extended_points[path_id, :, :]
 
         self.ref_paths_agent_related.long_term[
-        env_i,
-        agent_index,
-        (
+            env_i,
+            agent_index,
+            (
                 n_points_long_term
-                + self.params.n_points_short_term
-                * self.params.sample_interval_ref_path
-        ):,
-        :,
+                + self.params.n_points_short_term * self.params.sample_interval_ref_path
+            ) :,
+            :,
         ] = extended_points[path_id, -1, :]
 
         self.ref_paths_agent_related.n_points_long_term[
@@ -291,65 +335,79 @@ class WorldStateRT(WorldState):
         ] = n_points_long_term
 
         self.ref_paths_agent_related.long_term_vec_normalized[
-        env_i, agent_index, 0: n_points_long_term - 1, :
+            env_i, agent_index, 0 : n_points_long_term - 1, :
         ] = ref_path["center_line_vec_normalized"]
 
         self.ref_paths_agent_related.long_term_vec_normalized[
-        env_i,
-        agent_index,
-        (n_points_long_term - 1): (
+            env_i,
+            agent_index,
+            (n_points_long_term - 1) : (
                 n_points_long_term
                 - 1
-                + self.params.n_points_short_term
-                * self.params.sample_interval_ref_path
-        ),
-        :,
+                + self.params.n_points_short_term * self.params.sample_interval_ref_path
+            ),
+            :,
         ] = ref_path["center_line_vec_normalized"][-1, :]
 
         n_points_left_b = ref_path["left_boundary_shared"].shape[0]
 
         self.ref_paths_agent_related.left_boundary[
-        env_i, agent_index, 0:n_points_left_b, :
+            env_i, agent_index, 0:n_points_left_b, :
         ] = ref_path["left_boundary_shared"]
 
         self.ref_paths_agent_related.left_boundary[
-        env_i, agent_index, n_points_left_b:, :
+            env_i, agent_index, n_points_left_b:, :
         ] = ref_path["left_boundary_shared"][-1, :]
 
-        self.ref_paths_agent_related.n_points_left_b[env_i, agent_index] = n_points_left_b
+        self.ref_paths_agent_related.n_points_left_b[
+            env_i, agent_index
+        ] = n_points_left_b
 
         n_points_right_b = ref_path["right_boundary_shared"].shape[0]
 
         self.ref_paths_agent_related.right_boundary[
-        env_i, agent_index, 0:n_points_right_b, :
+            env_i, agent_index, 0:n_points_right_b, :
         ] = ref_path["right_boundary_shared"]
 
         self.ref_paths_agent_related.right_boundary[
-        env_i, agent_index, n_points_right_b:, :
+            env_i, agent_index, n_points_right_b:, :
         ] = ref_path["right_boundary_shared"][-1, :]
 
-        self.ref_paths_agent_related.n_points_right_b[env_i, agent_index] = n_points_right_b
+        self.ref_paths_agent_related.n_points_right_b[
+            env_i, agent_index
+        ] = n_points_right_b
 
         self.ref_paths_agent_related.entry[env_i, agent_index, 0, :] = ref_path[
-                                                                       "left_boundary_shared"
-                                                                   ][0, :]
+            "left_boundary_shared"
+        ][0, :]
         self.ref_paths_agent_related.entry[env_i, agent_index, 1, :] = ref_path[
-                                                                       "right_boundary_shared"
-                                                                   ][0, :]
+            "right_boundary_shared"
+        ][0, :]
 
         self.ref_paths_agent_related.exit[env_i, agent_index, 0, :] = ref_path[
-                                                                      "left_boundary_shared"
-                                                                  ][-1, :]
+            "left_boundary_shared"
+        ][-1, :]
         self.ref_paths_agent_related.exit[env_i, agent_index, 1, :] = ref_path[
-                                                                      "right_boundary_shared"
-                                                                  ][-1, :]
+            "right_boundary_shared"
+        ][-1, :]
 
         self.ref_paths_agent_related.is_loop[env_i, agent_index] = ref_path["is_loop"]
 
-    def reset_init_distances_and_short_term_ref_path(self,
-                                                     agent_states: List[AgentState],
-                                                     env_j,
-                                                     agent_index):
+        # Store information for determining the current lanelet ID of each agent
+        self.ref_paths_agent_related.n_ref_lanelet_ids[env_i, agent_index] = len(
+            ref_path["lanelet_IDs"]
+        )
+        self.ref_paths_agent_related.ref_lanelet_ids[env_i, agent_index, :] = 0
+        self.ref_paths_agent_related.ref_lanelet_ids[
+            env_i, agent_index, : len(ref_path["lanelet_IDs"])
+        ] = torch.tensor(ref_path["lanelet_IDs"], dtype=torch.int32)
+        self.ref_paths_agent_related.ref_lanelet_segment_points[
+            env_i, agent_index, : len(ref_path["lanelet_IDs"]) + 1
+        ] = self.map.get_ref_lanelet_segment_points(ref_path["lanelet_IDs"])
+
+    def reset_init_distances_and_short_term_ref_path(
+        self, agent_states: List[AgentState], env_j, agent_index
+    ):
         """
         This function calculates the distances from the agent's center of gravity (CG) to its reference path and boundaries,
         and computes the positions of the four vertices of the agent. It also determines the short-term reference paths
@@ -378,7 +436,7 @@ class WorldStateRT(WorldState):
             ],
         )
         self.distances.left_boundaries[env_j, agent_index, 0] = center_2_left_b - (
-                AGENTS["width"] / 2
+            AGENTS["width"] / 2
         )
         # Distances from CG to right boundary
         (
@@ -392,7 +450,7 @@ class WorldStateRT(WorldState):
             ],
         )
         self.distances.right_boundaries[env_j, agent_index, 0] = center_2_right_b - (
-                AGENTS["width"] / 2
+            AGENTS["width"] / 2
         )
         # Calculate the positions of the four vertices of the agents
         self.vertices[env_j, agent_index] = get_rectangle_vertices(
@@ -419,7 +477,9 @@ class WorldStateRT(WorldState):
                 _,
             ) = get_perpendicular_distances(
                 point=self.vertices[env_j, agent_index, c_i, :],
-                polyline=self.ref_paths_agent_related.right_boundary[env_j, agent_index],
+                polyline=self.ref_paths_agent_related.right_boundary[
+                    env_j, agent_index
+                ],
                 n_points_long_term=self.ref_paths_agent_related.n_points_right_b[
                     env_j, agent_index
                 ],
@@ -468,7 +528,9 @@ class WorldStateRT(WorldState):
                 ],
                 n_points_to_return=self.ref_paths_agent_related.n_points_nearing_boundary,
                 device=self.device,
-                is_polyline_a_loop=self.ref_paths_agent_related.is_loop[env_j, agent_index],
+                is_polyline_a_loop=self.ref_paths_agent_related.is_loop[
+                    env_j, agent_index
+                ],
                 n_points_long_term=self.ref_paths_agent_related.n_points_long_term[
                     env_j, agent_index
                 ],
@@ -481,13 +543,17 @@ class WorldStateRT(WorldState):
                 ],
                 _,
             ) = get_short_term_reference_path(
-                polyline=self.ref_paths_agent_related.right_boundary[env_j, agent_index],
+                polyline=self.ref_paths_agent_related.right_boundary[
+                    env_j, agent_index
+                ],
                 index_closest_point=self.distances.closest_point_on_right_b[
                     env_j, agent_index
                 ],
                 n_points_to_return=self.ref_paths_agent_related.n_points_nearing_boundary,
                 device=self.device,
-                is_polyline_a_loop=self.ref_paths_agent_related.is_loop[env_j, agent_index],
+                is_polyline_a_loop=self.ref_paths_agent_related.is_loop[
+                    env_j, agent_index
+                ],
                 n_points_long_term=self.ref_paths_agent_related.n_points_long_term[
                     env_j, agent_index
                 ],
@@ -511,8 +577,8 @@ class WorldStateRT(WorldState):
             point=agent_states[agent_index].pos,
             polyline=self.ref_paths_agent_related.long_term[:, agent_index],
             n_points_long_term=self.ref_paths_agent_related.n_points_long_term[
-                               :, agent_index
-                               ],
+                :, agent_index
+            ],
         )
         # Distances from CG to left boundary
         (
@@ -522,11 +588,11 @@ class WorldStateRT(WorldState):
             point=agent_states[agent_index].pos[:, :],
             polyline=self.ref_paths_agent_related.left_boundary[:, agent_index],
             n_points_long_term=self.ref_paths_agent_related.n_points_left_b[
-                               :, agent_index
-                               ],
+                :, agent_index
+            ],
         )
         self.distances.left_boundaries[:, agent_index, 0] = center_2_left_b - (
-                AGENTS["width"] / 2
+            AGENTS["width"] / 2
         )
         # Distances from CG to right boundary
         (
@@ -536,11 +602,11 @@ class WorldStateRT(WorldState):
             point=agent_states[agent_index].pos[:, :],
             polyline=self.ref_paths_agent_related.right_boundary[:, agent_index],
             n_points_long_term=self.ref_paths_agent_related.n_points_right_b[
-                               :, agent_index
-                               ],
+                :, agent_index
+            ],
         )
         self.distances.right_boundaries[:, agent_index, 0] = center_2_right_b - (
-                AGENTS["width"] / 2
+            AGENTS["width"] / 2
         )
         # Distances from the four vertices of the agent to its left and right lanelet boundary
         for c_i in range(4):
@@ -551,8 +617,8 @@ class WorldStateRT(WorldState):
                 point=self.vertices[:, agent_index, c_i, :],
                 polyline=self.ref_paths_agent_related.left_boundary[:, agent_index],
                 n_points_long_term=self.ref_paths_agent_related.n_points_left_b[
-                                   :, agent_index
-                                   ],
+                    :, agent_index
+                ],
             )
             (
                 self.distances.right_boundaries[:, agent_index, c_i + 1],
@@ -561,8 +627,8 @@ class WorldStateRT(WorldState):
                 point=self.vertices[:, agent_index, c_i, :],
                 polyline=self.ref_paths_agent_related.right_boundary[:, agent_index],
                 n_points_long_term=self.ref_paths_agent_related.n_points_right_b[
-                                   :, agent_index
-                                   ],
+                    :, agent_index
+                ],
             )
         # Distance from agent to its left/right lanelet boundary is defined as the minimum distance among five distances (four vertices, CG)
         self.distances.boundaries[:, agent_index], _ = torch.min(
@@ -592,14 +658,14 @@ class WorldStateRT(WorldState):
         ) = get_short_term_reference_path(
             polyline=self.ref_paths_agent_related.long_term[:, agent_index],
             index_closest_point=self.distances.closest_point_on_ref_path[
-                                :, agent_index
-                                ],
+                :, agent_index
+            ],
             n_points_to_return=self.params.n_points_short_term,
             device=self.device,
             is_polyline_a_loop=self.ref_paths_agent_related.is_loop[:, agent_index],
             n_points_long_term=self.ref_paths_agent_related.n_points_long_term[
-                               :, agent_index
-                               ],
+                :, agent_index
+            ],
             sample_interval=self.params.sample_interval_ref_path,
         )
 
@@ -607,39 +673,39 @@ class WorldStateRT(WorldState):
             # Get nearing points on boundaries
             (
                 self.ref_paths_agent_related.nearing_points_left_boundary[
-                :, agent_index
+                    :, agent_index
                 ],
                 _,
             ) = get_short_term_reference_path(
                 polyline=self.ref_paths_agent_related.left_boundary[:, agent_index],
                 index_closest_point=self.distances.closest_point_on_left_b[
-                                    :, agent_index
-                                    ],
+                    :, agent_index
+                ],
                 n_points_to_return=self.params.n_points_nearing_boundary,
                 device=self.device,
                 is_polyline_a_loop=self.ref_paths_agent_related.is_loop[:, agent_index],
                 n_points_long_term=self.ref_paths_agent_related.n_points_long_term[
-                                   :, agent_index
-                                   ],
+                    :, agent_index
+                ],
                 sample_interval=1,
                 n_points_shift=-2,
             )
             (
                 self.ref_paths_agent_related.nearing_points_right_boundary[
-                :, agent_index
+                    :, agent_index
                 ],
                 _,
             ) = get_short_term_reference_path(
                 polyline=self.ref_paths_agent_related.right_boundary[:, agent_index],
                 index_closest_point=self.distances.closest_point_on_right_b[
-                                    :, agent_index
-                                    ],
+                    :, agent_index
+                ],
                 n_points_to_return=self.params.n_points_nearing_boundary,
                 device=self.device,
                 is_polyline_a_loop=self.ref_paths_agent_related.is_loop[:, agent_index],
                 n_points_long_term=self.ref_paths_agent_related.n_points_long_term[
-                                   :, agent_index
-                                   ],
+                    :, agent_index
+                ],
                 sample_interval=1,
                 n_points_shift=-2,
             )
