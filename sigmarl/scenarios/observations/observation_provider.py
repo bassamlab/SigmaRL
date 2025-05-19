@@ -16,7 +16,7 @@ class ObservationProviderParameters:
     # observation specific
     n_stored_steps: int
     obs_noise_level: float
-    is_add_noise: bool
+    is_obs_noise: bool
 
 
 @dataclass

@@ -2,7 +2,6 @@ import os
 import shutil
 import unittest
 from sigmarl.mappo_cavs import mappo_cavs
-from sigmarl.ppo_goal_reaching import ppo_goal_reaching
 from sigmarl.helper_training import Parameters
 from sigmarl.constants import SCENARIOS
 
@@ -19,16 +18,13 @@ class TestTrainingScenarios(unittest.TestCase):
 
     def test_training_scenarios(self):
         """Test training for different scenarios."""
-        scenarios_to_test = ["intersection_1", "goal_reaching_1", "CPM_mixed"]
+        scenarios_to_test = ["CPM_mixed", "intersection_1"]
 
         for scenario in scenarios_to_test:
             with self.subTest(scenario=scenario):
                 print(f"Testing scenario: {scenario}")
 
-                if scenario.lower() == "goal_reaching_1":
-                    config_file = "sigmarl/config_goal_reaching.json"
-                else:
-                    config_file = "sigmarl/config.json"
+                config_file = "sigmarl/config.json"
 
                 # Load parameters
                 parameters = Parameters.from_json(config_file)
@@ -45,10 +41,7 @@ class TestTrainingScenarios(unittest.TestCase):
                 parameters.num_vmas_envs = 32
 
                 # Run training for the scenario
-                if parameters.scenario_type.lower() == "goal_reaching_1":
-                    ppo_goal_reaching(parameters=parameters)
-                else:
-                    mappo_cavs(parameters=parameters)
+                mappo_cavs(parameters=parameters)
 
                 self.assertTrue(os.path.exists(parameters.where_to_save))
                 self.assertTrue(len(os.listdir(parameters.where_to_save)) > 1)

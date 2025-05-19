@@ -636,7 +636,7 @@ class ScenarioRoadTraffic(BaseScenario):
                 is_ego_view=self.parameters.is_ego_view,
                 is_using_opponent_modeling=self.parameters.is_using_opponent_modeling,
                 is_apply_mask=self.parameters.is_apply_mask,
-                is_add_noise=self.parameters.is_obs_noise,
+                is_obs_noise=self.parameters.is_obs_noise,
                 obs_noise_level=self.parameters.obs_noise_level,
                 is_partial_observation=self.parameters.is_partial_observation,
                 is_obs_steering=self.parameters.is_obs_steering,

@@ -5,7 +5,6 @@ import sys
 import torch
 
 from sigmarl.helper_training import SaveData
-from sigmarl.ppo_goal_reaching import ppo_goal_reaching
 from sigmarl.mappo_cavs import mappo_cavs
 
 from pathlib import Path
@@ -29,17 +28,9 @@ if __name__ == "__main__":
         parameters.is_load_model = True
         parameters.is_load_final_model = False
 
-        if parameters.scenario_type.lower() == "goal_reaching_1":
-            (
-                env,
-                decision_making_module,
-                priority_module,
-                parameters,
-            ) = ppo_goal_reaching(parameters=parameters)
-        else:
-            env, decision_making_module, priority_module, parameters = mappo_cavs(
-                parameters=parameters
-            )
+        env, decision_making_module, priority_module, parameters = mappo_cavs(
+            parameters=parameters
+        )
 
         policy_path_out = os.path.join(dir_out, "policy.pt")
         data_path_out = os.path.join(dir_out, "data.json")

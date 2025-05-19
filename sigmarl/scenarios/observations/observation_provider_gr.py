@@ -104,7 +104,7 @@ class ObservationProviderGR(ObservationProvider):
             ]
         )
 
-        if self.params.is_add_noise:
+        if self.params.is_obs_noise:
             # Add sensor noise if required
             obs = obs + (
                 self.observations.obs_noise_level
