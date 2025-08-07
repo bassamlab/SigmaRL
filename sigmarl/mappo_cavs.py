@@ -159,6 +159,7 @@ class MAPPOCAVs:
             decision_making_module,
             optimization_module,
             priority_module,
+            self.cbf_controllers,
             self.parameters,
         )
 
@@ -439,7 +440,7 @@ class MAPPOCAVs:
     def _update_priorities_after_training(
         self,
         optimization_module: OptimizationModule,
-        priority_module,
+        priority_module: PriorityModule,
         mini_batch_data,
         replay_buffer,
     ):
@@ -447,8 +448,8 @@ class MAPPOCAVs:
         with torch.no_grad():
             optimization_module.GAE(
                 mini_batch_data,
-                params=optimization_module.loss_module.critic_params,
-                target_params=optimization_module.loss_module.target_critic_params,
+                params=optimization_module.loss_module.critic_network_params,
+                target_params=optimization_module.loss_module.target_critic_network_params,
             )
             if (
                 priority_module
@@ -456,8 +457,8 @@ class MAPPOCAVs:
             ):
                 priority_module.GAE(
                     mini_batch_data,
-                    params=priority_module.loss_module.critic_params,
-                    target_params=priority_module.loss_module.target_critic_params,
+                    params=priority_module.loss_module.critic_network_params,
+                    target_params=priority_module.loss_module.target_critic_network_params,
                 )
         new_td_errors = compute_td_error(mini_batch_data, gamma=0.9)
         mini_batch_data.set("td_error", new_td_errors)
@@ -646,6 +647,6 @@ def mappo_cavs(parameters: Parameters):
 if __name__ == "__main__":
     config_file = "config.json"
     parameters = Parameters.from_json(config_file)
-    env, decision_making_module, priority_module, parameters = mappo_cavs(
+    env, decision_making_module, optimization_module, priority_module, cbf_controllers, parameters = mappo_cavs(
         parameters=parameters
     )

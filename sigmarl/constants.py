@@ -627,14 +627,13 @@ SCENARIOS = {
 AGENTS = {
     "width": 0.08,  # [m]
     "length": 0.16,  # [m]
-    "l_f": 0.08,  # [m] Front wheelbase
-    "l_r": 0.08,  # [m] Rear wheelbase
-    "l_wb": 0.16,  # [m] Wheelbase
-    "max_speed": 0.5,  # [m/s]
+    "l_f": 0.075,  # [m] Front wheelbase
+    "l_r": 0.075,  # [m] Rear wheelbase
+    "l_wb": 0.15,  # [m] Wheelbase
+    "max_speed": 1.0,  # [m/s]
     "min_speed": -0.5,  # [m/s]
-    "max_speed_achievable": 0.5,  # [m/s]
-    "max_steering": math.pi / 4,  # [radian]
-    "min_steering": -math.pi / 4,  # [radian]
+    "max_steering": 31 * math.pi / 180,  # [radian]
+    "min_steering": -31 * math.pi / 180,  # [radian]
     "max_acc": 5.0,  # [m/s^2]
     "min_acc": -5.0,  # [m/s^2]
     "max_steering_rate": 5 * math.pi,  # [radian/s]

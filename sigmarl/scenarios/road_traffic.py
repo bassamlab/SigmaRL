@@ -570,7 +570,7 @@ class ScenarioRoadTraffic(BaseScenario):
             mask_zero=torch.tensor(0, device=device, dtype=torch.float32),
             mask_one=torch.tensor(1, device=device, dtype=torch.float32),
             reset_agent_min_distance=torch.tensor(
-                AGENTS["length"] ** 2 + self.agent_width**2,
+                self.agent_length ** 2 + self.agent_width**2,
                 device=device,
                 dtype=torch.float32,
             ).sqrt()
@@ -688,7 +688,9 @@ class ScenarioRoadTraffic(BaseScenario):
                     l_f=AGENTS["l_f"],
                     l_r=AGENTS["l_r"],
                     max_speed=AGENTS["max_speed"],
+                    min_speed=AGENTS["min_speed"],
                     max_steering=AGENTS["max_steering"],
+                    min_steering=AGENTS["min_steering"],
                     max_acc=AGENTS["max_acc"],
                     min_acc=AGENTS["min_acc"],
                     max_steering_rate=AGENTS["max_steering_rate"],
