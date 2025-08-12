@@ -1,7 +1,18 @@
+import os 
 import sys
 from sigmarl.mappo_cavs import mappo_cavs
 from sigmarl.helper_training import Parameters
 from sigmarl.constants import SCENARIOS
+
+# ===============================
+# Check if running in HPC environment
+# ===============================
+hpc_environment = os.getenv("HPC_ENVIRONMENT", "false").lower() == "true"
+if hpc_environment:
+    print(
+        "HPC environment detected. Setting the environment variable PYGLET_HEADLESS to True."
+    )
+    os.environ["PYGLET_HEADLESS"] = "True"  # Enable if run in HPC
 
 # ===============================
 # Handle command-line arguments
