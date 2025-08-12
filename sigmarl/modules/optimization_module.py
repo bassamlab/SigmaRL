@@ -26,7 +26,7 @@ class OptimizationModule(Module):
             share_params=True,
             # If `share_params` is True, the same MLP will be used to make the forward pass for all agents (homogeneous policies). Otherwise, each agent will use a different MLP to process its input (heterogeneous policies).
             device=self.parameters.device,
-            depth=2,
+            depth=3,
             num_cells=256,
             activation_class=torch.nn.Tanh,
         )
