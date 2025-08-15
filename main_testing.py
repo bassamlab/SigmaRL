@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import torch
 from sigmarl.helper_training import Parameters, SaveData
 import os
 
@@ -40,9 +41,9 @@ try:
 
         parameters.scenario_type = "CPM_entire"  # One of "CPM_mixed", "CPM_entire", "intersection_1", "on_ramp_1", "roundabout_1", etc. See sigmarl/constants.py for more scenario types
         # parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
-        parameters.n_agents = 1
+        parameters.n_agents = 4
 
-        parameters.is_save_simulation_video = False
+        parameters.is_save_simulation_video = True
         parameters.is_visualize_short_term_path = True
         parameters.is_visualize_lane_boundary = False
         parameters.is_visualize_extra_info = True
@@ -52,6 +53,7 @@ try:
             decision_making_module,
             optimization_module,
             priority_module,
+            cbf_controllers,
             parameters,
         ) = mappo_cavs(parameters=parameters)
 
@@ -66,7 +68,11 @@ try:
             break_when_any_done=False,
             is_save_simulation_video=parameters.is_save_simulation_video,
         )
+        # Save simulation outputs
+        torch.save(out_td, f"{path}out_td.td")
+        print(f"Simulation outputs saved to {path}out_td.td")
         if parameters.is_save_simulation_video:
             save_video(f"{path}video", frame_list, fps=1 / parameters.dt)
+            print(f"Video saved to {path}video.mp4")
 except StopIteration:
     raise FileNotFoundError("No json file found.")
