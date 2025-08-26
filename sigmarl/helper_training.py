@@ -213,6 +213,8 @@ class TransformedEnvCustom(TransformedEnv):
             frame_list = []
 
         for i in range(max_steps):
+            if (i + 1) % 100 == 0:
+                print(f"[INFO] k={i+1}/{max_steps+1}", end="\r", flush=True)
             if auto_cast_to_device:
                 tensordict = tensordict.to(policy_device, non_blocking=True)
 
@@ -346,6 +348,8 @@ class TransformedEnvCustom(TransformedEnv):
             frame_list = []
 
         for i in range(max_steps):
+            if (i + 1) % 100 == 0:
+                print(f"[INFO] k={i+1}/{max_steps+1}", end="\r", flush=True)
             if auto_cast_to_device:
                 tensordict_ = tensordict_.to(policy_device, non_blocking=True)
 
@@ -1128,7 +1132,12 @@ class Parameters:
         is_using_centralized_cbf: bool = False,  # Whether to use centralized solving for CBF-constrained MARL
         experiment_type: str = "simulation",  # One of {"simulation", "lab"}. If you only use simulation, you do not need to worry about "lab".
         is_obs_steering: bool = False,  # Whether to observe the steering angle of other agents
-        ref_path_idx: int = None,  # Specify the index of the predefined reference paths that should be used when initializing/resetting agents. Leave empty to use a randomly selected ones.
+        predefined_ref_path_idx: list[
+            int
+        ] = None,  # A list of integers specify the index of the predefined reference path for each. They will be used when initializing/resetting the agents. Set to None to use a randomly selected ones.
+        init_state: list[
+            float
+        ] = None,  # Initial state of the agents in the form of [x, y, rot, speed]. If None, the initial state will be randomly sampled.
         random_seed: int = 0,  # Random seed,
         is_using_pseudo_distance: bool = False,  # Whether to use pseudo distance
         n_circles_approximate_vehicle: int = 3,  # Number of circles to approximate the vehicle shape
@@ -1217,7 +1226,8 @@ class Parameters:
         self.experiment_type = experiment_type
         self.is_obs_steering = is_obs_steering
 
-        self.ref_path_idx = ref_path_idx
+        self.predefined_ref_path_idx = predefined_ref_path_idx
+        self.init_state = init_state
 
         self.random_seed = random_seed
 
@@ -2051,3 +2061,66 @@ def is_latex_available():
 
 
 matplotlib.rcParams["text.usetex"] = is_latex_available()
+
+
+def reduce_out_td(
+    out_td: TensorDict,
+    *,
+    pos_predicted: torch.Tensor | None = None,  # (T, A, H, 1) if available
+    vel_predicted: torch.Tensor | None = None,  # (T, A, H, 1) if available
+    convert_collisions_to_bool: bool = True,
+) -> TensorDict:
+    # Safety: ensure expected keys exist
+    def _get(*keypath):
+        try:
+            return out_td.get(keypath)
+        except KeyError as e:
+            raise KeyError(f"Missing key {keypath} in out_td") from e
+
+    # Remove the leading batch dimension of size 1 -> (T, A, F)
+    def _squeeze_b1(x: torch.Tensor) -> torch.Tensor:
+        if x.dim() < 4:
+            raise ValueError(
+                f"Expected a tensor with 4 dims (1,T,A,F), got shape {tuple(x.shape)}"
+            )
+        if x.shape[0] != 1:
+            raise ValueError(f"Expected leading batch size 1, got {x.shape[0]}")
+        return x.squeeze(0)
+
+    pos = _squeeze_b1(_get("agents", "info", "pos"))  # (T, A, 2)
+    rot = _squeeze_b1(_get("agents", "info", "rot"))  # (T, A, 1)
+    rot = rot.squeeze(-1)
+    vel = _squeeze_b1(_get("agents", "info", "vel"))  # (T, A, 2)
+
+    col_agents = _squeeze_b1(
+        _get("agents", "info", "is_collision_with_agents")
+    )  # (T, A, 1)
+    col_lane = _squeeze_b1(
+        _get("agents", "info", "is_collision_with_lanelets")
+    )  # (T, A, 1)
+
+    if convert_collisions_to_bool:
+        # Stored as float32; convert 0/1 to bool without changing shape
+        col_agents = col_agents > 0.5
+        col_lane = col_lane > 0.5
+
+    # If you already have lists like self.pos_predicted_list, stack them before calling:
+    # pos_predicted = torch.stack(self.pos_predicted_list, dim=0)  # (T, A, H, 1)
+    # vel_predicted = torch.stack(self.vel_predicted_list, dim=0)  # (T, A, H, 1)
+
+    td_content = {
+        "pos": pos,  # (T, A, 2)
+        "rot": rot,  # (T, A, 1)
+        "vel": vel,  # (T, A, 2)
+        "is_collision_with_agents": col_agents,  # (T, A, 1)
+        "is_collision_with_lanelets": col_lane,  # (T, A, 1)
+    }
+
+    if pos_predicted is not None:
+        td_content["pos_predicted_list"] = pos_predicted  # (T, A, H, 1)
+    if vel_predicted is not None:
+        td_content["vel_predicted_list"] = vel_predicted  # (T, A, H, 1)
+
+    # You asked for batch_size=[] explicitly; that is fine for a container of leaf tensors.
+    td = TensorDict(td_content, batch_size=[])
+    return td

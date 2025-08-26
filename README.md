@@ -21,6 +21,7 @@
     - [3. MTV-Based CBF](#3-mtv-based-cbf)
     - [4. Truncated Taylor CBF (TTCBF)](#4-truncated-taylor-cbf-ttcbf)
     - [5. CBF-Based Safety Filter](#5-cbf-based-safety-filter)
+    - [6. CPM Lab Benchmark](#6-cpm-lab-benchmark)
   - [TODOs](#todos)
   - [Acknowledgments](#acknowledgments)
 
@@ -362,6 +363,19 @@ Jianye Xu, Chang Che, and Bassam Alrifaee, "A Real-Time Control Barrier Function
   - Go to [this page](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/itsc25.zip) and download the zip file `itsc25.zip`. Unzip it, copy and paste the whole folder to the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/itsc25/`.
   - Run `sigmarl/evaluation_itsc25.py`.
 
+### 6. CPM Lab Benchmark
+<div>
+Julius Beerwerth, Jianye Xu, Simon Schäfer, Fynn Belderink, and Bassam Alrifaee, "From Simulation to Reality: A Benchmark for MARL in the Cyber-Physical Mobility Lab," <i>arXiv preprint arXiv:TBD</i>, 2025.
+</div>
+
+- **Reproduce Experimental Results of the SigmaRL Simulation in the Paper:**
+
+  - Git checkout to the corresponding tag using `git checkout 1.5.0`
+  - Go to [this page](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/at25.zip) and download the zip file `at25.zip`. Unzip it, copy and paste the whole folder to the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/at25/`.
+  - Run `sigmarl/eva_at25/run_models_parallel.py` to evaluate the downloaded models. The evaluation results will be saved automatically.
+    - This script requires Python parallel workers.
+    - Alternatively, you can run `sigmarl/eva_at25/run_models.py` if you do not want to use parallel workers.
+  - After the evaluation, run `sigmarl/eva_at25/marl_aggregated_evaluation.py` to analyze the evaluation results and obtain the performance metrics.
 
 ## TODOs
 - Improve safety

@@ -74,6 +74,7 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
         agent_states: List[AgentState],
         env_index: int = None,
         agent_index: int = None,
+        predefined_ref_path_idx=None,
         initial_state=None,
         initial_state_buffer=None,
     ):
@@ -89,15 +90,50 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
         )
 
         for i_agent in reset_indices:
-            ref_path, path_id = self._reset_init_state(
-                agent_states,
-                ref_paths_scenario,
-                env_index=env_index,
-                agent_index=i_agent,
-                is_reset_single_agent=is_reset_single_agent,
-                initial_state=initial_state,
-                initial_state_buffer=initial_state_buffer,
-            )
+            if predefined_ref_path_idx is not None:
+                predefined_ref_path_idx_i = predefined_ref_path_idx[i_agent]
+            else:
+                predefined_ref_path_idx_i = None
+
+            if (agent_index is None) and (predefined_ref_path_idx is not None):
+                # agent_index is None only when initializing the world, and we only use the predefined reference path in this case (not intermediate reset)
+                # Use predefined reference path indices if provided
+                path_id = predefined_ref_path_idx[i_agent]
+                ref_path = ref_paths_scenario[path_id]
+                initial_state_i = initial_state[i_agent]
+                self.world.agents[i_agent].set_pos(
+                    initial_state_i[0:2], batch_index=env_index
+                )
+                self.world.agents[i_agent].set_rot(
+                    initial_state_i[2], batch_index=env_index
+                )
+                self.world.agents[i_agent].set_vel(
+                    torch.zeros(2, device=self.params.device, dtype=torch.float32),
+                    batch_index=env_index,
+                )
+                self.world.agents[i_agent].set_speed(
+                    torch.zeros(1, device=self.params.device, dtype=torch.float32),
+                    batch_index=env_index,
+                )
+                self.world.agents[i_agent].set_steering(
+                    torch.zeros(1, device=self.params.device, dtype=torch.float32),
+                    batch_index=env_index,
+                )
+                self.world.agents[i_agent].set_sideslip_angle(
+                    torch.zeros(1, device=self.params.device, dtype=torch.float32),
+                    batch_index=env_index,
+                )
+            else:
+                ref_path, path_id = self._reset_init_state(
+                    agent_states,
+                    ref_paths_scenario,
+                    env_index=env_index,
+                    agent_index=i_agent,
+                    is_reset_single_agent=is_reset_single_agent,
+                    predefined_ref_path_idx_i=predefined_ref_path_idx_i,
+                    initial_state=initial_state,
+                    initial_state_buffer=initial_state_buffer,
+                )
 
             self._reset_agent_related_ref_path(
                 env_index, i_agent, ref_path, path_id, extended_points
@@ -110,8 +146,9 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
         agent_index: int,
         env_index: int = None,
         is_reset_single_agent: bool = False,
+        predefined_ref_path_idx_i=None,
         initial_state=None,
-        initial_state_buffer=None,
+        initial_state_buffer: InitialStateBuffer = None,
     ):
         """
         This function resets the initial position, rotation, and velocity for an agent based on the provided
@@ -130,10 +167,10 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
             agents[agent_index].set_pos(
                 initial_state[agent_index, 0:2], batch_index=env_index
             )
-            agents[agent_index].set_pos(
+            agents[agent_index].set_rot(
                 initial_state[agent_index, 2], batch_index=env_index
             )
-            agents[agent_index].set_pos(
+            agents[agent_index].set_vel(
                 initial_state[agent_index, 3:5], batch_index=env_index
             )
 
@@ -141,7 +178,12 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
         # generate feasible initial positions for vehicles
         ref_path, path_id, random_point_id = self._generate_feasible_initial_positions(
-            agents, ref_paths_scenario, env_index, agent_index, is_reset_single_agent
+            agents,
+            ref_paths_scenario,
+            env_index,
+            agent_index,
+            is_reset_single_agent,
+            predefined_ref_path_idx_i,
         )
         rot_start = ref_path["center_line_yaw"][random_point_id]
         steering_start = torch.zeros_like(rot_start, device=self.world.device)
@@ -170,7 +212,13 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
         return ref_path, path_id
 
     def _generate_feasible_initial_positions(
-        self, agents, ref_paths_scenario, env_index, agent_index, is_reset_single_agent
+        self,
+        agents,
+        ref_paths_scenario,
+        env_index,
+        agent_index,
+        is_reset_single_agent,
+        predefined_ref_path_idx_i,
     ):
         is_feasible_initial_position_found = False
         random_count = 0
@@ -187,9 +235,12 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
                 )
             random_count += 1
 
-            path_id = torch.randint(
-                0, len(ref_paths_scenario), (1,)
-            ).item()  # Select randomly a path
+            if predefined_ref_path_idx_i is not None:
+                path_id = predefined_ref_path_idx_i
+            else:
+                path_id = torch.randint(
+                    0, len(ref_paths_scenario), (1,)
+                ).item()  # Select randomly a path
 
             self.ref_paths_agent_related.path_id[env_index, agent_index] = path_id
 

@@ -570,7 +570,7 @@ class ScenarioRoadTraffic(BaseScenario):
             mask_zero=torch.tensor(0, device=device, dtype=torch.float32),
             mask_one=torch.tensor(1, device=device, dtype=torch.float32),
             reset_agent_min_distance=torch.tensor(
-                self.agent_length ** 2 + self.agent_width**2,
+                self.agent_length**2 + self.agent_width**2,
                 device=device,
                 dtype=torch.float32,
             ).sqrt()
@@ -726,24 +726,38 @@ class ScenarioRoadTraffic(BaseScenario):
                 self.timer.step_begin = time.time()
                 self.timer.end = 0
 
-            if (
-                self.parameters.is_challenging_initial_state_buffer
-                and (
-                    torch.rand(1) < self.initial_state_buffer.probability_use_recording
-                )
-                and (self.initial_state_buffer.valid_size >= 1)
-            ):
-                # Use initial state buffer
-                is_use_state_buffer = True
-                initial_state = (
-                    self.world_state.init_ref_paths_agent_related_from_buffer(
-                        env_i, self.initial_state_buffer
-                    )
-                )
-                # print(colored(f"[LOG] Reset with path ids: {initial_state[:, -2]}", "red"))
+            if self.parameters.predefined_ref_path_idx is not None:
+                predefined_ref_path_idx = self.parameters.predefined_ref_path_idx
+                if is_reset_single_agent:
+                    initial_state = None
+                else:
+                    # Execute this only when initializing the whole world (not a single angnt)
+                    initial_state = torch.tensor(
+                        self.parameters.init_state,
+                        device=self.parameters.device,
+                        dtype=torch.float32,
+                    )  # [[x1, y1, rot1], ..., [xn, yn, rotn]]
             else:
+                predefined_ref_path_idx = None
                 initial_state = None
-                is_use_state_buffer = False
+
+                if (
+                    self.parameters.is_challenging_initial_state_buffer
+                    and (
+                        torch.rand(1)
+                        < self.initial_state_buffer.probability_use_recording
+                    )
+                    and (self.initial_state_buffer.valid_size >= 1)
+                ):
+                    # Use initial state buffer
+                    initial_state = (
+                        self.world_state.init_ref_paths_agent_related_from_buffer(
+                            env_i, self.initial_state_buffer
+                        )
+                    )
+                    # print(colored(f"[LOG] Reset with path ids: {initial_state[:, -2]}", "red"))
+                else:
+                    initial_state = None
 
             if not is_reset_single_agent:
                 # Each time step of a simulation
@@ -753,6 +767,7 @@ class ScenarioRoadTraffic(BaseScenario):
                 self.world_state.get_agent_state_list(),
                 env_index=env_i,
                 agent_index=agent_index,
+                predefined_ref_path_idx=predefined_ref_path_idx,
                 initial_state=initial_state,
                 initial_state_buffer=self.state_buffer,
             )
@@ -1108,7 +1123,7 @@ class ScenarioRoadTraffic(BaseScenario):
             # Reset single agent
             agents_reset = (
                 self.world_state.collisions.with_agents.any(dim=-1)
-                | self.world_state.collisions.with_lanelets
+                # | self.world_state.collisions.with_lanelets
                 | self.world_state.collisions.with_entry_segments
                 | self.world_state.collisions.with_exit_segments
             )
@@ -1122,7 +1137,7 @@ class ScenarioRoadTraffic(BaseScenario):
             is_done = (
                 is_max_steps_reached
                 | is_collision_with_agents
-                | is_collision_with_lanelets
+                # | is_collision_with_lanelets  # TODO: enable this line if you are training a model
                 | is_fixed_duration_reset
             )
             if (
