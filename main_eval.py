@@ -14,6 +14,7 @@ from sigmarl.constants import SCENARIOS
 # Paths
 # ===============================
 path = "outputs/marl_cbf_0/"
+os.makedirs(path, exist_ok=True)
 
 # ===============================
 # Argument parsing
