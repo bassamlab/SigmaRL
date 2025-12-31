@@ -8,7 +8,8 @@ from tensordict.tensordict import TensorDict
 
 from vmas.simulator.utils import save_video
 
-from sigmarl.helper_training import SaveData, is_latex_available
+from sigmarl.helper_training import SaveData
+from sigmarl.helper_common import is_latex_available
 from sigmarl.map_manager import MapManager
 from sigmarl.mappo_cavs import mappo_cavs
 from sigmarl.constants import AGENTS
@@ -40,7 +41,8 @@ class CBF_MARL_Evaluation:
         self,
         path: str,
         n_agents: int = 1,
-        is_using_cbf: bool = True,
+        is_using_cbf_testing: bool = True,
+        is_using_cbf_training: bool = False,
         scenario_type: str = "CPM_entire",
         random_seed=0,
         n_circles_approximate_vehicle: int = 3,
@@ -89,7 +91,8 @@ class CBF_MARL_Evaluation:
                 parameters.obs_noise_level = 0.0
 
             # Parameter settings for CBF-constrained MARL
-            parameters.is_using_cbf = is_using_cbf
+            parameters.is_using_cbf_testing = is_using_cbf_testing
+            parameters.is_using_cbf_training = is_using_cbf_training
             parameters.is_using_prioritized_marl = (
                 True  # Use priority-based solving strategy
             )
@@ -99,7 +102,7 @@ class CBF_MARL_Evaluation:
             self.parameters = parameters
 
         # Specify file names
-        if self.parameters.is_using_cbf:
+        if self.parameters.is_using_cbf_testing:
             self.out_td_path = os.path.join(
                 self.path,
                 f"out_td_rl_cbf_seed_scenario_{parameters.scenario_type}_{self.parameters.random_seed}_circles_{self.parameters.n_circles_approximate_vehicle}.pth",
@@ -235,9 +238,6 @@ class CBF_MARL_Evaluation:
             else 0
         )
 
-        num_fail = env.num_fail
-        failure_rate = num_fail / (num_steps * self.parameters.n_agents)
-
         # Create structured dictionary
         data = {
             "collision": {
@@ -258,7 +258,6 @@ class CBF_MARL_Evaluation:
             },
             "performance": {
                 "mean_speed": round(average_speed.item(), 3),
-                "infeasibility_rate": round(failure_rate, 3),
             },
         }
 
@@ -550,6 +549,7 @@ def run_simulations(
     scenario_types,
     is_load_out_td,
 ):
+    is_using_cbf_training = False
 
     mean_computation_time_rl_list = np.zeros(
         (
@@ -574,7 +574,7 @@ def run_simulations(
 
     simulation_count = 0
 
-    for i_cbf, is_using_cbf in enumerate(is_using_cbfs):
+    for i_cbf, is_using_cbf_testing in enumerate(is_using_cbfs):
         for i_scenario, scenario_type in enumerate(scenario_types):
             for i_cir, n_circles_approximate_vehicle in enumerate(
                 n_circles_approximate_vehicle_list
@@ -591,7 +591,7 @@ def run_simulations(
                         "-------------------------------------------------------------"
                     )
                     print(
-                        f"Random seed: {random_seed}, using CBF: {is_using_cbf}, number of circles approximating vehicle: {n_circles_approximate_vehicle}"
+                        f"Random seed: {random_seed}, using CBF: {is_using_cbf_testing or is_using_cbf_training}, number of circles approximating vehicle: {n_circles_approximate_vehicle}"
                     )
 
                     time_start = time.time()
@@ -599,7 +599,8 @@ def run_simulations(
                     evaluation = CBF_MARL_Evaluation(
                         path=policy_path,
                         n_agents=1,
-                        is_using_cbf=is_using_cbf,
+                        is_using_cbf_testing=is_using_cbf_testing,
+                        is_using_cbf_training=is_using_cbf_training,
                         scenario_type=scenario_type,
                         random_seed=random_seed,
                         n_circles_approximate_vehicle=n_circles_approximate_vehicle,
@@ -865,7 +866,8 @@ def plot_actions(scenario_type="CPM_entire", steps=None, path=None, show_legend=
     evaluation = CBF_MARL_Evaluation(
         path=path if path else "checkpoints/itsc25/undertrained_policy_1",
         n_agents=1,
-        is_using_cbf=True,
+        is_using_cbf_testing=True,
+        is_using_cbf_training=False,
         scenario_type=scenario_type if scenario_type else "CPM_entire",
         random_seed=1,
         n_circles_approximate_vehicle=3,

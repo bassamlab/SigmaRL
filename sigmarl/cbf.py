@@ -17,7 +17,7 @@ from tensordict.nn.distributions import NormalParamExtractor
 
 from tensordict.tensordict import TensorDict
 
-from sigmarl.helper_training import is_latex_available
+from sigmarl.helper_common import is_latex_available
 
 import cvxpy as cp
 

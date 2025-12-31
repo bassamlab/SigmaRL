@@ -109,6 +109,46 @@ class ParseMapBase(ABC):
             ref_path[
                 "right_boundary_shared_pseudo_vector"
             ] = compute_pseudo_tangent_vector(ref_path["right_boundary_shared"])
+        if self._scenario_type == "CPM_mixed":
+            for ref_path in self.reference_paths_intersection:
+                ref_path["left_boundary_pseudo_vector"] = compute_pseudo_tangent_vector(
+                    ref_path["left_boundary"]
+                )
+                ref_path[
+                    "right_boundary_pseudo_vector"
+                ] = compute_pseudo_tangent_vector(ref_path["right_boundary"])
+                ref_path[
+                    "left_boundary_shared_pseudo_vector"
+                ] = compute_pseudo_tangent_vector(ref_path["left_boundary_shared"])
+                ref_path[
+                    "right_boundary_shared_pseudo_vector"
+                ] = compute_pseudo_tangent_vector(ref_path["right_boundary_shared"])
+            for ref_path in self.reference_paths_merge_in:
+                ref_path["left_boundary_pseudo_vector"] = compute_pseudo_tangent_vector(
+                    ref_path["left_boundary"]
+                )
+                ref_path[
+                    "right_boundary_pseudo_vector"
+                ] = compute_pseudo_tangent_vector(ref_path["right_boundary"])
+                ref_path[
+                    "left_boundary_shared_pseudo_vector"
+                ] = compute_pseudo_tangent_vector(ref_path["left_boundary_shared"])
+                ref_path[
+                    "right_boundary_shared_pseudo_vector"
+                ] = compute_pseudo_tangent_vector(ref_path["right_boundary_shared"])
+            for ref_path in self.reference_paths_merge_out:
+                ref_path["left_boundary_pseudo_vector"] = compute_pseudo_tangent_vector(
+                    ref_path["left_boundary"]
+                )
+                ref_path[
+                    "right_boundary_pseudo_vector"
+                ] = compute_pseudo_tangent_vector(ref_path["right_boundary"])
+                ref_path[
+                    "left_boundary_shared_pseudo_vector"
+                ] = compute_pseudo_tangent_vector(ref_path["left_boundary_shared"])
+                ref_path[
+                    "right_boundary_shared_pseudo_vector"
+                ] = compute_pseudo_tangent_vector(ref_path["right_boundary_shared"])
 
     def _visualize_random_agents(self, ax, reference_paths):
         # Get the number of agents to be visualized

@@ -23,8 +23,8 @@ from sigmarl.helper_training import (
     SaveData,
     find_the_highest_reward_among_all_models,
     get_model_name,
-    is_latex_available,
 )
+from sigmarl.helper_common import is_latex_available
 
 from sigmarl.constants import SCENARIOS, AGENTS
 

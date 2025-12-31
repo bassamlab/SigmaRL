@@ -9,8 +9,7 @@ from typing import List
 import torch
 
 from vmas import render_interactively
-from vmas.simulator.core import Agent, World, Box
-from vmas.simulator.dynamics.holonomic_with_rot import HolonomicWithRotation
+from vmas.simulator.core import Agent, Box
 
 from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.utils import Color, ScenarioUtils
@@ -21,7 +20,8 @@ if typing.TYPE_CHECKING:
     from vmas.simulator.rendering import Geom
 
 from sigmarl.dynamics import KinematicBicycleModel
-from sigmarl.helper_training import Vehicle, WorldCustom
+from sigmarl.helper_training import WorldCustom
+from sigmarl.helper_common import Vehicle
 
 
 class Scenario(BaseScenario):

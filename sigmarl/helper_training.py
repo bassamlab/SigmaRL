@@ -5,15 +5,12 @@
 
 import torch
 import torch.nn as nn
-from torch import Tensor
 
-from vmas.simulator.core import World, AgentState, Agent
-from vmas.simulator.utils import TorchUtils, override
+from vmas.simulator.core import World
 
 # Tensordict modules
 from tensordict.tensordict import TensorDictBase, TensorDict
 from tensordict.nn import TensorDictModule
-from tensordict.nn.distributions import NormalParamExtractor
 
 from torchrl.collectors import SyncDataCollector
 
@@ -27,6 +24,9 @@ from torchrl.envs.utils import (
 )
 from torchrl.envs.common import EnvBase
 
+from sigmarl.cbf_qp import CBFQP
+from sigmarl.helper_common import Parameters, get_model_name, is_latex_available
+
 
 # TorchRL Utils
 from torchrl._utils import (
@@ -34,42 +34,26 @@ from torchrl._utils import (
 )
 
 # Losses
-from torchrl.objectives import ClipPPOLoss, ValueEstimators
 
 from torchrl.data.utils import DEVICE_TYPING
 
-# Multi-agent network
-from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
-
-# Specs
-from torchrl.data import Unbounded
 
 # Utils
-import subprocess
 import matplotlib
 from matplotlib import pyplot as plt
 
-import typing
 from typing import Callable, Optional, Callable, Optional, Dict, Sequence, Union
 
 import json
 import os
 import re
 import time
-import sys
 
 DEFAULT_EXPLORATION_TYPE: ExplorationType = ExplorationType.RANDOM
 
 import warnings
 
 from sigmarl.constants import AGENTS
-
-
-def get_model_name(parameters):
-    # model_name = f"nags{parameters.n_agents}_it{parameters.n_iters}_fpb{parameters.frames_per_batch}_tfrms{parameters.total_frames}_neps{parameters.num_epochs}_mnbsz{parameters.minibatch_size}_lr{parameters.lr}_mgn{parameters.max_grad_norm}_clp{parameters.clip_epsilon}_gm{parameters.gamma}_lmbda{parameters.lmbda}_etp{parameters.entropy_eps}_mstp{parameters.max_steps}_nenvs{parameters.num_vmas_envs}"
-    model_name = f"reward{parameters.episode_reward_mean_current:.2f}"
-
-    return model_name
 
 
 ##################################################
@@ -133,6 +117,7 @@ class TransformedEnvCustom(TransformedEnv):
         The data returned will be marked with a "time" dimension name for the last
         dimension of the tensordict (at the ``env.ndim`` index).
         """
+
         try:
             policy_device = next(policy.parameters()).device
         except (StopIteration, AttributeError):
@@ -166,7 +151,6 @@ class TransformedEnvCustom(TransformedEnv):
         self.time_rl = []
         self.time_cbf = []
         self.time_pseudo_dis = []
-        self.num_fail = 0
         if break_when_any_done:
             if is_save_simulation_video:
                 tensordicts, frame_list = self._rollout_stop_early(
@@ -218,19 +202,30 @@ class TransformedEnvCustom(TransformedEnv):
             if auto_cast_to_device:
                 tensordict = tensordict.to(policy_device, non_blocking=True)
 
-            # Possibly predict the actions of surrounding agents using opponent modeling
-            if self.base_env.scenario_name.parameters.is_using_opponent_modeling:
-                time_rl = opponent_modeling(
-                    tensordict=tensordict,
-                    policy=policy,
-                    n_nearing_agents_observed=self.base_env.scenario_name.parameters.n_nearing_agents_observed,
-                    nearing_agents_indices=self.base_env.scenario_name.observations.nearing_agents_indices,
-                )
-
-            if (
-                self.base_env.scenario_name.parameters.is_using_prioritized_marl
-                and not self.base_env.scenario_name.parameters.is_using_cbf
-            ):
+            if self.base_env.scenario_name.parameters.is_using_cbf_testing:
+                if self.base_env.scenario_name.parameters.is_using_centralized_cbf:
+                    (
+                        time_rl,
+                        time_cbf,
+                        time_pseudo_dis,
+                        tensordict,
+                    ) = cbf_constrained_centralized_policy(
+                        tensordict,
+                        policy,
+                        cbf_controllers,
+                    )
+                else:
+                    (
+                        time_rl,
+                        time_cbf,
+                        time_pseudo_dis,
+                        tensordict,
+                    ) = cbf_constrained_decentralized_policy(
+                        tensordict,
+                        policy,
+                        cbf_controllers,
+                    )
+            elif self.base_env.scenario_name.parameters.is_using_prioritized_marl:
                 (
                     time_rl,
                     tensordict,
@@ -249,36 +244,17 @@ class TransformedEnvCustom(TransformedEnv):
                 self.base_env.scenario_name.observable_higher_priority_agents = (
                     observable_higher_priority_agents
                 )
-            elif (
-                self.base_env.scenario_name.parameters.is_using_cbf
-                and not self.base_env.scenario_name.parameters.is_using_centralized_cbf
-            ):
-                (
-                    time_rl,
-                    time_cbf,
-                    time_pseudo_dis,
-                    tensordict,
-                ) = cbf_constrained_decentralized_policy(
-                    tensordict,
-                    policy,
-                    cbf_controllers,
-                )
-                # Store time for computational efficiency
-                self.time_cbf.append(time_cbf)
-                self.time_pseudo_dis.append(time_pseudo_dis)
-
-            elif (
-                self.base_env.scenario_name.parameters.is_using_cbf
-                and self.base_env.scenario_name.parameters.is_using_centralized_cbf
-            ):
-                time_rl, tensordict = cbf_constrained_centralized_policy(
-                    tensordict, policy, cbf_controllers
+            elif self.base_env.scenario_name.parameters.is_using_opponent_modeling:
+                time_rl = opponent_modeling(
+                    tensordict=tensordict,
+                    policy=policy,
+                    n_nearing_agents_observed=self.base_env.scenario_name.parameters.n_nearing_agents_observed,
+                    nearing_agents_indices=self.base_env.scenario_name.observations.nearing_agents_indices,
                 )
             else:
-                # Baseline
                 time_rl_start = time.time()
                 tensordict = policy(tensordict)
-                time_rl += time.time() - time_rl_start  # Time for RL policy
+                time_rl = time.time() - time_rl_start
 
             self.time_rl.append(time_rl)
 
@@ -315,13 +291,6 @@ class TransformedEnvCustom(TransformedEnv):
                     frame_list.append(frame)
                 else:
                     callback(self, tensordict)
-        if self.base_env.scenario_name.parameters.is_using_cbf:
-            num_fail = 0
-            for i in range(len(cbf_controllers)):
-                for j in range(len(cbf_controllers[i])):
-                    num_fail += cbf_controllers[i][j].num_fail
-            self.num_fail = num_fail
-            # print("Total number of cbf failure solving is:", num_fail)
         if is_save_simulation_video:
             return tensordicts, frame_list  # Modification
         else:
@@ -354,18 +323,37 @@ class TransformedEnvCustom(TransformedEnv):
                 tensordict_ = tensordict_.to(policy_device, non_blocking=True)
 
             # Possibly predict the actions of surrounding agents using opponent modeling
-            if self.base_env.scenario_name.parameters.is_using_opponent_modeling:
-                time_rl = opponent_modeling(
-                    tensordict=tensordict_,
-                    policy=policy,
-                    n_nearing_agents_observed=self.base_env.scenario_name.parameters.n_nearing_agents_observed,
-                    nearing_agents_indices=self.base_env.scenario_name.observations.nearing_agents_indices,
+
+            if self.base_env.scenario_name.parameters.is_using_cbf_training:
+                raise NotImplementedError(
+                    "Using CBF during training is not implemented."
                 )
 
-            if (
-                self.base_env.scenario_name.parameters.is_using_prioritized_marl
-                and not self.base_env.scenario_name.parameters.is_using_cbf
-            ):
+            if self.base_env.scenario_name.parameters.is_using_cbf_testing:
+                if self.base_env.scenario_name.parameters.is_using_centralized_cbf:
+                    (
+                        time_rl,
+                        time_cbf,
+                        time_pseudo_dis,
+                        tensordict_,
+                    ) = cbf_constrained_centralized_policy(
+                        tensordict_,
+                        policy,
+                        cbf_controllers,
+                    )
+
+                else:
+                    (
+                        time_rl,
+                        time_cbf,
+                        time_pseudo_dis,
+                        tensordict_,
+                    ) = cbf_constrained_decentralized_policy(
+                        tensordict_,
+                        policy,
+                        cbf_controllers,
+                    )
+            elif self.base_env.scenario_name.parameters.is_using_prioritized_marl:
                 (
                     time_rl,
                     tensordict_,
@@ -384,32 +372,12 @@ class TransformedEnvCustom(TransformedEnv):
                 self.base_env.scenario_name.observable_higher_priority_agents = (
                     observable_higher_priority_agents
                 )
-            elif (
-                self.base_env.scenario_name.parameters.is_using_cbf
-                and not self.base_env.scenario_name.parameters.is_using_centralized_cbf
-            ):
-                (
-                    time_rl,
-                    time_cbf,
-                    time_pseudo_dis,
-                    tensordict_,
-                ) = cbf_constrained_decentralized_policy(
-                    tensordict_,
-                    policy,
-                    cbf_controllers,
-                )
-                # Store time for computational efficiency
-                self.time_cbf.append(time_cbf)
-                self.time_pseudo_dis.append(time_pseudo_dis)
-                self.base_env.scenario_name.nominal_action = tensordict[
-                    "agents", "info", "nominal_action"
-                ]
-            elif (
-                self.base_env.scenario_name.parameters.is_using_cbf
-                and self.base_env.scenario_name.parameters.is_using_centralized_cbf
-            ):
-                time_rl, tensordict_ = cbf_constrained_centralized_policy(
-                    tensordict_, policy, cbf_controllers
+            elif self.base_env.scenario_name.parameters.is_using_opponent_modeling:
+                time_rl = opponent_modeling(
+                    tensordict=tensordict_,
+                    policy=policy,
+                    n_nearing_agents_observed=self.base_env.scenario_name.parameters.n_nearing_agents_observed,
+                    nearing_agents_indices=self.base_env.scenario_name.observations.nearing_agents_indices,
                 )
             else:
                 time_rl_start = time.time()
@@ -432,13 +400,6 @@ class TransformedEnvCustom(TransformedEnv):
                     frame_list.append(frame)
                 else:
                     callback(self, tensordict)
-        if self.base_env.scenario_name.parameters.is_using_cbf:
-            num_fail = 0
-            for i in range(len(cbf_controllers)):
-                for j in range(len(cbf_controllers[i])):
-                    num_fail += cbf_controllers[i][j].num_fail
-            self.num_fail = num_fail
-            # print("Total number of cbf failure solving is:", num_fail)
 
         if is_save_simulation_video:
             return tensordicts, frame_list  # Modification
@@ -737,57 +698,40 @@ class SyncDataCollectorCustom(SyncDataCollector):
         tensordicts = []
         with set_exploration_type(self.exploration_type):
             for t in range(self.frames_per_batch):
+                if self.env.base_env.scenario_name.parameters.is_using_cbf_training:
+                    raise NotImplementedError(
+                        "Using CBF during training is not implemented."
+                    )
+
                 if (
                     self.init_random_frames is not None
                     and self._frames < self.init_random_frames
                 ):
                     self.env.rand_action(self._tensordict)
-
-                    # <Modification starts>
-                    # Possibly predict the actions of surrounding agents using opponent modeling
-                elif (
-                    self.env.base_env.scenario_name.parameters.is_using_opponent_modeling
-                ):
-                    opponent_modeling(
-                        tensordict=self._tensordict,
-                        policy=self.policy,
-                        n_nearing_agents_observed=self.env.base_env.scenario_name.parameters.n_nearing_agents_observed,
-                        nearing_agents_indices=self.env.base_env.scenario_name.observations.nearing_agents_indices,
-                    )
-                    self.policy(self._tensordict)
-                # <Modification ends>
-                elif (
-                    self.env.base_env.scenario_name.parameters.is_using_prioritized_marl
-                    and not self.env.base_env.scenario_name.parameters.is_using_cbf
-                ):
-                    prioritized_ap_policy(
-                        tensordict=self._tensordict,
-                        policy=self.policy,
-                        priority_module=self.priority_module,
-                        nearing_agents_indices=self.env.base_env.scenario_name.observations.nearing_agents_indices,
-                        is_communication_noise=self.env.base_env.scenario_name.parameters.is_communication_noise,
-                        communication_noise_level=self.env.base_env.scenario_name.parameters.communication_noise_level,
-                    )
-                elif (
-                    self.env.base_env.scenario_name.parameters.is_using_cbf
-                    and not self.env.base_env.scenario_name.parameters.is_using_centralized_cbf
-                ):
-                    cbf_constrained_decentralized_policy(
-                        tensordict=self._tensordict,
-                        policy=self.policy,
-                        cbf_controllers=self.cbf_controllers,
-                    )
-                elif (
-                    self.env.base_env.scenario_name.parameters.is_using_cbf
-                    and self.env.base_env.scenario_name.parameters.is_using_centralized_cbf
-                ):
-                    cbf_constrained_centralized_policy(
-                        tensordict=self._tensordict,
-                        policy=self.policy,
-                        cbf_controllers=self.cbf_controllers,
-                    )
                 else:
-                    self.policy(self._tensordict)
+                    if (
+                        self.env.base_env.scenario_name.parameters.is_using_opponent_modeling
+                    ):
+                        opponent_modeling(
+                            tensordict=self._tensordict,
+                            policy=self.policy,
+                            n_nearing_agents_observed=self.env.base_env.scenario_name.parameters.n_nearing_agents_observed,
+                            nearing_agents_indices=self.env.base_env.scenario_name.observations.nearing_agents_indices,
+                        )
+                        self.policy(self._tensordict)
+                    elif (
+                        self.env.base_env.scenario_name.parameters.is_using_prioritized_marl
+                    ):
+                        prioritized_ap_policy(
+                            tensordict=self._tensordict,
+                            policy=self.policy,
+                            priority_module=self.priority_module,
+                            nearing_agents_indices=self.env.base_env.scenario_name.observations.nearing_agents_indices,
+                            is_communication_noise=self.env.base_env.scenario_name.parameters.is_communication_noise,
+                            communication_noise_level=self.env.base_env.scenario_name.parameters.communication_noise_level,
+                        )
+                    else:
+                        self.policy(self._tensordict)
 
                 tensordict, tensordict_ = self.env.step_and_maybe_reset(
                     self._tensordict
@@ -833,149 +777,6 @@ class SyncDataCollectorCustom(SyncDataCollector):
                             out=self._tensordict_out,
                         )
         return self._tensordict_out
-
-
-class VehicleState(AgentState):
-    def __init__(self):
-        """
-        Initialize the VehicleState with all attributes from AgentState
-        and add some new attributes.
-        """
-        super().__init__()
-        self._speed = None  # Speed (magnitude, positive for forward moving, negative for backward moving)
-        self._steering = None
-        self._sideslip_angle = None
-
-    @property
-    def speed(self):
-        return self._speed
-
-    @speed.setter
-    def speed(self, value):
-        assert (
-            self._batch_dim is not None and self._device is not None
-        ), "First add an entity to the world before setting its state"
-        assert (
-            value.shape[0] == self._batch_dim
-        ), f"Internal state must match batch dim, got {value.shape[0]}, expected {self._batch_dim}"
-
-        self._speed = value.to(self._device)
-
-    @property
-    def steering(self):
-        return self._steering
-
-    @steering.setter
-    def steering(self, value):
-        assert (
-            self._batch_dim is not None and self._device is not None
-        ), "First add an entity to the world before setting its state"
-        assert (
-            value.shape[0] == self._batch_dim
-        ), f"Internal state must match batch dim, got {value.shape[0]}, expected {self._batch_dim}"
-
-        self._steering = value.to(self._device)
-
-    @property
-    def sideslip_angle(self):
-        return self._sideslip_angle
-
-    @sideslip_angle.setter
-    def sideslip_angle(self, value):
-        assert (
-            self._batch_dim is not None and self._device is not None
-        ), "First add an entity to the world before setting its state"
-        assert (
-            value.shape[0] == self._batch_dim
-        ), f"Internal state must match batch dim, got {value.shape[0]}, expected {self._batch_dim}"
-
-        self._sideslip_angle = value.to(self._device)
-
-    @override(AgentState)
-    def _reset(self, env_index: typing.Optional[int]):
-        for attr_name in ["speed", "steering", "sideslip_angle"]:
-            attr = self.__getattribute__(attr_name)
-            if attr is not None:
-                if env_index is None:
-                    self.__setattr__(attr_name, torch.zeros_like(attr))
-                else:
-                    self.__setattr__(
-                        attr_name,
-                        TorchUtils.where_from_index(env_index, 0, attr),
-                    )
-        super()._reset(env_index)
-
-    @override(AgentState)
-    def zero_grad(self):
-        for attr_name in ["speed", "steering", "sideslip_angle"]:
-            attr = self.__getattribute__(attr_name)
-            if attr is not None:
-                self.__setattr__(attr_name, attr.detach())
-        super().zero_grad()
-
-    @override(AgentState)
-    def _spawn(self, dim_c: int, dim_p: int):
-        self.speed = torch.zeros(
-            self.batch_dim, 1, device=self.device, dtype=torch.float32
-        )
-        self.steering = torch.zeros(
-            self.batch_dim, 1, device=self.device, dtype=torch.float32
-        )
-        self.sideslip_angle = torch.zeros(
-            self.batch_dim, 1, device=self.device, dtype=torch.float32
-        )
-        super()._spawn(dim_c, dim_p)
-
-
-class Vehicle(Agent):
-    def __init__(self, *args, **kwargs):
-        """
-        Initialize the Vehicle by calling the parent Agent's initializer
-        and setting up the VehicleState.
-
-        Redefine _state attribute to be VehicleState.
-        """
-        super().__init__(*args, **kwargs)
-
-        # Replace the default AgentState with VehicleState
-        self._state = VehicleState()
-
-    def set_speed(self, speed: Tensor, batch_index: int = None):
-        """
-        Set the speed state of the vehicle.
-
-        Args:
-            speed (Tensor): The new speed value.
-            batch_index (int, optional): The index in the batch to set the speed for.
-                                         If None, all batches are updated.
-        """
-        self._set_state_property(VehicleState.speed, self.state, speed, batch_index)
-
-    def set_steering(self, steering: Tensor, batch_index: int = None):
-        """
-        Set the steering state of the vehicle.
-
-        Args:
-            steering (Tensor): The new steering value.
-            batch_index (int, optional): The index in the batch to set the steering for.
-                                         If None, all batches are updated.
-        """
-        self._set_state_property(
-            VehicleState.steering, self.state, steering, batch_index
-        )
-
-    def set_sideslip_angle(self, sideslip_angle: Tensor, batch_index: int = None):
-        """
-        Set the sideslip angle of the vehicle, i.e., the angle between the velocity and the chasis.
-
-        Args:
-            sideslip_angle (Tensor): The new sideslip_angle value.
-            batch_index (int, optional): The index in the batch to set the sideslip_angle for.
-                                         If None, all batches are updated.
-        """
-        self._set_state_property(
-            VehicleState.sideslip_angle, self.state, sideslip_angle, batch_index
-        )
 
 
 class WorldCustom(World):
@@ -1051,231 +852,8 @@ class WorldCustom(World):
             entity.state.sideslip_angle = sideslip_angle.unsqueeze(-1)
 
 
-class Parameters:
-    """
-    This class stores parameters for training and testing.
-    """
-
-    def __init__(
-        self,
-        # General parameters
-        n_agents: int = 4,  # Number of agents
-        dt: float = 0.05,  # [s] sample time
-        device: str = "cpu",  # Default tensor device
-        scenario_name: str = "road_traffic",  # Scenario name
-        # Training parameters
-        n_iters: int = 250,  # Number of training iterations
-        num_epochs: int = 30,  # Optimization steps per batch of data collected
-        minibatch_size: int = 512,  # Size of the mini-batches in each optimization step (2**9 - 2**12?)
-        lr: float = 2e-4,  # Learning rate
-        lr_min: float = 1e-5,  # Minimum learning rate (used for scheduling of learning rate)
-        max_grad_norm: float = 1.0,  # Maximum norm for the gradients
-        clip_epsilon: float = 0.2,  # Clip value for PPO loss
-        gamma: float = 0.99,  # Discount factor from 0 to 1. A greater value corresponds to a better farsight
-        lmbda: float = 0.9,  # lambda for generalised advantage estimation
-        entropy_eps: float = 1e-4,  # Controls the trade-off between trying new actions (exploration) and optimizing known good actions (exploitation). Higher entropy_coef encourages more exploration by favoring stochastic (less certain) policies.
-        max_steps: int = 128,  # Episode steps before done
-        num_vmas_envs: int = 32,  # Number of vectorized environments
-        scenario_type: str = "intersection_1",  # One of {"CPM_entire", "CPM_mixed", "intersection_1", ...}. See SCENARIOS in utilities/constants.py for more scenarios.
-        # "CPM_entire": Entire map of the CPM Lab
-        # "CPM_mixed": Intersection, merge-in, and merge-out of the CPM Lab. Probability defined in `cpm_scenario_probabilities`
-        # "intersection_1": Intersection with ID 1
-        episode_reward_mean_current: float = 0.00,  # Achieved mean episode reward (total/n_agents)
-        episode_reward_intermediate: float = -1e3,  # A arbitrary, small initial value
-        is_prb: bool = False,  # Whether to enable prioritized replay buffer
-        is_challenging_initial_state_buffer=False,  # Whether to enable challenging initial state buffer
-        cpm_scenario_probabilities=[
-            1.0,
-            0.0,
-            0.0,
-        ],  # Probabilities of training agents in intersection, merge-in, or merge-out scenario
-        n_steps_stored: int = 10,  # Store previous `n_steps_stored` steps of states
-        # Observation
-        n_points_short_term: int = 3,  # Number of points that build a short-term reference path
-        is_partial_observation: bool = True,  # Whether to enable partial observation
-        n_nearing_agents_observed: int = 2,  # Number of nearing agents to be observed (consider limited sensor range)
-        # Parameters for ablation studies
-        is_ego_view: bool = True,  # Ego view or bird view
-        is_apply_mask: bool = True,  # Whether to mask distant agents
-        is_observe_distance_to_agents: bool = True,  # Whether to observe the distance to other agents
-        is_observe_distance_to_boundaries: bool = True,  # Whether to observe points on lanelet boundaries or observe the distance to labelet boundaries
-        is_observe_distance_to_center_line: bool = True,  # Whether to observe the distance to reference path
-        is_observe_vertices: bool = True,  # Whether to observe the vertices of other agents (or center point)
-        is_obs_noise: bool = True,  # Whether to add noise to observations
-        obs_noise_level: float = 0.05,  # Defines the variance of the normal distribution modeling the noise.
-        is_observe_ref_path_other_agents: bool = False,  # Whether to observe the reference paths of other agents
-        is_use_mtv_distance: bool = True,  # Whether to use mtv-based (Minimum Translation Vector) distance or c2c-based (center-to-center) distance.
-        # Visu
-        is_visualize_short_term_path: bool = True,  # Whether to visualize short-term reference paths
-        is_visualize_lane_boundary: bool = False,  # Whether to visualize lane boundary
-        is_real_time_rendering: bool = False,  # Simulation will be paused at each time step for a certain duration to enable real-time rendering
-        is_visualize_extra_info: bool = True,  # Whether to render extra information such time and time step
-        render_title: str = "",  # The title to be rendered
-        # Save/Load
-        is_save_intermediate_model: bool = True,  # Whether to save intermediate model (also called checkpoint) with the hightest episode reward
-        is_load_model: bool = False,  # Whether to load saved model
-        is_load_final_model: bool = False,  # Whether to load the final model (last iteration)
-        model_name: str = None,
-        where_to_save: str = "outputs/",  # Define where to save files such as intermediate models
-        is_continue_train: bool = False,  # Whether to continue training after loading an offline model
-        is_save_eval_results: bool = True,  # Whether to save evaluation results such as figures and evaluation outputs
-        is_load_out_td: bool = False,  # Whether to load evaluation outputs
-        is_testing_mode: bool = False,  # In testing mode, collisions do not terminate the current simulation
-        is_save_simulation_video: bool = False,  # Whether to save simulation videos
-        # extensions
-        is_using_opponent_modeling: bool = False,  # Whether to use opponent modeling to predict the actions of other agents
-        is_using_prioritized_marl: bool = False,  # Whether to use prioritized MARL and action propagation.
-        prioritization_method: str = "marl",  # Which method to use for generating priority ranks (options: {"marl", "random"}). Applicable only for prioritized MARL scenarios.
-        is_communication_noise: str = False,  # Whether to inject communication noise to propagated actions
-        communication_noise_level: float = 0.1,  # Defines the variance of the normal distribution modeling the noise.
-        is_using_cbf: bool = False,  # Whether to use Control Barrier Function (CBF)
-        is_using_centralized_cbf: bool = False,  # Whether to use centralized solving for CBF-constrained MARL
-        experiment_type: str = "simulation",  # One of {"simulation", "lab"}. If you only use simulation, you do not need to worry about "lab".
-        is_obs_steering: bool = False,  # Whether to observe the steering angle of other agents
-        predefined_ref_path_idx: list[
-            int
-        ] = None,  # A list of integers specify the index of the predefined reference path for each. They will be used when initializing/resetting the agents. Set to None to use a randomly selected ones.
-        init_state: list[
-            float
-        ] = None,  # Initial state of the agents in the form of [x, y, rot, speed]. If None, the initial state will be randomly sampled.
-        random_seed: int = 0,  # Random seed,
-        is_using_pseudo_distance: bool = False,  # Whether to use pseudo distance
-        n_circles_approximate_vehicle: int = 3,  # Number of circles to approximate the vehicle shape
-        lane_width=0.3,  # For custom scenarios only
-        reset_agent_fixed_duration: int = 0,  # Reset agents after fixed duration in seconds. Set to 0 if not used.
-    ):
-
-        self.n_agents = n_agents
-        self.dt = dt
-
-        self.device = device
-        self.scenario_name = scenario_name
-
-        # Sampling
-        self.n_iters = n_iters
-
-        # Training
-        self.num_epochs = num_epochs
-        self.minibatch_size = minibatch_size
-        self.lr = lr
-        self.lr_min = lr_min
-        self.max_grad_norm = max_grad_norm
-        self.clip_epsilon = clip_epsilon
-        self.gamma = gamma
-        self.lmbda = lmbda
-        self.entropy_eps = entropy_eps
-        self.max_steps = max_steps
-
-        self.scenario_type = scenario_type
-
-        self.num_vmas_envs = num_vmas_envs
-
-        self.is_save_intermediate_model = is_save_intermediate_model
-        self.is_load_model = is_load_model
-        self.is_load_final_model = is_load_final_model
-
-        self.episode_reward_mean_current = episode_reward_mean_current
-        self.episode_reward_intermediate = episode_reward_intermediate
-        self.where_to_save = where_to_save
-        self.is_continue_train = is_continue_train
-
-        self.n_points_short_term = n_points_short_term
-        # Observation
-        self.is_partial_observation = is_partial_observation
-        self.n_steps_stored = n_steps_stored
-        self.n_nearing_agents_observed = n_nearing_agents_observed
-        self.is_observe_distance_to_agents = is_observe_distance_to_agents
-
-        self.is_testing_mode = is_testing_mode
-        self.is_save_simulation_video = is_save_simulation_video
-        self.is_visualize_short_term_path = is_visualize_short_term_path
-        self.is_visualize_lane_boundary = is_visualize_lane_boundary
-
-        self.is_ego_view = is_ego_view
-        self.is_apply_mask = is_apply_mask
-        self.is_use_mtv_distance = is_use_mtv_distance
-        self.is_observe_distance_to_boundaries = is_observe_distance_to_boundaries
-        self.is_observe_distance_to_center_line = is_observe_distance_to_center_line
-        self.is_observe_vertices = is_observe_vertices
-        self.is_obs_noise = is_obs_noise
-        self.obs_noise_level = obs_noise_level
-        self.is_observe_ref_path_other_agents = is_observe_ref_path_other_agents
-
-        self.is_save_eval_results = is_save_eval_results
-        self.is_load_out_td = is_load_out_td
-
-        self.is_real_time_rendering = is_real_time_rendering
-        self.is_visualize_extra_info = is_visualize_extra_info
-        self.render_title = render_title
-
-        self.is_prb = is_prb
-        self.is_challenging_initial_state_buffer = is_challenging_initial_state_buffer
-
-        self.cpm_scenario_probabilities = cpm_scenario_probabilities
-
-        self.is_using_opponent_modeling = is_using_opponent_modeling
-        self.is_using_prioritized_marl = is_using_prioritized_marl
-
-        self.prioritization_method = prioritization_method
-        self.is_communication_noise = is_communication_noise
-        self.communication_noise_level = communication_noise_level
-
-        self.is_using_cbf = is_using_cbf
-        self.is_using_centralized_cbf = is_using_centralized_cbf
-
-        self.experiment_type = experiment_type
-        self.is_obs_steering = is_obs_steering
-
-        self.predefined_ref_path_idx = predefined_ref_path_idx
-        self.init_state = init_state
-
-        self.random_seed = random_seed
-
-        self.is_using_pseudo_distance = is_using_pseudo_distance
-        self.n_circles_approximate_vehicle = n_circles_approximate_vehicle
-
-        self.lane_width = lane_width
-
-        self.reset_agent_fixed_duration = reset_agent_fixed_duration
-
-        if (model_name is None) and (scenario_name is not None):
-            self.model_name = get_model_name(self)
-
-    @property
-    def frames_per_batch(self):
-        """
-        Number of team frames collected per training iteration
-            num_envs = frames_per_batch / max_steps
-            total_frames = frames_per_batch * n_iters
-            sub_batch_size = frames_per_batch // minibatch_size
-        """
-        return self.num_vmas_envs * self.max_steps
-
-    @property
-    def total_frames(self):
-        """
-        Total number of frames collected for training
-        """
-        return self.frames_per_batch * self.n_iters
-
-    def to_dict(self):
-        # Create a dictionary representation of the instance
-        return self.__dict__
-
-    @classmethod
-    def from_dict(cls, dict_data):
-        # Create an instance of the class from a dictionary
-        return cls(**dict_data)
-
-    @classmethod
-    def from_json(cls, config_file):
-        with open(config_file, "r") as file:
-            config = json.load(file)
-            return cls(**config)
-
-
 class SaveData:
-    def __init__(self, parameters: Parameters, episode_reward_mean_list: [] = None):
+    def __init__(self, parameters: Parameters, episode_reward_mean_list: list = None):
         self.parameters = parameters
         self.episode_reward_mean_list = episode_reward_mean_list
 
@@ -1730,7 +1308,7 @@ def prioritized_ap_policy(
 def cbf_constrained_decentralized_policy(
     tensordict,
     policy,
-    cbf_controllers,
+    cbf_controllers: list[list[CBFQP]],
 ):
     """
 
@@ -1748,7 +1326,7 @@ def cbf_constrained_decentralized_policy(
     priority_module : Callable
         A module that computes the priority rank for agents by wrapping the process
         of generating priority scores and ranking agents according to these scores.
-    cbf_controllers : List[List[CBFController]]
+    cbf_controllers : List[List[CBFQP]]
         A list of CBF-based controllers for each environment and agent, used to
         correct the unsafe policy's actions.
     nearing_agents_indices : Tensor
@@ -1811,7 +1389,7 @@ def cbf_constrained_decentralized_policy_multi_agents(
     tensordict,
     policy,
     priority_module,
-    cbf_controllers,
+    cbf_controllers: list[list[CBFQP]],
     nearing_agents_indices,
     is_communication_noise,
     communication_noise_level,
@@ -1832,7 +1410,7 @@ def cbf_constrained_decentralized_policy_multi_agents(
     priority_module : Callable
         A module that computes the priority rank for agents by wrapping the process
         of generating priority scores and ranking agents according to these scores.
-    cbf_controllers : List[List[CBFController]]
+    cbf_controllers : List[List[CBFQP]]
         A list of CBF-based controllers for each environment and agent, used to
         correct the unsafe policy's actions.
     nearing_agents_indices : Tensor
@@ -2017,47 +1595,35 @@ def cbf_constrained_decentralized_policy_multi_agents(
 def cbf_constrained_centralized_policy(
     tensordict,
     policy,
-    cbf_controllers,
+    cbf_controllers: list[CBFQP],
 ):
-    try:
-        raise NotImplementedError(
-            "Function cbf_constrained_centralized_policy is not yet implemented!"
-        )
-    except NotImplementedError as e:
-        print(f"Error: {e}")
-        sys.exit("Exiting program: Function not implemented.")
+    """
+    This function certifies the safety of actions for multiple agents using Control Barrier Functions (CBFs) in a centralized manner.
+    """
 
-    return time_rl, tensordict
+    time_pseudo_dis = 0
 
+    # Call the policy to generate actions for the agents
+    time_rl_start = time.time()
+    policy(tensordict)
+    time_rl = time.time() - time_rl_start  # Time for RL policy
 
-def cbf_constrained_centralized_policy(
-    tensordict,
-    policy,
-    cbf_controllers,
-):
-    try:
-        raise NotImplementedError(
-            "Function cbf_constrained_centralized_policy is not yet implemented!"
-        )
-    except NotImplementedError as e:
-        print(f"Error: {e}")
-        sys.exit("Exiting program: Function not implemented.")
+    time_cbf_start = time.time()
+    n_envs = tensordict.batch_size[0]
+    for i in range(n_envs):
+        # cbf_controllers[i].solve_centralized_cbf_qp(tensordict)  # Solve QP at each time step
+        # cbf_controllers[i].build_centralized_cbf_qp()  # Build QP at each time step
+        # cbf_controllers[i].update_centralized_cbf_qp(tensordict)  # Build QP at each time step
+        cbf_controllers[i].update_qp(tensordict)
+        time_pseudo_dis += cbf_controllers[i].time_pseudo_dis
+    time_cbf = time.time() - time_cbf_start
 
-    return time_rl, tensordict
-
-
-def is_latex_available():
-    try:
-        # Try running `latex -version` to check if it's installed
-        subprocess.run(
-            ["latex", "-version"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+    return (
+        time_rl,
+        time_cbf,
+        time_pseudo_dis,
+        tensordict,
+    )
 
 
 matplotlib.rcParams["text.usetex"] = is_latex_available()

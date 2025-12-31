@@ -5,7 +5,7 @@
 
 import torch
 
-from sigmarl.helper_training import is_latex_available
+from sigmarl.helper_common import is_latex_available
 from sigmarl.map_manager import MapManager
 
 import numpy as np

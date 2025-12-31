@@ -45,7 +45,7 @@
     "is_using_opponent_modeling": false,
     "is_using_prioritized_marl": false,
     "prioritization_method": "random",
-    "is_using_cbf": false,
+    "is_using_cbf_testing": false,
     "experiment_type": "simulation",
     "is_obs_steering": false
 }

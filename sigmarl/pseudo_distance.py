@@ -3,31 +3,12 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from matplotlib.patches import PathPatch
 import torch
 
-from sigmarl.helper_training import is_latex_available
 from sigmarl.map_manager import MapManager
 from sigmarl.constants import SCENARIOS
 
 import numpy as np
-from matplotlib.path import Path
-import matplotlib.pyplot as plt
-
-from sigmarl.helper_scenario import compute_pseudo_tangent_vector
-
-plt.rcParams.update(
-    {
-        "font.size": 9,
-        "axes.labelsize": 9,
-        "axes.titlesize": 9,
-        "xtick.labelsize": 9,
-        "ytick.labelsize": 9,
-        "legend.fontsize": 9,
-        "font.family": "serif",
-        "text.usetex": is_latex_available(),
-    }
-)
 
 
 class PseudoDistance:
@@ -41,222 +22,15 @@ class PseudoDistance:
         self.lane_width = SCENARIOS[scenario_type]["lane_width"]
 
         # Prepare for distance calculation
-        self.initialize_map(map)
-        self.prepare_for_calculation()
-
-    def initialize_map(self, map: MapManager):
+        # self.initialize_map(map)
+        # self.prepare_for_calculation()
         self.map = map
-        # Initialize map information
-        self.lanelets = self.map.parser.lanelets_all
-        # Mapping reference path id to loop index and starting lanelet: ref_path_id: (loop_index, starting_lanelet)
-        if "cpm" in self.scenario_type.lower():
-            self.path_to_loop = {
-                1: 1,
-                2: 2,
-                3: 3,
-                4: 4,
-                5: 5,
-                6: 6,
-                7: 7,
-                8: 1,
-                9: 2,
-                10: 3,
-                11: 4,
-                12: 5,
-                13: 6,
-                14: 7,
-                15: 1,
-                16: 2,
-                17: 3,
-                18: 4,
-                19: 5,
-                20: 6,
-                21: 7,
-                22: 1,
-                23: 2,
-                24: 3,
-                25: 4,
-                26: 5,
-                27: 6,
-                28: 7,
-                29: 1,
-                30: 2,
-                31: 3,
-                32: 4,
-                33: 5,
-                34: 6,
-                35: 7,
-                36: 1,
-                37: 6,
-                38: 7,
-                39: 1,
-                40: 1,
-            }
-            # In loop 6 or 7, the two adjacent lanelets share the same right boundary in the merging area
-            self.lanelets_share_same_right_boundaries_map = {
-                5: 23,
-                3: 22,
-                81: 100,
-                83: 101,
-                57: 75,
-                55: 74,
-                29: 48,
-                31: 49,
-            }
-            # List of two adjacent lanelets sharing the same left and right boundaries
-            self.lanelets_share_same_boundaries_list = [
-                [None, 22],  # The adjacent left lanelet has no solid boundary
-                [4, 3],
-                [6, 5],
-                [None, 23],
-                [8, 7],
-                [60, 59],
-                [58, 57],
-                [None, 75],
-                [56, 55],
-                [None, 74],
-                [54, 53],
-                [80, 79],
-                [82, 81],
-                [None, 100],
-                [84, 83],
-                [None, 101],
-                [86, 85],
-                [34, 33],
-                [32, 31],
-                [None, 49],
-                [30, 29],
-                [None, 48],
-                [28, 27],
-                [2, 1],
-                [13, 14],
-                [15, 16],
-                [9, 10],
-                [11, 12],
-                [63, 64],
-                [61, 62],
-                [67, 68],
-                [65, 66],
-                [91, 92],
-                [93, 94],
-                [87, 88],
-                [89, 90],
-                [37, 38],
-                [35, 36],
-                [41, 42],
-                [39, 40],
-                [25, 18],
-                [26, 17],
-                [52, 43],
-                [72, 73],
-                [51, 44],
-                [50, 45],
-                [102, 97],
-                [20, 21],
-                [103, 96],
-                [104, 95],
-                [78, 69],
-                [46, 47],
-                [77, 70],
-                [76, 71],
-                [24, 19],
-                [98, 99],
-            ]
-
-    def prepare_for_calculation(self):
-        """
-        This function is used to prepare the data for pseudo distance calculation.
-        """
-        # Prepare left and right boundary data for pseudo distance calculation.
-        # Initialize lists to store boundary point coordinates and their tangent vectors.
-        self.left_boundary = []
-        self.right_boundary = []
-        self.left_tangent_vector = []
-        self.right_tangent_vector = []
-
-        if "cpm" not in self.scenario_type.lower():
-            # Assume other scenarios do not have lanelets sharing the same boundaries
-            for cur_idx in range(len(self.lanelets)):
-                lan = self.lanelets[cur_idx]
-                left_boundary = lan["left_boundary"]
-                right_boundary = lan["right_boundary"]
-
-                self.left_boundary.append(left_boundary)
-                self.right_boundary.append(right_boundary)
-                left_tangent_vec = compute_pseudo_tangent_vector(left_boundary)
-                self.left_tangent_vector.append(left_tangent_vec)
-                right_tangent_vec = compute_pseudo_tangent_vector(right_boundary)
-                self.right_tangent_vector.append(right_tangent_vec)
+        if "CPM_mixed" == self.scenario_type:
+            # Intersection scenario (TODO: consider actual mixed scenarios consisting of intersection, merge-in, and merge-out)
+            self.reference_paths = self.map.parser.reference_paths_intersection
         else:
-            # Iterate through all lanelets in the map.
-            for cur_idx in range(1, len(self.lanelets) + 1):
-                # Find the lanelet group that shares boundaries with the current lanelet.
-                lanelets_share_same_boundaries = next(
-                    (
-                        group
-                        for group in self.lanelets_share_same_boundaries_list
-                        if cur_idx in group
-                    ),
-                    None,
-                )
-                # Store the id of the lanelet whose left or right boundary serves as the left or right boundary of the current lanelet: cur_idx
-                left_boundary_id = lanelets_share_same_boundaries[0]
-                right_boundary_id = lanelets_share_same_boundaries[1]
-
-                # Retrieve right boundary points
-                right_boundary = self.lanelets[right_boundary_id - 1][
-                    "right_boundary"
-                ]  # Right boundary point coordinates
-                predecessor_id = self.lanelets[right_boundary_id - 1]["predecessor"][0]
-                successor_id = self.lanelets[right_boundary_id - 1]["successor"][0]
-
-                # Extend the right boundary using its predecessor and successor
-                # to improve calculation accuracy near the boundary ends.
-                right_boundary = torch.cat(
-                    (
-                        self.lanelets[predecessor_id - 1]["right_boundary"][-5:-1, :],
-                        right_boundary,
-                        self.lanelets[successor_id - 1]["right_boundary"][1:5, :],
-                    ),
-                    dim=0,
-                )
-                self.right_boundary.append(right_boundary)
-
-                # Compute tangent vectors for the right boundary
-                right_tangent_vec = compute_pseudo_tangent_vector(right_boundary)
-
-                self.right_tangent_vector.append(right_tangent_vec)
-
-                if left_boundary_id is not None:
-                    # Retrieve left boundary points
-                    left_boundary = self.lanelets[left_boundary_id - 1][
-                        "left_boundary"
-                    ]  # Left boundary point coordinates
-                    predecessor_id = self.lanelets[left_boundary_id - 1]["predecessor"][
-                        0
-                    ]
-                    successor_id = self.lanelets[left_boundary_id - 1]["successor"][0]
-
-                    # Extend the left boundary for better accuracy near endpoints
-                    left_boundary = torch.cat(
-                        (
-                            self.lanelets[predecessor_id - 1]["left_boundary"][
-                                -5:-1, :
-                            ],
-                            left_boundary,
-                            self.lanelets[successor_id - 1]["left_boundary"][1:5, :],
-                        ),
-                        dim=0,
-                    )
-                    self.left_boundary.append(left_boundary)
-
-                    # Compute tangent vectors for the left boundary
-                    left_tangent_vec = compute_pseudo_tangent_vector(left_boundary)
-                    self.left_tangent_vector.append(left_tangent_vec)
-                else:
-                    # No solid left boundary exists for this lanelet.
-                    self.left_boundary.append(None)
-                    self.left_tangent_vector.append(None)
+            # All reference paths
+            self.reference_paths = self.map.parser.reference_paths
 
     def transform_from_global_to_line_coordiante(
         self,
@@ -427,7 +201,7 @@ class PseudoDistance:
 
         return pseudo_distance, direction
 
-    def get_distance(self, ref_id, lanelet_id, pos):
+    def get_distance(self, ref_id, pos):
         """
         Compute the pseudo distances from the given position to the left and right
         boundaries of a lanelet.
@@ -440,7 +214,6 @@ class PseudoDistance:
 
         Args:
             ref_id (Tensor): Reference path ID. Tensor integer.
-            lanelet_id (Tensor): Lanelet ID. Tensor integer.
             pos (Tensor or array-like): Position at which the distances are computed. Shape [num_points, 2] in case of Tensor
 
         Returns:
@@ -450,14 +223,12 @@ class PseudoDistance:
         pos = pos if isinstance(pos, torch.Tensor) else torch.tensor(pos)
         pos = pos.unsqueeze(1)
 
-        left_boundary = self.map.parser.reference_paths[ref_id]["left_boundary_shared"]
-        right_boundary = self.map.parser.reference_paths[ref_id][
-            "right_boundary_shared"
-        ]
-        left_boundary_pseudo_vector = self.map.parser.reference_paths[ref_id][
+        left_boundary = self.reference_paths[ref_id]["left_boundary_shared"]
+        right_boundary = self.reference_paths[ref_id]["right_boundary_shared"]
+        left_boundary_pseudo_vector = self.reference_paths[ref_id][
             "left_boundary_shared_pseudo_vector"
         ]
-        right_boundary_pseudo_vector = self.map.parser.reference_paths[ref_id][
+        right_boundary_pseudo_vector = self.reference_paths[ref_id][
             "right_boundary_shared_pseudo_vector"
         ]
 
@@ -470,55 +241,10 @@ class PseudoDistance:
 
         return left_distance.detach().numpy(), right_distance.detach().numpy()
 
-        # TODO: Delete
-        # Get the loop id from the reference path id
-        loop_id = self.path_to_loop[ref_id.item() + 1]
-
-        # Check whether the lanelet is in the merging area of loop 6 or 7
-        if (lanelet_id in self.lanelets_share_same_right_boundaries_map) and (
-            loop_id == 6 or loop_id == 7
-        ):
-            # Use the shared right boundary for the merging area
-            right_boundary_id = self.lanelets_share_same_right_boundaries_map[
-                lanelet_id
-            ]
-            right_boundary = self.right_boundary[
-                right_boundary_id - 1
-            ]  # id starts from 1, but list index starts from 0
-            right_boundary_tangent_vector = self.right_tangent_vector[
-                right_boundary_id - 1
-            ]
-
-            # Compute pseudo distance to the right boundary
-            right_distance, _ = self.get_pseudo_distance(
-                right_boundary_tangent_vector, right_boundary, pos
-            )
-            # No solid left boundary in this case
-            left_distance = None
-        else:
-            # Retrieve the left and right boundaries and their tangent vectors
-            left_boundary = self.left_boundary[lanelet_id - 1]
-            left_tangent_vector = self.left_tangent_vector[lanelet_id - 1]
-            right_boundary = self.right_boundary[lanelet_id - 1]
-            right_tangent_vector = self.right_tangent_vector[lanelet_id - 1]
-
-            # Compute pseudo distance to the left boundary (if available)
-            if left_boundary is not None:
-                left_distance, _ = self.get_pseudo_distance(
-                    left_tangent_vector, left_boundary, pos
-                )
-            else:
-                left_distance = None
-
-            right_distance, _ = self.get_pseudo_distance(
-                right_tangent_vector, right_boundary, pos
-            )
-
-        # If no solid left boundary, approximate the left distance using the right one
-        if left_distance is None:
-            left_distance = 2 * self.lane_width - right_distance
-
-        return left_distance.detach().numpy(), right_distance.detach().numpy()
+        # TODO: Delete below (DEBUG)
+        plt.plot(left_boundary[:, 0], left_boundary[:, 1])
+        plt.plot(right_boundary[:, 0], right_boundary[:, 1])
+        plt.scatter(pos[0, 0, 0], pos[1, 0, 1])
 
     def visualize(self, ref_id=0, grid_resolution=0.005):
         """
@@ -527,6 +253,24 @@ class PseudoDistance:
         2. distance to right boundary
         3. final distance = min(left, right)
         """
+        from matplotlib.patches import PathPatch
+        from matplotlib.path import Path
+        import matplotlib.pyplot as plt
+        from sigmarl.helper_common import is_latex_available
+
+        plt.rcParams.update(
+            {
+                "font.size": 9,
+                "axes.labelsize": 9,
+                "axes.titlesize": 9,
+                "xtick.labelsize": 9,
+                "ytick.labelsize": 9,
+                "legend.fontsize": 9,
+                "font.family": "serif",
+                "text.usetex": is_latex_available(),
+            }
+        )
+
         # Overall bounding box
         min_x, min_y = (
             self.map.parser.bounds["min_x"],
@@ -539,12 +283,12 @@ class PseudoDistance:
 
         # For pseudo_distance_example only
         if self.scenario_type == "pseudo_distance_example":
-            left_pts = self.map.parser.reference_paths[0]["center_line"]
-            right_pts = self.map.parser.reference_paths[1]["center_line"]
+            left_pts = self.reference_paths[0]["center_line"]
+            right_pts = self.reference_paths[1]["center_line"]
             grid_resolution = 0.1
         else:
-            left_pts = self.map.parser.reference_paths[ref_id]["left_boundary_shared"]
-            right_pts = self.map.parser.reference_paths[ref_id]["right_boundary_shared"]
+            left_pts = self.reference_paths[ref_id]["left_boundary_shared"]
+            right_pts = self.reference_paths[ref_id]["right_boundary_shared"]
 
         # Sample a uniform grid over the bounding box
         xs = np.arange(min_x, max_x, grid_resolution)
@@ -581,7 +325,6 @@ class PseudoDistance:
 
         left_list, right_list = self.get_distance(
             ref_id=torch.tensor(ref_id, dtype=torch.int32),
-            lanelet_id=torch.tensor(0, dtype=torch.int32),  # TODO Delete
             pos=pos_tensor,
         )
 

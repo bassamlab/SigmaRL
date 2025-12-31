@@ -33,9 +33,8 @@ import os
 
 from torchrl.envs.libs.vmas import VmasEnv
 
-# Import custom classes
+from sigmarl.helper_common import Parameters
 from sigmarl.helper_training import (
-    Parameters,
     SaveData,
     TransformedEnvCustom,
     get_path_to_save_model,
@@ -89,17 +88,11 @@ class MAPPOCAVs:
 
         self._ensure_save_directory_exists()
 
-        if self.parameters.is_using_cbf:
-            if not self.parameters.is_load_model:
-                raise ValueError(
-                    "CBF is currently only supported for online training. Set parameters.is_load_model to True to avoid this error."
-                )
-            if self.parameters.n_agents != 1:
-                raise ValueError(
-                    "CBF is currently only supported for single-agent scenarios."
-                )
+        if (
+            self.parameters.is_using_cbf_testing
+            or self.parameters.is_using_cbf_training
+        ):
             self.cbf_controllers = self._setup_cbf_qp_controller(env)
-            self._load_existing_model_for_cbf(decision_making_module, priority_module)
         else:
             self.cbf_controllers = None
 
@@ -304,28 +297,16 @@ class MAPPOCAVs:
 
     def _setup_data_collector(self, env, decision_making_module, priority_module):
         """Set up the data collector for gathering experience."""
-        if self.parameters.is_using_cbf:
-            self.cbf_controllers = self._setup_cbf_qp_controller(env)
-            return SyncDataCollectorCustom(
-                env,
-                decision_making_module.policy,
-                priority_module=priority_module,
-                cbf_controllers=self.cbf_controllers,
-                device=self.parameters.device,
-                storing_device=self.parameters.device,
-                frames_per_batch=self.parameters.frames_per_batch,
-                total_frames=self.parameters.total_frames,
-            )
-        else:
-            return SyncDataCollectorCustom(
-                env,
-                decision_making_module.policy,
-                priority_module=priority_module,
-                device=self.parameters.device,
-                storing_device=self.parameters.device,
-                frames_per_batch=self.parameters.frames_per_batch,
-                total_frames=self.parameters.total_frames,
-            )
+        return SyncDataCollectorCustom(
+            env,
+            decision_making_module.policy,
+            priority_module=priority_module,
+            cbf_controllers=self.cbf_controllers,
+            device=self.parameters.device,
+            storing_device=self.parameters.device,
+            frames_per_batch=self.parameters.frames_per_batch,
+            total_frames=self.parameters.total_frames,
+        )
 
     def _setup_replay_buffer(self):
         """Set up the replay buffer for storing experiences."""
@@ -578,29 +559,29 @@ class MAPPOCAVs:
 
     def _setup_cbf_qp_controller(self, env):
         """Set up the cbf_qp_controller if cbf constrained MARL is enabled."""
-        if (
-            self.parameters.is_using_cbf
-            and not self.parameters.is_using_centralized_cbf
-        ):
-            # Each agent in each environment has one CBF-based controller
-            cbf_controllers = [
-                [
-                    CBFQP(env=env, env_idx=env_idx, agent_idx=agent_idx)
-                    for agent_idx in range(self.parameters.n_agents)
+        if self.parameters.is_using_cbf_training:
+            raise ValueError(
+                "CBF is currently only supported for online training. Set parameters.is_using_cbf_training to False."
+            )
+
+        if self.parameters.is_using_cbf_testing:
+            if self.parameters.is_using_centralized_cbf:
+                # Each environment has one CBF-based controller
+                cbf_controllers = [
+                    CBFQP(env=env, env_idx=env_idx)
+                    for env_idx in range(self.parameters.num_vmas_envs)
                 ]
-                for env_idx in range(self.parameters.num_vmas_envs)
-            ]
-            return cbf_controllers
-        elif self.parameters.is_using_cbf and self.parameters.is_using_centralized_cbf:
-            # Each environment has one CBF-based controller
-            raise NotImplementedError("Centralized CBF is not implemented yet.")
-            cbf_controllers = [
-                CBFQP(env=env, env_idx=env_idx)
-                for env_idx in range(self.parameters.num_vmas_envs)
-            ]
-            return cbf_controllers
-        else:
-            return None
+                return cbf_controllers
+            else:
+                # Each agent in each environment has one CBF-based controller
+                cbf_controllers = [
+                    [
+                        CBFQP(env=env, env_idx=env_idx, agent_idx=agent_idx)
+                        for agent_idx in range(self.parameters.n_agents)
+                    ]
+                    for env_idx in range(self.parameters.num_vmas_envs)
+                ]
+                return cbf_controllers
 
     def _load_existing_model_for_cbf(self, decision_making_module, priority_module):
         """Load RL decision making and priority policy model"""
@@ -647,6 +628,11 @@ def mappo_cavs(parameters: Parameters):
 if __name__ == "__main__":
     config_file = "config.json"
     parameters = Parameters.from_json(config_file)
-    env, decision_making_module, optimization_module, priority_module, cbf_controllers, parameters = mappo_cavs(
-        parameters=parameters
-    )
+    (
+        env,
+        decision_making_module,
+        optimization_module,
+        priority_module,
+        cbf_controllers,
+        parameters,
+    ) = mappo_cavs(parameters=parameters)

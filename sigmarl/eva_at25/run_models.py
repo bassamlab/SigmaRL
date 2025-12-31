@@ -4,8 +4,8 @@
 # LICENSE file in the root directory of this source tree.
 
 import torch
-
-from sigmarl.helper_training import Parameters, SaveData, reduce_out_td
+from sigmarl.helper_common import Parameters
+from sigmarl.helper_training import SaveData, reduce_out_td
 import os
 
 from vmas.simulator.utils import save_video

@@ -2,7 +2,7 @@ import os
 import shutil
 import unittest
 from sigmarl.mappo_cavs import mappo_cavs
-from sigmarl.helper_training import Parameters
+from sigmarl.helper_common import Parameters
 from sigmarl.constants import SCENARIOS
 
 

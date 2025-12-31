@@ -624,9 +624,26 @@ SCENARIOS = {
     },
 }
 
+# AGENTS = {
+#     "width": 0.08,  # [m]
+#     "length": 0.16,  # [m]
+#     "l_f": 0.075,  # [m] Front wheelbase
+#     "l_r": 0.075,  # [m] Rear wheelbase
+#     "l_wb": 0.15,  # [m] Wheelbase
+#     "max_speed": 1.0,  # [m/s]
+#     "min_speed": -0.5,  # [m/s]
+#     "max_steering": 31 * math.pi / 180,  # [radian]
+#     "min_steering": -31 * math.pi / 180,  # [radian]
+#     "max_acc": 5.0,  # [m/s^2]
+#     "min_acc": -5.0,  # [m/s^2]
+#     "max_steering_rate": 5 * math.pi,  # [radian/s]
+#     "min_steering_rate": -5 * math.pi,  # [radian/s]
+#     "n_actions": 2,
+# }
+
 AGENTS = {
-    "width": 0.08,  # [m]
-    "length": 0.16,  # [m]
+    "width": 0.107,  # [m]
+    "length": 0.22,  # [m]
     "l_f": 0.075,  # [m] Front wheelbase
     "l_r": 0.075,  # [m] Rear wheelbase
     "l_wb": 0.15,  # [m] Wheelbase
@@ -636,10 +653,28 @@ AGENTS = {
     "min_steering": -31 * math.pi / 180,  # [radian]
     "max_acc": 5.0,  # [m/s^2]
     "min_acc": -5.0,  # [m/s^2]
-    "max_steering_rate": 5 * math.pi,  # [radian/s]
-    "min_steering_rate": -5 * math.pi,  # [radian/s]
+    "max_steering_rate": math.pi / 2,  # [radian/s]
+    "min_steering_rate": -math.pi / 2,  # [radian/s]
     "n_actions": 2,
 }
+
+# AGENTS = {
+#     "width": 0.08,  # [m]
+#     "length": 0.16,  # [m]
+#     "l_f": 0.075,  # [m] Front wheelbase
+#     "l_r": 0.075,  # [m] Rear wheelbase
+#     "l_wb": 0.15,  # [m] Wheelbase
+#     "max_speed": 1.0,  # [m/s]
+#     "min_speed": -0.5,  # [m/s]
+#     "max_steering": 31 * math.pi / 180,  # [radian]
+#     "min_steering": -31 * math.pi / 180,  # [radian]
+#     "max_acc": 5.0,  # [m/s^2]
+#     "min_acc": -5.0,  # [m/s^2]
+#     "max_steering_rate": math.pi / 2,  # [radian/s]
+#     "min_steering_rate": -math.pi / 2,  # [radian/s]
+#     "n_actions": 2,
+# }
+
 
 THRESHOLD = {
     "initial_distance": 1.2 * math.sqrt(AGENTS["width"] ** 2 + AGENTS["length"] ** 2),

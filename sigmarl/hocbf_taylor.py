@@ -14,7 +14,7 @@ import multiprocessing as mp
 import pickle
 import time
 
-from sigmarl.helper_training import is_latex_available
+from sigmarl.helper_common import is_latex_available
 
 
 plt.rcParams.update(
@@ -1326,7 +1326,6 @@ def plot_h(
 
 
 if __name__ == "__main__":
-    print("!!!!!!!!!!!!")
     SIM_DURATION = 2.0
     DT_list = [0.01]
     relative_degree_list = [2]

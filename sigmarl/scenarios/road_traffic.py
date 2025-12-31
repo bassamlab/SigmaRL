@@ -38,7 +38,9 @@ from sigmarl.dynamics import KinematicBicycleModel
 
 from sigmarl.colors import Color, colors
 
-from sigmarl.helper_training import Parameters, WorldCustom, Vehicle
+from sigmarl.helper_common import Parameters
+from sigmarl.helper_training import WorldCustom
+from sigmarl.helper_common import Vehicle
 
 from sigmarl.helper_scenario import (
     Normalizers,
@@ -279,7 +281,8 @@ class ScenarioRoadTraffic(BaseScenario):
                     "is_using_opponent_modeling", False
                 ),
                 is_use_mtv_distance=kwargs.pop("is_use_mtv_distance", False),
-                is_using_cbf=kwargs.pop("is_using_cbf", False),
+                is_using_cbf_testing=kwargs.pop("is_using_cbf_testing", False),
+                is_using_cbf_training=kwargs.pop("is_using_cbf_training", False),
                 is_using_centralized_cbf=kwargs.pop("is_using_centralized_cbf", False),
                 experiment_type=kwargs.pop("experiment_type", "simulation"),
                 is_obs_steering=kwargs.pop("is_obs_steering", False),
@@ -320,23 +323,42 @@ class ScenarioRoadTraffic(BaseScenario):
                 raise ValueError(
                     f"The given prioritization method is not supported. Obtained: {self.parameters.prioritization_method}. Expected: 'marl' or 'random'."
                 )
-        if self.parameters.is_using_cbf:
-            if self.parameters.is_using_centralized_cbf:
-                print(
-                    colored(
-                        "[INFO] Using CBF-constrained MARL with centralized solving",
-                        "red",
-                    )
+
+        cbf_type_1 = (
+            "centralized"
+            if self.parameters.is_using_centralized_cbf
+            else "decentralized"
+        )
+
+        if (
+            self.parameters.is_using_cbf_training
+            and self.parameters.is_using_cbf_testing
+        ):
+            cbf_type_2 = "training and testing"
+        elif (
+            self.parameters.is_using_cbf_training
+            and not self.parameters.is_using_cbf_testing
+        ):
+            cbf_type_2 = "training"
+        elif (
+            not self.parameters.is_using_cbf_training
+            and self.parameters.is_using_cbf_testing
+        ):
+            cbf_type_2 = "testing"
+        else:
+            cbf_type_2 = None
+
+        if (
+            self.parameters.is_using_cbf_training
+            or self.parameters.is_using_cbf_testing
+        ):
+            print(
+                colored(
+                    f"[INFO] Using CBF-constrained MARL with {cbf_type_1} solving during {cbf_type_2}",
+                    "red",
                 )
-            else:
-                self.parameters.is_using_prioritized_marl = True
-                # self.parameters.prioritization_method = 'marl'
-                print(
-                    colored(
-                        "[INFO] Using CBF-constrained MARL with decentralized solving",
-                        "red",
-                    )
-                )
+            )
+
         if self.parameters.reset_agent_fixed_duration > 0:
             print(
                 colored(
@@ -400,7 +422,10 @@ class ScenarioRoadTraffic(BaseScenario):
         ]  # Increase to zoom out
 
         # Initialize pseudo distance information for the map
-        if self.parameters.is_using_cbf:
+        if (
+            self.parameters.is_using_cbf_testing
+            or self.parameters.is_using_cbf_training
+        ):
             self.map_pseudo_distance = PseudoDistance(
                 scenario_type=self.parameters.scenario_type, map=self.map
             )
@@ -1123,7 +1148,7 @@ class ScenarioRoadTraffic(BaseScenario):
             # Reset single agent
             agents_reset = (
                 self.world_state.collisions.with_agents.any(dim=-1)
-                # | self.world_state.collisions.with_lanelets
+                | self.world_state.collisions.with_lanelets
                 | self.world_state.collisions.with_entry_segments
                 | self.world_state.collisions.with_exit_segments
             )
@@ -1137,7 +1162,7 @@ class ScenarioRoadTraffic(BaseScenario):
             is_done = (
                 is_max_steps_reached
                 | is_collision_with_agents
-                # | is_collision_with_lanelets  # TODO: enable this line if you are training a model
+                | is_collision_with_lanelets  # TODO: enable this line if you are training a model
                 | is_fixed_duration_reset
             )
             if (
@@ -1230,14 +1255,17 @@ class ScenarioRoadTraffic(BaseScenario):
         # others-observation: jaw angles of surrounding, observable agents
         # others-observation: short-term reference path of surrounding, observable agents
         if (
-            self.parameters.is_using_cbf
+            self.parameters.is_using_cbf_training
             and not self.parameters.is_using_centralized_cbf
         ):
             cbf_obs = F.pad(
                 self.stored_cbf_observations[agent_index].clone(),
                 (0, self.parameters.n_nearing_agents_observed * AGENTS["n_actions"]),
             )
-        elif self.parameters.is_using_cbf and self.parameters.is_using_centralized_cbf:
+        elif (
+            self.parameters.is_using_cbf_training
+            and self.parameters.is_using_centralized_cbf
+        ):
             cbf_obs = self.stored_cbf_observations[agent_index].clone()
 
         # cbf_observation: self_observation + others_observation
@@ -1255,7 +1283,7 @@ class ScenarioRoadTraffic(BaseScenario):
         # others_observation: steering of surrounding, observable agents
         # others_observation: bool value 0: observable, 1: non observable
 
-        if self.parameters.is_using_cbf:
+        if self.parameters.is_using_cbf_testing:
             if is_action_empty:
                 cbf_action_vel = self.constants.empty_action_vel[:, agent_index]
                 cbf_action_steer = self.constants.empty_action_steering[:, agent_index]
@@ -1266,9 +1294,10 @@ class ScenarioRoadTraffic(BaseScenario):
             else:
                 cbf_action_vel = agent.action.u[:, 0]
                 cbf_action_steer = agent.action.u[:, 1]
-                nominal_action_vel = self.nominal_action[:, agent_index, 0]
-                nominal_action_steer = self.nominal_action[:, agent_index, 1]
+                nominal_action_vel = self.nominal_action_vel[:, agent_index]
+                nominal_action_steer = self.nominal_action_steer[:, agent_index]
         else:
+            # Do not use CBF
             cbf_action_vel = self.constants.empty_action_vel[:, agent_index]
             cbf_action_steer = self.constants.empty_action_steering[:, agent_index]
             if is_action_empty:
@@ -1351,7 +1380,11 @@ class ScenarioRoadTraffic(BaseScenario):
                 if self.parameters.is_using_prioritized_marl
                 else {}
             ),
-            **({"cbf_observation": cbf_obs} if self.parameters.is_using_cbf else {}),
+            **(
+                {"cbf_observation": cbf_obs}
+                if self.parameters.is_using_cbf_training
+                else {}
+            ),
         }
 
         return info
@@ -1382,6 +1415,8 @@ class ScenarioRoadTraffic(BaseScenario):
         self._render_extra_info(geoms)
 
         self._render_reference_paths_and_boundaries(env_index, geoms)
+
+        self._render_groups(geoms)
 
         return geoms
 
@@ -1592,6 +1627,74 @@ class ScenarioRoadTraffic(BaseScenario):
                     geom.set_color(*self.colors[agent_i])
                     geoms.append(geom)
 
+    def _render_groups(self, geoms):
+        # TODO: Use solid lines to connects agents that are in the same group; use dashed lines to connects agents that are cross groups
+        # Example: self.inter_groups = [[8, 10], [0, 12], [1, 2], [3, 4], [5, 6], [7, 9], [11, 13], [14]]
+        # self.cross_groups = {8: [0], 10: [0, 12], 0: [8, 10], 12: [10], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [], 9: [], 11: [], 13: [], 14: []}
+        if self.parameters.is_using_prioritized_marl and hasattr(self, "inter_groups"):
+            pass
+
+        if self.parameters.is_using_prioritized_marl and hasattr(self, "cross_groups"):
+            pass
+
+    def _render_groups(self, geoms):
+        """
+        Render group relationships:
+        - Solid lines: intra-group (inter_groups)
+        - Dashed lines: cross-group (cross_groups)
+        """
+        # ---------- Intra-group (solid lines) ----------
+        if hasattr(self, "inter_groups"):
+            for group in self.inter_groups:
+                if len(group) < 2:
+                    continue
+                # Fully connect agents inside the same group
+                for idx_i in range(len(group)):
+                    for idx_j in range(idx_i + 1, len(group)):
+                        i = group[idx_i]
+                        j = group[idx_j]
+
+                        line = rendering.Line(
+                            (
+                                self.world.agents[i].state.pos[0, 0],
+                                self.world.agents[i].state.pos[0, 1],
+                            ),
+                            (
+                                self.world.agents[j].state.pos[0, 0],
+                                self.world.agents[j].state.pos[0, 1],
+                            ),
+                            width=6,
+                        )
+
+                        xform = rendering.Transform()
+                        line.add_attr(xform)
+
+                        # Use a neutral color or one agent’s color
+                        line.set_color(*Color.blue100)
+                        geoms.append(line)
+
+        # ---------- Cross-group (dashed lines) ----------
+        if hasattr(self, "cross_groups"):
+            for i, nbrs in self.cross_groups.items():
+                for j in nbrs:
+                    line = rendering.Line(
+                        (
+                            self.world.agents[i].state.pos[0, 0],
+                            self.world.agents[i].state.pos[0, 1],
+                        ),
+                        (
+                            self.world.agents[j].state.pos[0, 0],
+                            self.world.agents[j].state.pos[0, 1],
+                        ),
+                        width=4,
+                    )
+
+                    xform = rendering.Transform()
+                    line.add_attr(xform)
+
+                    line.set_color(*Color.black50)
+                    geoms.append(line)
+
     def _render_action_propagation_direction(self, env_index, geoms):
         """
         Render the direction of action propagation between agents in a prioritized MARL setting.
@@ -1672,7 +1775,10 @@ class ScenarioRoadTraffic(BaseScenario):
             Each action is rendered as a directional arrow, where the direction reflects the steering angle,
             and the length indicates the magnitude of the velocity.
         """
-        if self.parameters.is_using_cbf:
+        if (
+            self.parameters.is_using_cbf_testing
+            or self.parameters.is_using_cbf_training
+        ):
             for i in range(self.n_agents):
                 # Heading angle of the current agent
                 heading = self.world.agents[i].state.rot[env_index]
@@ -1680,8 +1786,8 @@ class ScenarioRoadTraffic(BaseScenario):
                 cbf_action_vel = self.world.agents[i].action.u[env_index, 0]
                 cbf_action_steering = self.world.agents[i].action.u[env_index, 1]
 
-                nominal_action_vel = self.nominal_action[env_index, i, 0]
-                nominal_action_steering = self.nominal_action[env_index, i, 1]
+                nominal_action_vel = self.nominal_action_vel[env_index, i]
+                nominal_action_steer = self.nominal_action_steer[env_index, i]
                 # Render directional arrow for CBF conrrected action
                 # Mainline of the arrow
                 cbf_line = rendering.Line(
@@ -1773,11 +1879,11 @@ class ScenarioRoadTraffic(BaseScenario):
                     #  Ending point: computed using the heading, steering angle, and velocity
                     (
                         self.world.agents[i].state.pos[env_index, 0]
-                        + torch.cos(heading + nominal_action_steering)
+                        + torch.cos(heading + nominal_action_steer)
                         * nominal_action_vel
                         * 0.5,
                         self.world.agents[i].state.pos[env_index, 1]
-                        + torch.sin(heading + nominal_action_steering)
+                        + torch.sin(heading + nominal_action_steer)
                         * nominal_action_vel
                         * 0.5,
                     ),
@@ -1787,31 +1893,27 @@ class ScenarioRoadTraffic(BaseScenario):
                 nominal_arrow_line1 = rendering.Line(
                     (
                         self.world.agents[i].state.pos[env_index, 0]
-                        + torch.cos(heading + nominal_action_steering)
+                        + torch.cos(heading + nominal_action_steer)
                         * nominal_action_vel
                         * 0.5,
                         self.world.agents[i].state.pos[env_index, 1]
-                        + torch.sin(heading + nominal_action_steering)
+                        + torch.sin(heading + nominal_action_steer)
                         * nominal_action_vel
                         * 0.5,
                     ),
                     (
                         self.world.agents[i].state.pos[env_index, 0]
-                        + torch.cos(heading + nominal_action_steering)
+                        + torch.cos(heading + nominal_action_steer)
                         * nominal_action_vel
                         * 0.5
-                        + torch.cos(
-                            heading + nominal_action_steering + torch.pi * 8 / 9
-                        )
+                        + torch.cos(heading + nominal_action_steer + torch.pi * 8 / 9)
                         * torch.sign(nominal_action_vel)
                         * 0.07,
                         self.world.agents[i].state.pos[env_index, 1]
-                        + torch.sin(heading + nominal_action_steering)
+                        + torch.sin(heading + nominal_action_steer)
                         * nominal_action_vel
                         * 0.5
-                        + torch.sin(
-                            heading + nominal_action_steering + torch.pi * 8 / 9
-                        )
+                        + torch.sin(heading + nominal_action_steer + torch.pi * 8 / 9)
                         * torch.sign(nominal_action_vel)
                         * 0.07,
                     ),
@@ -1820,31 +1922,27 @@ class ScenarioRoadTraffic(BaseScenario):
                 nominal_arrow_line2 = rendering.Line(
                     (
                         self.world.agents[i].state.pos[env_index, 0]
-                        + torch.cos(heading + nominal_action_steering)
+                        + torch.cos(heading + nominal_action_steer)
                         * nominal_action_vel
                         * 0.5,
                         self.world.agents[i].state.pos[env_index, 1]
-                        + torch.sin(heading + nominal_action_steering)
+                        + torch.sin(heading + nominal_action_steer)
                         * nominal_action_vel
                         * 0.5,
                     ),
                     (
                         self.world.agents[i].state.pos[env_index, 0]
-                        + torch.cos(heading + nominal_action_steering)
+                        + torch.cos(heading + nominal_action_steer)
                         * nominal_action_vel
                         * 0.5
-                        + torch.cos(
-                            heading + nominal_action_steering - torch.pi * 8 / 9
-                        )
+                        + torch.cos(heading + nominal_action_steer - torch.pi * 8 / 9)
                         * torch.sign(nominal_action_vel)
                         * 0.07,
                         self.world.agents[i].state.pos[env_index, 1]
-                        + torch.sin(heading + nominal_action_steering)
+                        + torch.sin(heading + nominal_action_steer)
                         * nominal_action_vel
                         * 0.5
-                        + torch.sin(
-                            heading + nominal_action_steering - torch.pi * 8 / 9
-                        )
+                        + torch.sin(heading + nominal_action_steer - torch.pi * 8 / 9)
                         * torch.sign(nominal_action_vel)
                         * 0.07,
                     ),
