@@ -1,4 +1,4 @@
-import os 
+import os
 import sys
 from sigmarl.mappo_cavs import mappo_cavs
 from sigmarl.helper_training import Parameters
@@ -17,7 +17,7 @@ if hpc_environment:
 # ===============================
 # Handle command-line arguments
 # ===============================
-# Usage: python main_training_tmp_X.py [seed]
+# Usage: python main_training.py [seed]
 # Default seed = 1
 if len(sys.argv) > 1:
     print(f"sys.argv: {sys.argv}")
@@ -43,9 +43,13 @@ parameters = Parameters.from_json(config_file)
 parameters.scenario_type = scenario_type
 parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
 
-parameters.where_to_save = "outputs/tmp/"
+parameters.where_to_save = "outputs/marl_cbf_0/"
 parameters.n_iters = 1000
 parameters.random_seed = random_seed
+parameters.is_using_cbf_training = False
+parameters.is_using_cbf_testing = False
+parameters.is_using_prioritized_marl = False
+parameters.is_using_centralized_cbf = False
 
 # ===============================
 # Run training
