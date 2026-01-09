@@ -80,6 +80,7 @@ class MAPPOCAVs:
         """
         env = self._setup_environment()
         save_data = self._initialize_save_data()
+
         decision_making_module = self._setup_decision_making_module(env)
         optimization_module = self._setup_optimization_module(
             env, decision_making_module
@@ -100,16 +101,17 @@ class MAPPOCAVs:
             self._load_existing_model(
                 decision_making_module, optimization_module, priority_module
             )
-            if not self.parameters.is_continue_train:
-                cprint("[INFO] Training will not continue.", "blue")
-                return (
-                    env,
-                    decision_making_module,
-                    optimization_module,
-                    priority_module,
-                    self.cbf_controllers,
-                    self.parameters,
-                )
+
+        if not self.parameters.is_continue_train:
+            cprint("[INFO] Training will not continue.", "blue")
+            return (
+                env,
+                decision_making_module,
+                optimization_module,
+                priority_module,
+                self.cbf_controllers,
+                self.parameters,
+            )
 
         collector = self._setup_data_collector(
             env, decision_making_module, priority_module

@@ -13,6 +13,7 @@ import torch
 from torch import Tensor
 
 import typing
+from matplotlib import colormaps
 
 
 def get_model_name(parameters):
@@ -504,3 +505,39 @@ def save_video(
     if os.path.exists(tmp_file):
         os.remove(tmp_file)
     return final_name
+
+
+def get_n_colors_cmap(n, cmap_name="tab20"):
+    cmap = colormaps.get_cmap(cmap_name).resampled(n)
+    return [cmap(i)[:3] for i in range(n)]  # RGB in [0,1]
+
+
+def get_name_suffix(
+    grouping, is_using_cbf_testing, n_agent, seed, max_group, nom, scenario
+):
+    if grouping:
+        if is_using_cbf_testing:
+            name_suffix = (
+                f"agents_{n_agent}_seed_{seed}_"
+                f"grouping_on_maxgroup_{max_group}_"
+                f"nom_{nom}_scenario_{scenario.lower()}"
+            )
+        else:
+            name_suffix = (
+                f"agents_{n_agent}_seed_{seed}_"
+                f"nom_{nom}_only_scenario_{scenario.lower()}"
+            )
+
+    else:
+        if is_using_cbf_testing:
+            name_suffix = (
+                f"agents_{n_agent}_seed_{seed}_"
+                f"grouping_off_"
+                f"nom_{nom}_scenario_{scenario.lower()}"
+            )
+        else:
+            name_suffix = (
+                f"agents_{n_agent}_seed_{seed}_"
+                f"nom_{nom}_only_scenario_{scenario.lower()}"
+            )
+    return name_suffix

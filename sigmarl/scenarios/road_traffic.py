@@ -26,9 +26,15 @@ from sigmarl.scenarios.world_state.world_state_rt.world_state_rt_sim import (
 )
 
 cicd_testing = os.getenv("CICD_TESTING", "false").lower() == "true"
-if not cicd_testing:
-    # During CI/CD testing, the OpenGL library is missing in the Docker container, so we need to import the rendering module conditionally
-    from vmas.simulator import rendering
+
+try:
+    if not cicd_testing:
+        from vmas.simulator import rendering
+    else:
+        rendering = None
+except Exception:
+    # Covers missing OpenGL or other backend errors
+    rendering = None
 
 from vmas import render_interactively
 from vmas.simulator.core import Agent, Box, World
@@ -38,9 +44,8 @@ from sigmarl.dynamics import KinematicBicycleModel
 
 from sigmarl.colors import Color, colors
 
-from sigmarl.helper_common import Parameters
+from sigmarl.helper_common import Parameters, Vehicle, get_n_colors_cmap
 from sigmarl.helper_training import WorldCustom
-from sigmarl.helper_common import Vehicle
 
 from sigmarl.helper_scenario import (
     Normalizers,
@@ -293,7 +298,10 @@ class ScenarioRoadTraffic(BaseScenario):
             )
 
         self.n_agents = self.parameters.n_agents
-        self.colors = colors
+        if self.n_agents > len(colors):
+            self.colors = get_n_colors_cmap(self.n_agents)
+        else:
+            self.colors = colors
 
         # Logs
         if self.parameters.is_testing_mode:
@@ -1390,8 +1398,7 @@ class ScenarioRoadTraffic(BaseScenario):
         return info
 
     def extra_render(self, env_index: int = 0):
-        if cicd_testing:
-            # Rendering is not needed during CI/CD testing
+        if rendering is None:
             return []
 
         if self.parameters.is_real_time_rendering:

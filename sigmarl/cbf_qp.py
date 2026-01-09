@@ -1066,10 +1066,10 @@ class CBFQP:
             C["v_head_const"].value = self.lam_clf * 0.5 * (e_h_np**2)
             C["v_speed_const"].value = self.lam_clf * 0.5 * (e_v_np**2)
         else:
-            C["e_head"].value = np.zeros_like(C["e_head"].value)
-            C["e_speed"].value = np.zeros_like(C["e_speed"].value)
-            C["v_head_const"].value = np.zeros_like(C["v_head_const"].value)
-            C["v_speed_const"].value = np.zeros_like(C["v_speed_const"].value)
+            C["e_head"].value = np.zeros(C["e_head"].shape)
+            C["e_speed"].value = np.zeros(C["e_speed"].shape)
+            C["v_head_const"].value = np.zeros(C["v_head_const"].shape)
+            C["v_speed_const"].value = np.zeros(C["v_speed_const"].shape)
 
         # Fill lane and pairwise CBFs
         d_safe = float(2.0 * self.circle_radius + self.safety_buffer)
@@ -1174,54 +1174,80 @@ class CBFQP:
 
         # Set U_nom and zeros
         C["U_nom"].value = nom_acc_omega
-        C["s_bound"].value = np.zeros_like(C["s_bound"].value)
+
+        C["s_bound"].value = np.zeros(C["s_bound"].shape)
         if C["s_pair"] is not None:
-            C["s_pair"].value = np.zeros_like(C["s_pair"].value)
-        C["s_clf_head"].value = np.zeros_like(C["s_clf_head"].value)
-        C["s_clf_speed"].value = np.zeros_like(C["s_clf_speed"].value)
+            C["s_pair"].value = np.zeros(C["s_pair"].shape)
+
+        C["s_clf_head"].value = np.zeros(C["s_clf_head"].shape)
+        C["s_clf_speed"].value = np.zeros(C["s_clf_speed"].shape)
 
         # Warm start
         C["u_var"].value = C["U_nom"].value.copy()
+        if C["u_var"].value.shape != C["u_var"].shape:
+            C["u_var"].value = np.zeros(C["u_var"].shape)
 
         # Solve
         prob: cp.Problem = C["prob"]
+
+        solved = False
         try:
             prob.solve(
                 solver=cp.OSQP,
                 warm_start=True,
-                verbose=False,
                 max_iter=20000,
                 eps_abs=1e-5,
                 eps_rel=1e-5,
                 polish=True,
                 adaptive_rho=True,
             )
+
         except cp.SolverError:
+            print("[WARN] OSQP solver failed, trying CLARABEL...")
             try:
                 prob.solve(
-                    solver=cp.ECOS,
+                    solver=cp.CLARABEL,
                     warm_start=True,
-                    verbose=False,
-                    max_iters=20000,
-                    abstol=1e-8,
-                    reltol=1e-8,
+                    tol_feas=1e-8,
+                    tol_gap_abs=1e-8,
+                    tol_gap_rel=1e-8,
                 )
             except cp.SolverError:
-                prob.solve(
-                    solver=cp.SCS,
-                    warm_start=True,
-                    verbose=False,
-                    max_iters=100000,
-                    eps=1e-4,
-                )
+                print("[WARN] CLARABEL solver failed, trying SCS...")
+                try:
+                    prob.solve(
+                        solver=cp.SCS,
+                        warm_start=True,
+                        max_iters=100000,
+                        eps=1e-4,
+                    )
+                except cp.SolverError:
+                    print(
+                        "[ERROR] SCS solver also failed. Using nominal actions as fallback."
+                    )
 
-        # Write back safe actions
-        for i in range(n):
-            s_i = states[i]
-            actions_v_steer_safe = self.u_to_rl_action(
-                C["u_var"].value[i, :], s_i[3], s_i[4]
-            ).detach()
-            tensordict[("agents", "action")][self.env_idx, i] = actions_v_steer_safe
+        solved = (
+            prob.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]
+            and C["u_var"].value is not None
+            and np.isfinite(C["u_var"].value).all()
+        )
+
+        if solved:
+            for i in range(n):
+                s_i = states[i]
+                actions_v_steer_safe = self.u_to_rl_action(
+                    C["u_var"].value[i, :], s_i[3], s_i[4]
+                ).detach()
+                tensordict[("agents", "action")][self.env_idx, i] = actions_v_steer_safe
+        else:
+            # Fallback: use nominal actions
+            for i in range(n):
+                s_i = states[i]
+                actions_v_steer_nom = self.u_to_rl_action(
+                    nom_acc_omega[i, :], s_i[3], s_i[4]
+                ).detach()
+                tensordict[("agents", "action")][self.env_idx, i] = actions_v_steer_nom
+            self.hist.evt.append("QP-INF")
 
         st = prob.solver_stats
         if hasattr(st, "solve_time"):
@@ -1502,6 +1528,9 @@ class CBFQP:
             self._group_qp_caches.append(cache)
 
         self._group_assignment: List[List[int]] = [[] for _ in range(G)]
+        # Baseline: fixed groups throughout the simulation
+        self.use_fixed_groups = True  # baseline switch
+        self.fixed_groups = None  # will be computed once on first update
 
     def update_grouped_cbf_qps(self, tensordict):
         """
@@ -1540,13 +1569,49 @@ class CBFQP:
                 np.array([float(s[0].item()), float(s[1].item())], dtype=np.float64)
             )
 
-        # Grouping
+        # Grouping (baseline: compute once, then keep fixed)
         asl = [
             AgentStateList(x=cf[0], y=cf[1], v=float(states[i][3].item()))
             for i, cf in enumerate(centers_flat)
         ]
-        # groups = group_agents(asl, int(self.parameters.max_group_size), obs_range)
-        groups = group_agents_k_nearest(asl, int(self.parameters.max_group_size))
+
+        if self.use_fixed_groups:
+            if self.fixed_groups is None:
+                groups0 = group_agents_k_nearest(asl, m)
+
+                # Sort agents inside each group so that:
+                #   slot index k -> global agent id mapping is deterministic.
+                # This avoids random permutations of decision-variable rows inside a QP.
+                groups0 = [sorted(list(g)) for g in groups0]
+
+                # Optional: also sort group list itself for reproducibility across runs.
+                # Not strictly required because groups are frozen after this point.
+                groups0.sort(key=lambda g: g[0] if len(g) > 0 else 10**9)
+
+                if len(groups0) != G:
+                    raise RuntimeError(
+                        f"Fixed grouping produced {len(groups0)} groups, expected {G}."
+                    )
+
+                self.fixed_groups = groups0
+
+            groups = self.fixed_groups
+        else:
+            # Recompute groups every step (dynamic grouping)
+            groups = group_agents_k_nearest(asl, m)
+
+            # ---- Deterministic ordering for warm-start and reproducibility ----
+
+            # (1) Sort agents inside each group:
+            #     ensures that slot k in the group QP always refers to the same
+            #     global agent id, given the same group membership.
+            groups = [sorted(list(g)) for g in groups]
+
+            # (2) Sort the list of groups:
+            #     ensures that group index g maps to the same QP cache across time,
+            #     as long as group memberships do not change.
+            #     We use the smallest agent id as a stable group label.
+            groups.sort(key=lambda g: g[0] if len(g) > 0 else 10**9)
 
         # Precompute nominal actions or CLF errors for all agents
         U_nom_all = np.zeros((N, 2), dtype=np.float64)
@@ -1663,19 +1728,19 @@ class CBFQP:
                         cache["h_R"][i_slot][ci].value = np.array([0.0])
 
             # Reset slacks and warm start
-            cache["s_lane"].value = np.zeros_like(cache["s_lane"].value)
+            cache["s_lane"].value = np.zeros(cache["s_lane"].shape)
             if cache["s_pair"] is not None:
-                cache["s_pair"].value = np.zeros_like(cache["s_pair"].value)
+                cache["s_pair"].value = np.zeros(cache["s_pair"].shape)
             if cache["s_cross"] is not None:
-                cache["s_cross"].value = np.zeros_like(cache["s_cross"].value)
-            cache["s_clf_head"].value = np.zeros_like(cache["s_clf_head"].value)
-            cache["s_clf_speed"].value = np.zeros_like(cache["s_clf_speed"].value)
+                cache["s_cross"].value = np.zeros(cache["s_cross"].shape)
+            cache["s_clf_head"].value = np.zeros(cache["s_clf_head"].shape)
+            cache["s_clf_speed"].value = np.zeros(cache["s_clf_speed"].shape)
             cache["u_var"].value = cache["U_nom"].value.copy()
-            cache["lambda_lane"].value = np.zeros_like(cache["lambda_lane"].value)
+            cache["lambda_lane"].value = np.zeros(cache["lambda_lane"].shape)
             if cache["lambda_pair"] is not None:
-                cache["lambda_pair"].value = np.zeros_like(cache["lambda_pair"].value)
+                cache["lambda_pair"].value = np.zeros(cache["lambda_pair"].shape)
             if cache["lambdax_i"] is not None:
-                cache["lambdax_i"].value = np.zeros_like(cache["lambdax_i"].value)
+                cache["lambdax_i"].value = np.zeros(cache["lambdax_i"].shape)
 
             # Intra-group pairs
             for i_loc in range(mcap - 1):
@@ -1786,48 +1851,116 @@ class CBFQP:
                                 )
 
             # Solve group QP
+            # prob: cp.Problem = cache["prob"]
+            # try:
+            #     prob.solve(
+            #         solver=cp.OSQP,
+            #         warm_start=True,
+            #         verbose=False,
+            #         max_iter=40000,
+            #         eps_abs=1e-5,
+            #         eps_rel=1e-5,
+            #         polish=True,
+            #         adaptive_rho=True,
+            #     )
+            # except cp.SolverError:
+            #     try:
+            #         prob.solve(
+            #             solver=cp.ECOS,
+            #             warm_start=True,
+            #             verbose=False,
+            #             max_iters=20000,
+            #             abstol=1e-8,
+            #             reltol=1e-8,
+            #         )
+            #     except cp.SolverError:
+            #         prob.solve(
+            #             solver=cp.SCS,
+            #             warm_start=True,
+            #             verbose=False,
+            #             max_iters=100000,
+            #             eps=1e-4,
+            #         )
+
+            # # Write back
+            # u_opt = cache["u_var"].value
+            # for k in range(n_local):
+            #     gid = slot2id[k]
+            #     s_i = states[gid]
+            #     actions_v_steer_safe = self.u_to_rl_action(
+            #         u_opt[k, :], s_i[3], s_i[4]
+            #     ).detach()
+            #     tensordict[("agents", "action")][
+            #         self.env_idx, gid
+            #     ] = actions_v_steer_safe
+
+            # Solve group QP
             prob: cp.Problem = cache["prob"]
+            solved = False
             try:
                 prob.solve(
                     solver=cp.OSQP,
                     warm_start=True,
-                    verbose=False,
-                    max_iter=40000,
+                    max_iter=20000,
                     eps_abs=1e-5,
                     eps_rel=1e-5,
                     polish=True,
                     adaptive_rho=True,
                 )
+
             except cp.SolverError:
+                print("[WARN] OSQP solver failed, trying CLARABEL...")
                 try:
                     prob.solve(
-                        solver=cp.ECOS,
+                        solver=cp.CLARABEL,
                         warm_start=True,
-                        verbose=False,
-                        max_iters=20000,
-                        abstol=1e-8,
-                        reltol=1e-8,
+                        tol_feas=1e-8,
+                        tol_gap_abs=1e-8,
+                        tol_gap_rel=1e-8,
                     )
                 except cp.SolverError:
-                    prob.solve(
-                        solver=cp.SCS,
-                        warm_start=True,
-                        verbose=False,
-                        max_iters=100000,
-                        eps=1e-4,
-                    )
+                    print("[WARN] CLARABEL solver failed, trying SCS...")
+                    try:
+                        prob.solve(
+                            solver=cp.SCS,
+                            warm_start=True,
+                            max_iters=100000,
+                            eps=1e-4,
+                        )
+                    except cp.SolverError:
+                        print(
+                            "[ERROR] SCS solver also failed. Using nominal actions as fallback."
+                        )
 
-            # Write back
-            u_opt = cache["u_var"].value
-            for k in range(n_local):
-                gid = slot2id[k]
-                s_i = states[gid]
-                actions_v_steer_safe = self.u_to_rl_action(
-                    u_opt[k, :], s_i[3], s_i[4]
-                ).detach()
-                tensordict[("agents", "action")][
-                    self.env_idx, gid
-                ] = actions_v_steer_safe
+            solved = (
+                prob.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]
+                and cache["u_var"].value is not None
+                and np.isfinite(cache["u_var"].value).all()
+            )
+
+            if solved:
+                u_opt = cache["u_var"].value
+                for k in range(n_local):
+                    gid = slot2id[k]
+                    s_i = states[gid]
+                    actions_v_steer_safe = self.u_to_rl_action(
+                        u_opt[k, :], s_i[3], s_i[4]
+                    ).detach()
+                    tensordict[("agents", "action")][
+                        self.env_idx, gid
+                    ] = actions_v_steer_safe
+            else:
+                # Fallback: nominal actions for this group
+                for k in range(n_local):
+                    gid = slot2id[k]
+                    s_i = states[gid]
+                    actions_v_steer_nom = self.u_to_rl_action(
+                        U_nom_all[gid, :], s_i[3], s_i[4]
+                    ).detach()
+                    tensordict[("agents", "action")][
+                        self.env_idx, gid
+                    ] = actions_v_steer_nom
+                self.hist.evt.append("QP-INF")
 
             st = prob.solver_stats
             if hasattr(st, "solve_time"):

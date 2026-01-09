@@ -2,63 +2,100 @@ import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 import os
+from sigmarl.helper_common import get_name_suffix
 
 PYTHON_EXEC = "python"
 SCRIPT = "main_eval.py"
 
-OUTPUT_DIR = "outputs/marl_cbf_0"
+OUTPUT_DIR = "outputs/marl_cbf_fixed_group_2_best_rl"
 
 print("Launcher started", flush=True)
 
 
-def build_configs(is_skip_if_exist: bool):
+def build_configs(is_skip_if_exist: bool = True):
     configs = []
     skipped = 0
 
-    n_agents = [8, 10, 12, 14, 16]
     seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    grouping_flags = [False, True]
-    max_group_sizes = [1, 2, 3, 4]
-    nom_controllers = ["clf"]
-    scenario_types = ["CPM_entire"]
+    grouping_flags = [True, False]
+    nom_controllers = ["clf", "rl"]
+    # ["CPM_entire", "intersection_6", "intersection_4", "intersection_6", "interchange_3"]
+    scenario_types = ["intersection_6", "intersection_4", "interchange_3", "CPM_entire"]
+    # scenario_types = ["CPM_entire", "interchange_3"]
+    is_using_cbf_testing_list = [True, False]
 
-    for n_agent in n_agents:
-        for seed in seeds:
-            for grouping in grouping_flags:
-                for max_group in max_group_sizes:
-                    for nom in nom_controllers:
-                        for scenario in scenario_types:
+    for scenario in scenario_types:
+        if scenario == "CPM_entire":
+            n_agents = [10, 12, 14, 16]
+            max_group_sizes = [1, 2, 3, 4]
+        elif scenario == "intersection_6":
+            n_agents = [12, 16, 20, 24]
+            max_group_sizes = [1, 2, 4, 8]
+        elif scenario == "intersection_4":
+            n_agents = [10, 13, 16, 20]
+            max_group_sizes = [1, 2, 4, 6]
+        elif scenario == "interchange_3":
+            n_agents = [6, 8, 10, 12]
+            max_group_sizes = [1, 2, 3, 4]
+        else:
+            raise ValueError(
+                f"Please define n_agents and max_group_sizes for scenario type: {scenario}"
+            )
 
-                            grouping_tag = "on" if grouping else "off"
-                            td_name = (
-                                f"out_td_agents_{n_agent}_seed_{seed}_"
-                                f"grouping_{grouping_tag}_maxgroup_{max_group}_"
-                                f"nom_{nom}_scenario_{scenario.lower()}.td"
-                            )
-                            td_path = os.path.join(OUTPUT_DIR, td_name)
+        for n_agent in n_agents:
+            for seed in seeds:
 
-                            if is_skip_if_exist and os.path.exists(td_path):
-                                skipped += 1
-                                continue
+                for grouping in grouping_flags:
+                    if grouping:
+                        group_sizes_iter = max_group_sizes
+                    else:
+                        group_sizes_iter = [None]
 
-                            cmd = [
-                                PYTHON_EXEC,
-                                SCRIPT,
-                                "--n_agent",
-                                str(n_agent),
-                                "--random_seed",
-                                str(seed),
-                                "--max_group_size",
-                                str(max_group),
-                                "--nom_controller_type",
-                                nom,
-                                "--scenario_type",
-                                scenario,
-                            ]
-                            if grouping:
-                                cmd.append("--is_grouping_agents")
+                    for max_group in group_sizes_iter:
+                        for nom in nom_controllers:
+                            for is_using_cbf_testing in is_using_cbf_testing_list:
+                                name_suffix = get_name_suffix(
+                                    grouping,
+                                    is_using_cbf_testing,
+                                    n_agent,
+                                    seed,
+                                    max_group,
+                                    nom,
+                                    scenario,
+                                )
+                                td_name = f"out_td_{name_suffix}.td"
 
-                            configs.append(cmd)
+                                td_path = os.path.join(OUTPUT_DIR, td_name)
+
+                                if is_skip_if_exist and os.path.exists(td_path):
+                                    skipped += 1
+                                    continue
+                                cmd = [
+                                    PYTHON_EXEC,
+                                    SCRIPT,
+                                    "--output_dir",
+                                    OUTPUT_DIR,
+                                    "--n_agents",
+                                    str(n_agent),
+                                    "--random_seed",
+                                    str(seed),
+                                    "--nom_controller_type",
+                                    nom,
+                                    "--scenario_type",
+                                    scenario,
+                                ]
+
+                                if is_using_cbf_testing:
+                                    cmd.append("--is_using_cbf_testing")
+
+                                if grouping:
+                                    cmd += [
+                                        "--is_grouping_agents",
+                                        "--max_group_size",
+                                        str(max_group),
+                                    ]
+
+                                configs.append(cmd)
 
     return configs, skipped
 
