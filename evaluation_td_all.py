@@ -111,8 +111,10 @@ collision_data = defaultdict(
     lambda: {
         "off": defaultdict(lambda: defaultdict(list)),
         "on": defaultdict(lambda: defaultdict(list)),
+        "only": defaultdict(list),  # NEW
     }
 )
+
 
 time_data = defaultdict(
     lambda: {
@@ -148,7 +150,10 @@ for path in td_paths:
     agents = m.group("agents")
     scenario = m.group("scenario")
     nom = m.group("nom")
-    if m.group("grouping") == "grouping_on":
+    if m.group("only") == "only":
+        grouping = "only"
+        maxgroup = None
+    elif m.group("grouping") == "grouping_on":
         grouping = "on"
         maxgroup = int(m.group("maxgroup"))
     else:
@@ -158,10 +163,17 @@ for path in td_paths:
     aa, al, tot, avg_speed = load_collision_and_speed(path)
 
     key = (agents, scenario, nom)
-    collision_data[key][grouping][maxgroup]["agents"].append(aa)
-    collision_data[key][grouping][maxgroup]["lanelets"].append(al)
-    collision_data[key][grouping][maxgroup]["total"].append(tot)
-    collision_data[key][grouping][maxgroup]["avg_speed"].append(avg_speed)
+    if grouping == "only":
+        collision_data[key]["only"]["agents"].append(aa)
+        collision_data[key]["only"]["lanelets"].append(al)
+        collision_data[key]["only"]["total"].append(tot)
+        collision_data[key]["only"]["avg_speed"].append(avg_speed)
+    else:
+        collision_data[key][grouping][maxgroup]["agents"].append(aa)
+        collision_data[key][grouping][maxgroup]["lanelets"].append(al)
+        collision_data[key][grouping][maxgroup]["total"].append(tot)
+        collision_data[key][grouping][maxgroup]["avg_speed"].append(avg_speed)
+
 
 # ---------------------------------------------------------------------
 # Load computation time files
@@ -202,13 +214,20 @@ for (agents, scenario, nom), d in collision_data.items():
     # Grouping ON (finite maxgroup)
     cmap = plt.get_cmap("tab10")
     n_on = len(on_groups)
-    n_boxes = n_on + 1  # +1 for maxgroup = inf
 
-    # centered offsets, symmetric around zero
+    has_only = len(d["only"]["agents"]) > 0
+    n_boxes = n_on + 1 + (1 if has_only else 0)
     offsets = (np.arange(n_boxes) - (n_boxes - 1) / 2.0) * width
+
+    idx_on_start = 0
+    idx_off = n_on
+    idx_only = n_on + 1
+
     for i, g in enumerate(on_groups):
         color = cmap(i % 10)
         data_g = [d["on"][g][ct] for ct in COLLISION_TYPES]
+        pos_off = x_base + offsets[-1]
+
         pos = x_base + offsets[i]
 
         bp = ax.boxplot(data_g, positions=pos, widths=width, patch_artist=True)
@@ -225,10 +244,25 @@ for (agents, scenario, nom), d in collision_data.items():
             vals.extend(mg_dict[ct])
         off_data.append(vals)
 
-    pos_off = x_base + offsets[-1]
+    pos_off = x_base + offsets[idx_off]
     bp_off = ax.boxplot(off_data, positions=pos_off, widths=width, patch_artist=True)
     for box in bp_off["boxes"]:
         box.set_facecolor("black")
+
+    if has_only:
+        only_data = [d["only"][ct] for ct in COLLISION_TYPES]
+        pos_only = x_base + offsets[idx_only]
+
+        bp_only = ax.boxplot(
+            only_data,
+            positions=pos_only,
+            widths=width,
+            patch_artist=True,
+        )
+        for box in bp_only["boxes"]:
+            box.set_facecolor("gray")
+
+        legend_handles.append(bp_only["boxes"][0])
 
     legend_handles.append(bp_off["boxes"][0])
 
@@ -239,9 +273,12 @@ for (agents, scenario, nom), d in collision_data.items():
     ax.set_title(f"Agents={agents}, Scenario={scenario}, Nominal={nom}")
     ax.grid(True, axis="y")
 
-    legend_labels = [f"Grouping On (maxgroup={g})" for g in on_groups] + [
-        "Grouping Off (maxgroup = inf)"
-    ]
+    legend_labels = (
+        [f"Grouping On (maxgroup={g})" for g in on_groups]
+        + ["Grouping Off (maxgroup = inf)"]
+        + (["CLF Only (No CBF)"] if has_only else [])
+    )
+
     ax.legend(legend_handles, legend_labels, loc="best")
 
     plt.tight_layout()
@@ -314,8 +351,12 @@ for (agents, scenario, nom), d in collision_data.items():
     on_groups = sorted(d["on"].keys())
 
     n_on = len(on_groups)
-    n_boxes = n_on + 1  # +1 for grouping off (maxgroup = inf)
+    has_only = len(d["only"]["avg_speed"]) > 0
+    n_boxes = n_on + 1 + (1 if has_only else 0)
     offsets = (np.arange(n_boxes) - (n_boxes - 1) / 2.0) * width
+    idx_on_start = 0
+    idx_off = n_on
+    idx_only = n_on + 1
 
     legend_handles = []
 
@@ -334,10 +375,24 @@ for (agents, scenario, nom), d in collision_data.items():
     for mg_dict in d["off"].values():
         off_vals.extend(mg_dict["avg_speed"])
 
-    pos_off = x_base + offsets[-1]
+    pos_off = x_base + offsets[idx_off]
+
     bp_off = ax.boxplot([off_vals], positions=pos_off, widths=width, patch_artist=True)
     for box in bp_off["boxes"]:
         box.set_facecolor("black")
+
+    if has_only:
+        pos_only = x_base + offsets[idx_only]
+        bp_only = ax.boxplot(
+            [d["only"]["avg_speed"]],
+            positions=pos_only,
+            widths=width,
+            patch_artist=True,
+        )
+        for box in bp_only["boxes"]:
+            box.set_facecolor("gray")
+
+        legend_handles.append(bp_only["boxes"][0])
 
     legend_handles.append(bp_off["boxes"][0])
 
@@ -348,9 +403,12 @@ for (agents, scenario, nom), d in collision_data.items():
     ax.set_title(f"Agents={agents}, Scenario={scenario}, Nominal={nom}")
     ax.grid(True, axis="y")
 
-    legend_labels = [f"Grouping On (maxgroup={g})" for g in on_groups] + [
-        "Grouping Off (maxgroup = inf)"
-    ]
+    legend_labels = (
+        [f"Grouping On (maxgroup={g})" for g in on_groups]
+        + ["Grouping Off (maxgroup = inf)"]
+        + (["CLF Only (No CBF)"] if has_only else [])
+    )
+
     ax.legend(legend_handles, legend_labels, loc="best")
 
     plt.tight_layout()
