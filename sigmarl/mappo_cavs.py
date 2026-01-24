@@ -121,7 +121,12 @@ class MAPPOCAVs:
         pbar = tqdm(total=self.parameters.n_iters, desc="epi_rew_mean = 0")
 
         t_start = time.time()
+        i_iter = 0
+        env.scenario.i_iter = i_iter  # To be used later in the scenario if needed
         for tensordict_data in collector:
+            i_iter += 1
+            print(f"[INFO] Starting iteration {i_iter}...")
+            env.scenario.i_iter = i_iter  # To be used later in the scenario if needed
             self._process_tensordict_data(tensordict_data, env)
             self._compute_gae(tensordict_data, optimization_module, priority_module)
             self._update_priorities(tensordict_data)
@@ -287,7 +292,7 @@ class MAPPOCAVs:
         if self.parameters.is_continue_train:
             cprint("[INFO] Training will continue with the loaded model.", "red")
             optimization_module.critic.load_state_dict(
-                torch.load(PATH_CRITIC), weights_only=True
+                torch.load(PATH_CRITIC, weights_only=True)
             )
             if (
                 priority_module
@@ -562,11 +567,22 @@ class MAPPOCAVs:
     def _setup_cbf_qp_controller(self, env):
         """Set up the cbf_qp_controller if cbf constrained MARL is enabled."""
         if self.parameters.is_using_cbf_training:
-            raise ValueError(
-                "CBF is currently only supported for online training. Set parameters.is_using_cbf_training to False."
-            )
+            if not self.parameters.is_using_centralized_cbf:
+                raise NotImplementedError(
+                    "CBF-constrained MARL training is only implemented for centralized CBF."
+                )
+            if self.parameters.is_grouping_agents:
+                raise NotImplementedError(
+                    "CBF-constrained MARL training is not implemented for grouped agents."
+                )
 
-        if self.parameters.is_using_cbf_testing:
+            cbf_controllers = [
+                CBFQP(env=env, env_idx=env_idx)
+                for env_idx in range(self.parameters.num_vmas_envs)
+            ]
+            return cbf_controllers
+
+        elif self.parameters.is_using_cbf_testing:
             if self.parameters.is_using_centralized_cbf:
                 # Each environment has one CBF-based controller
                 cbf_controllers = [

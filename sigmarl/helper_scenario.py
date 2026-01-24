@@ -60,6 +60,8 @@ class Penalties:
         leave_world=None,
         time=None,
         change_steering=None,
+        deviate_from_cbf_vel=None,
+        deviate_from_cbf_steer=None,
     ):
         self.deviate_from_ref_path = (
             deviate_from_ref_path  # Penalty for deviating from reference path
@@ -86,6 +88,12 @@ class Penalties:
         self.time = time  # Penalty for losing time
         self.change_steering = (
             change_steering  # Penalty for changing steering direction
+        )
+        self.deviate_from_cbf_vel = (
+            deviate_from_cbf_vel  # Penalty for deviating from CBF suggested speed
+        )
+        self.deviate_from_cbf_steer = (
+            deviate_from_cbf_steer  # Penalty for deviating from CBF suggested steering
         )
 
 

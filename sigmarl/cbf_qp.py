@@ -461,6 +461,12 @@ class CBFQP:
     ):
         """
         Copy the original function
+
+        Args:
+            rl_actions: [target_speed, target_steering_angle]
+
+        Returns:
+            u: [acceleration, steering_rate]
         """
         # Transform for btach calcultion
         if rl_actions.ndim == 1 or v.ndim == 0 or steering.ndim == 0:
@@ -726,7 +732,7 @@ class CBFQP:
     # =========================
 
     def build_centralized_cbf_qp(self):
-        print("[INFO] Building centralized CBF-QP...")
+        print(f"[INFO] Building centralized CBF-QP for env {self.env_idx}...")
         # Check is self._qp_cache exists
         if hasattr(self, "_qp_cache"):
             return
@@ -991,6 +997,7 @@ class CBFQP:
         self._qp_cache["v_speed_const"].value = np.zeros((n,))
 
     def update_centralized_cbf_qp(self, tensordict):
+        # print(f"[INFO] Updating centralized CBF-QP for env {self.env_idx}...")
         # Requires self._qp_cache from build_centralized_cbf_qp
         C = self._qp_cache
         n, n_circles = C["n"], C["n_circles"]
@@ -1013,13 +1020,13 @@ class CBFQP:
         for i in range(n):
             s = torch.cat(
                 [
-                    agents[i].state.pos,
-                    agents[i].state.rot,
-                    agents[i].state.speed,
-                    agents[i].state.steering,
+                    agents[i].state.pos[self.env_idx],
+                    agents[i].state.rot[self.env_idx],
+                    agents[i].state.speed[self.env_idx],
+                    agents[i].state.steering[self.env_idx],
                 ],
-                dim=1,
-            ).squeeze(0)
+                dim=-1,
+            )
             states.append(s)
             circles_all.append(self.get_circle_centers(s))
 
@@ -1262,20 +1269,21 @@ class CBFQP:
 
         # For visualization of nominal actions
         if self.nom_controller_type == "rl":
-            self.env.base_env.scenario_name.nominal_action_vel = rl_actions[
-                :, 0
-            ].unsqueeze(0)
-            self.env.base_env.scenario_name.nominal_action_steer = rl_actions[
-                :, 1
-            ].unsqueeze(0)
+            self.env.base_env.scenario_name.world_state.nominal_action_vel[
+                self.env_idx, :
+            ] = rl_actions[:, 0]
+            self.env.base_env.scenario_name.world_state.nominal_action_steer[
+                self.env_idx, :
+            ] = rl_actions[:, 1]
+
         else:
             # na = torch.from_numpy(C["U_nom"].value).to(self.device)
-            self.env.base_env.scenario_name.nominal_action_vel = torch.tensor(
-                nom_v_steer[:, 0], device=self.device, dtype=torch.float32
-            ).unsqueeze(0)
-            self.env.base_env.scenario_name.nominal_action_steer = torch.tensor(
-                nom_v_steer[:, 1], device=self.device, dtype=torch.float32
-            ).unsqueeze(0)
+            self.env.base_env.scenario_name.world_state.nominal_action_vel[
+                self.env_idx, :
+            ] = torch.tensor(nom_v_steer[:, 0], device=self.device, dtype=torch.float32)
+            self.env.base_env.scenario_name.world_state.nominal_action_steer[
+                self.env_idx, :
+            ] = torch.tensor(nom_v_steer[:, 1], device=self.device, dtype=torch.float32)
 
     # =========================
     # Grouped multi-QP path
@@ -1981,20 +1989,20 @@ class CBFQP:
 
         # For visualization of nominal actions
         if self.nom_controller_type == "rl":
-            self.env.base_env.scenario_name.nominal_action_vel = rl_actions_all[
-                :, 0
-            ].unsqueeze(0)
-            self.env.base_env.scenario_name.nominal_action_steer = rl_actions_all[
-                :, 1
-            ].unsqueeze(0)
+            self.env.base_env.scenario_name.world_state.nominal_action_vel[
+                self.env_idx, :
+            ] = rl_actions_all[:, 0]
+            self.env.base_env.scenario_name.world_state.nominal_action_steer[
+                self.env_idx, :
+            ] = rl_actions_all[:, 1]
         else:
             na = torch.from_numpy(U_nom_all).to(self.device)
-            self.env.base_env.scenario_name.nominal_action_vel = (
-                states[0][3].new_tensor(na[:, 0])
-            ).unsqueeze(0)
-            self.env.base_env.scenario_name.nominal_action_steer = (
-                states[0][4].new_tensor(na[:, 1])
-            ).unsqueeze(0)
+            self.env.base_env.scenario_name.world_state.nominal_action_vel[
+                self.env_idx, :
+            ] = states[0][3].new_tensor(na[:, 0])
+            self.env.base_env.scenario_name.world_state.nominal_action_steer[
+                self.env_idx, :
+            ] = states[0][4].new_tensor(na[:, 1])
 
     # =========================
     # Shared kinematics and TTCBF coefficient builders

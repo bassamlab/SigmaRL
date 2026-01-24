@@ -262,6 +262,14 @@ class WorldStateRT(WorldState):
             dtype=torch.float32,
         )
 
+        # Initialize variables to store nominal actions (used only when CBF is applied)
+        self.nominal_action_vel = torch.zeros(
+            (self.batch_dim, self.n_agents), device=self.device, dtype=torch.float32
+        )
+        self.nominal_action_steer = torch.zeros(
+            (self.batch_dim, self.n_agents), device=self.device, dtype=torch.float32
+        )
+
     def _extend_map_related_ref_path(self):
         # Extended the reference path by several points along the last vector of the center line
         idx_broadcasting_entend = torch.arange(

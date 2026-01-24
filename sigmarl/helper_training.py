@@ -698,10 +698,6 @@ class SyncDataCollectorCustom(SyncDataCollector):
         tensordicts = []
         with set_exploration_type(self.exploration_type):
             for t in range(self.frames_per_batch):
-                if self.env.base_env.scenario_name.parameters.is_using_cbf_training:
-                    raise NotImplementedError(
-                        "Using CBF during training is not implemented."
-                    )
 
                 if (
                     self.init_random_frames is not None
@@ -710,6 +706,21 @@ class SyncDataCollectorCustom(SyncDataCollector):
                     self.env.rand_action(self._tensordict)
                 else:
                     if (
+                        self.env.base_env.scenario_name.parameters.is_using_cbf_training
+                        and self.env.base_env.scenario_name.i_iter >= 0
+                    ):
+                        # print("[INFO] Using CBF-constrained policy during training.")
+                        (
+                            time_rl,
+                            time_cbf,
+                            time_pseudo_dis,
+                            self._tensordict,
+                        ) = cbf_constrained_centralized_policy(
+                            self._tensordict,
+                            self.policy,
+                            self.cbf_controllers,
+                        )
+                    elif (
                         self.env.base_env.scenario_name.parameters.is_using_opponent_modeling
                     ):
                         opponent_modeling(

@@ -43,14 +43,17 @@ parameters = Parameters.from_json(config_file)
 parameters.scenario_type = scenario_type
 parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
 
-parameters.where_to_save = "outputs/marl_cbf_0/"
-parameters.n_iters = 1000
+# parameters.where_to_save = "outputs/marl_cbf_fixed_group_2_episode_100_rl/"
+parameters.where_to_save = "outputs/cbf_informed_marl_with_cbf_3_only_cbf_reward/"
+parameters.n_iters = 100
 parameters.random_seed = random_seed
-parameters.is_using_cbf_training = False
+parameters.is_using_cbf_training = True
+parameters.is_using_centralized_cbf = True
 parameters.is_using_cbf_testing = False
 parameters.is_using_prioritized_marl = False
-parameters.is_using_centralized_cbf = False
-
+parameters.is_continue_train = True
+parameters.is_load_model = True
+parameters.is_apply_cbf_action = True
 # ===============================
 # Run training
 # ===============================

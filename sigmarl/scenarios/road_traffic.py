@@ -161,6 +161,13 @@ class ScenarioRoadTraffic(BaseScenario):
             "penalty_time", 5 / r_p_normalizer
         )  # Penalty for losing time
 
+        penalty_deviate_from_cbf_vel = kwargs.pop(
+            "penalty_deviate_from_cbf_vel", -5 / r_p_normalizer
+        )
+        penalty_deviate_from_cbf_steer = kwargs.pop(
+            "penalty_deviate_from_cbf_steer", -5 / r_p_normalizer
+        )
+
         threshold_deviate_from_ref_path = kwargs.pop(
             "threshold_deviate_from_ref_path", (lane_width - self.agent_width) / 2
         )  # Use for penalizing of deviating from reference path
@@ -510,6 +517,12 @@ class ScenarioRoadTraffic(BaseScenario):
                 penalty_change_steering, device=device, dtype=torch.float32
             ),
             time=torch.tensor(penalty_time, device=device, dtype=torch.float32),
+            deviate_from_cbf_vel=torch.tensor(
+                penalty_deviate_from_cbf_vel, device=device, dtype=torch.float32
+            ),
+            deviate_from_cbf_steer=torch.tensor(
+                penalty_deviate_from_cbf_steer, device=device, dtype=torch.float32
+            ),
         )
 
         self.normalizers = Normalizers(
@@ -684,8 +697,6 @@ class ScenarioRoadTraffic(BaseScenario):
             self.map,
             self.world_state,
         )
-        # Store the CBF related observations
-        self.stored_cbf_observations = [None] * self.n_agents
 
     def _init_world(self, batch_dim: int, device: torch.device):
         # Make world
@@ -906,7 +917,7 @@ class ScenarioRoadTraffic(BaseScenario):
             / (agent.max_speed * self.world.dt)
             * self.rewards.progress
         )
-        self.rew += reward_movement  # Relative to the maximum possible movement
+        self.rew += reward_movement / 2  # TODO: Remove / 2
 
         ##################################################
         ## [reward] high velocity
@@ -921,7 +932,7 @@ class ScenarioRoadTraffic(BaseScenario):
         reward_vel = (
             factor_moving_direction * v_proj / agent.max_speed * self.rewards.higth_v
         )
-        self.rew += reward_vel
+        self.rew += reward_vel / 2  # TODO: Remove / 2
 
         ##################################################
         ## [reward] reach goal
@@ -930,33 +941,19 @@ class ScenarioRoadTraffic(BaseScenario):
             self.world_state.collisions.with_exit_segments[:, agent_index]
             * self.rewards.reach_goal
         )
-        self.rew += reward_goal
+        self.rew += reward_goal / 2  # TODO: Remove / 2
 
         ##################################################
-        ## [penalty] close to lanelet boundaries
+        ## [penalty/reward] time
         ##################################################
-        penalty_close_to_lanelets = (
-            exponential_decreasing_fcn(
-                x=self.world_state.distances.boundaries[:, agent_index],
-                x0=self.thresholds.near_boundary_low,
-                x1=self.thresholds.near_boundary_high,
-            )
-            * self.penalties.near_boundary
+        # Get time reward if moving in positive direction; otherwise get time penalty
+        time_reward = (
+            torch.where(v_proj > 0, 1, -1)
+            * agent.state.vel.norm(dim=-1)
+            / agent.max_speed
+            * self.penalties.time
         )
-        self.rew += penalty_close_to_lanelets
-
-        ##################################################
-        ## [penalty] close to other agents
-        ##################################################
-        mutual_distance_exp_fcn = exponential_decreasing_fcn(
-            x=self.world_state.distances.agents[:, agent_index, :],
-            x0=self.thresholds.near_other_agents_low,
-            x1=self.thresholds.near_other_agents_high,
-        )
-        penalty_close_to_agents = (
-            torch.sum(mutual_distance_exp_fcn, dim=1) * self.penalties.near_other_agents
-        )
-        self.rew += penalty_close_to_agents
+        self.rew += time_reward / 2  # TODO: Remove / 2
 
         ##################################################
         ## [penalty] deviating from reference path
@@ -965,7 +962,7 @@ class ScenarioRoadTraffic(BaseScenario):
             self.world_state.distances.ref_paths[:, agent_index]
             / self.thresholds.deviate_from_ref_path
             * self.penalties.deviate_from_ref_path
-        )
+        ) / 2  # TODO: Remove / 2
 
         ##################################################
         ## [penalty] changing steering too quick
@@ -992,39 +989,83 @@ class ScenarioRoadTraffic(BaseScenario):
         penalty_change_steering = (
             steering_change_reward_factor * self.penalties.change_steering
         )
-        self.rew += penalty_change_steering
-
-        # ##################################################
-        # ## [penalty] colliding with other agents
-        # ##################################################
-        is_collide_with_agents = self.world_state.collisions.with_agents[:, agent_index]
-        penalty_collide_other_agents = (
-            is_collide_with_agents.any(dim=-1) * self.penalties.collide_with_agents
-        )
-        self.rew += penalty_collide_other_agents
+        self.rew += penalty_change_steering / 2  # TODO: Remove / 2
 
         ##################################################
-        ## [penalty] colliding with lanelet boundaries
+        ## [penalty] deviating from CBF safe action
         ##################################################
-        is_collide_with_lanelets = self.world_state.collisions.with_lanelets[
-            :, agent_index
-        ]
-        penalty_collide_lanelet = (
-            is_collide_with_lanelets * self.penalties.collide_with_boundaries
-        )
-        self.rew += penalty_collide_lanelet
+        if (
+            hasattr(self, "i_iter")
+            and self.i_iter >= 0
+            and self.parameters.is_using_cbf_training
+        ):
+            # print("DEBUG CBF penalty calculation")
+            nominal_action_vel = self.world_state.nominal_action_vel[
+                :, agent_index
+            ]  # RL action that is modified by CBF
+            nominal_action_steer = self.world_state.nominal_action_steer[
+                :, agent_index
+            ]  # RL action that is modified by CBF
+            current_action_vel = agent.action.u[:, 0]
+            current_action_steer = agent.action.u[:, 1]
 
-        ##################################################
-        ## [penalty/reward] time
-        ##################################################
-        # Get time reward if moving in positive direction; otherwise get time penalty
-        time_reward = (
-            torch.where(v_proj > 0, 1, -1)
-            * agent.state.vel.norm(dim=-1)
-            / agent.max_speed
-            * self.penalties.time
-        )
-        self.rew += time_reward
+            cbf_vel_penalty = self.penalties.deviate_from_cbf_vel * (
+                (current_action_vel - nominal_action_vel).abs() / self.max_speed
+            )
+            cbf_steer_penalty = self.penalties.deviate_from_cbf_steer * (
+                (current_action_steer - nominal_action_steer).abs() / self.max_steering
+            )
+
+            self.rew += cbf_vel_penalty + cbf_steer_penalty
+        else:
+            ##################################################
+            ## [penalty] close to lanelet boundaries
+            ##################################################
+            penalty_close_to_lanelets = (
+                exponential_decreasing_fcn(
+                    x=self.world_state.distances.boundaries[:, agent_index],
+                    x0=self.thresholds.near_boundary_low,
+                    x1=self.thresholds.near_boundary_high,
+                )
+                * self.penalties.near_boundary
+            )
+            self.rew += penalty_close_to_lanelets
+
+            ##################################################
+            ## [penalty] close to other agents
+            ##################################################
+            mutual_distance_exp_fcn = exponential_decreasing_fcn(
+                x=self.world_state.distances.agents[:, agent_index, :],
+                x0=self.thresholds.near_other_agents_low,
+                x1=self.thresholds.near_other_agents_high,
+            )
+            penalty_close_to_agents = (
+                torch.sum(mutual_distance_exp_fcn, dim=1)
+                * self.penalties.near_other_agents
+            )
+            self.rew += penalty_close_to_agents
+
+            # ##################################################
+            # ## [penalty] colliding with other agents
+            # ##################################################
+            is_collide_with_agents = self.world_state.collisions.with_agents[
+                :, agent_index
+            ]
+            penalty_collide_other_agents = (
+                is_collide_with_agents.any(dim=-1) * self.penalties.collide_with_agents
+            )
+            self.rew += penalty_collide_other_agents
+
+            ##################################################
+            ## [penalty] colliding with lanelet boundaries
+            ##################################################
+            is_collide_with_lanelets = self.world_state.collisions.with_lanelets[
+                :, agent_index
+            ]
+            penalty_collide_lanelet = (
+                is_collide_with_lanelets * self.penalties.collide_with_boundaries
+            )
+            self.rew += penalty_collide_lanelet
 
         if agent_index == (self.n_agents - 1):  # Avoid repeated updating
             state_add = torch.cat(
@@ -1254,43 +1295,6 @@ class ScenarioRoadTraffic(BaseScenario):
         # Observation of the policy in the priority-assignment module
         prio_obs = self.stored_observations[agent_index].clone()
 
-        # Observation of the policy in the CBF module, which includes:
-        # self-observation: speed
-        # self-observation: distance to left lane boundary
-        # self-observation: distance to right lane boundary
-        # others-observation: vertices of surrounding, observable agents
-        # others-observation: velocities of surrounding, observable agents
-        # others-observation: jaw angles of surrounding, observable agents
-        # others-observation: short-term reference path of surrounding, observable agents
-        if (
-            self.parameters.is_using_cbf_training
-            and not self.parameters.is_using_centralized_cbf
-        ):
-            cbf_obs = F.pad(
-                self.stored_cbf_observations[agent_index].clone(),
-                (0, self.parameters.n_nearing_agents_observed * AGENTS["n_actions"]),
-            )
-        elif (
-            self.parameters.is_using_cbf_training
-            and self.parameters.is_using_centralized_cbf
-        ):
-            cbf_obs = self.stored_cbf_observations[agent_index].clone()
-
-        # cbf_observation: self_observation + others_observation
-        # self_observation: position x
-        # self_observation: position y
-        # self_observation: rotation
-        # self_observation: velocity
-        # self_observation: steering
-        # self_observation: current lanelet ID
-        # self_observation: current path ID
-        # others_observation: position x  of surrounding, observable agents
-        # others_observation: position y  of surrounding, observable agents
-        # others_observation: rotation of surrounding, observable agents
-        # others_observation: velocity of surrounding, observable agents
-        # others_observation: steering of surrounding, observable agents
-        # others_observation: bool value 0: observable, 1: non observable
-
         if self.parameters.is_using_cbf_testing:
             if is_action_empty:
                 cbf_action_vel = self.constants.empty_action_vel[:, agent_index]
@@ -1302,8 +1306,10 @@ class ScenarioRoadTraffic(BaseScenario):
             else:
                 cbf_action_vel = agent.action.u[:, 0]
                 cbf_action_steer = agent.action.u[:, 1]
-                nominal_action_vel = self.nominal_action_vel[:, agent_index]
-                nominal_action_steer = self.nominal_action_steer[:, agent_index]
+                nominal_action_vel = self.world_state.nominal_action_vel[:, agent_index]
+                nominal_action_steer = self.world_state.nominal_action_steer[
+                    :, agent_index
+                ]
         else:
             # Do not use CBF
             cbf_action_vel = self.constants.empty_action_vel[:, agent_index]
@@ -1386,11 +1392,6 @@ class ScenarioRoadTraffic(BaseScenario):
             **(
                 {"priority_observation": prio_obs}
                 if self.parameters.is_using_prioritized_marl
-                else {}
-            ),
-            **(
-                {"cbf_observation": cbf_obs}
-                if self.parameters.is_using_cbf_training
                 else {}
             ),
         }
@@ -1793,8 +1794,10 @@ class ScenarioRoadTraffic(BaseScenario):
                 cbf_action_vel = self.world.agents[i].action.u[env_index, 0]
                 cbf_action_steering = self.world.agents[i].action.u[env_index, 1]
 
-                nominal_action_vel = self.nominal_action_vel[env_index, i]
-                nominal_action_steer = self.nominal_action_steer[env_index, i]
+                nominal_action_vel = self.world_state.nominal_action_vel[env_index, i]
+                nominal_action_steer = self.world_state.nominal_action_steer[
+                    env_index, i
+                ]
                 # Render directional arrow for CBF conrrected action
                 # Mainline of the arrow
                 cbf_line = rendering.Line(
