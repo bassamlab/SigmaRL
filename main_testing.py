@@ -82,11 +82,11 @@ with open(path_to_json_file, "r") as file:
     parameters.n_agents = 4
     parameters.dt = 0.1
 
-    parameters.is_save_simulation_video = True
+    parameters.is_save_simulation_video = False
     parameters.is_visualize_short_term_path = True
     parameters.is_visualize_lane_boundary = False
     parameters.is_visualize_extra_info = True
-    parameters.is_using_cbf_testing = False
+    parameters.is_using_cbf_testing = True
     parameters.is_using_cbf_training = False
     parameters.is_using_prioritized_marl = False
     parameters.is_using_centralized_cbf = True
@@ -98,6 +98,7 @@ with open(path_to_json_file, "r") as file:
     parameters.adaptive_lambda = True
     parameters.random_seed = random_seed
     parameters.is_continue_train = False
+    parameters.is_solve_qp = False
 
     (
         env,

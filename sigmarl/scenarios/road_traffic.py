@@ -496,6 +496,15 @@ class ScenarioRoadTraffic(BaseScenario):
             ),
         )
         self.rew = torch.zeros(batch_dim, device=device, dtype=torch.float32)
+        self.rew_left_bound = torch.zeros(
+            (batch_dim, self.n_agents), device=device, dtype=torch.float32
+        )
+        self.rew_right_bound = torch.zeros(
+            (batch_dim, self.n_agents), device=device, dtype=torch.float32
+        )
+        self.rew_agent_pair = torch.zeros(
+            (batch_dim, self.n_agents), device=device, dtype=torch.float32
+        )
 
         self.penalties = Penalties(
             deviate_from_ref_path=torch.tensor(
@@ -917,7 +926,7 @@ class ScenarioRoadTraffic(BaseScenario):
             / (agent.max_speed * self.world.dt)
             * self.rewards.progress
         )
-        self.rew += reward_movement / 2  # TODO: Remove / 2
+        self.rew += reward_movement  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [reward] high velocity
@@ -932,7 +941,7 @@ class ScenarioRoadTraffic(BaseScenario):
         reward_vel = (
             factor_moving_direction * v_proj / agent.max_speed * self.rewards.higth_v
         )
-        self.rew += reward_vel / 2  # TODO: Remove / 2
+        self.rew += reward_vel  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [reward] reach goal
@@ -941,7 +950,7 @@ class ScenarioRoadTraffic(BaseScenario):
             self.world_state.collisions.with_exit_segments[:, agent_index]
             * self.rewards.reach_goal
         )
-        self.rew += reward_goal / 2  # TODO: Remove / 2
+        self.rew += reward_goal  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [penalty/reward] time
@@ -953,7 +962,7 @@ class ScenarioRoadTraffic(BaseScenario):
             / agent.max_speed
             * self.penalties.time
         )
-        self.rew += time_reward / 2  # TODO: Remove / 2
+        self.rew += time_reward  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [penalty] deviating from reference path
@@ -962,7 +971,7 @@ class ScenarioRoadTraffic(BaseScenario):
             self.world_state.distances.ref_paths[:, agent_index]
             / self.thresholds.deviate_from_ref_path
             * self.penalties.deviate_from_ref_path
-        ) / 2  # TODO: Remove / 2
+        )  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [penalty] changing steering too quick
@@ -989,34 +998,41 @@ class ScenarioRoadTraffic(BaseScenario):
         penalty_change_steering = (
             steering_change_reward_factor * self.penalties.change_steering
         )
-        self.rew += penalty_change_steering / 2  # TODO: Remove / 2
+        self.rew += penalty_change_steering  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [penalty] deviating from CBF safe action
         ##################################################
-        if (
-            hasattr(self, "i_iter")
-            and self.i_iter >= 0
-            and self.parameters.is_using_cbf_training
-        ):
-            # print("DEBUG CBF penalty calculation")
-            nominal_action_vel = self.world_state.nominal_action_vel[
-                :, agent_index
-            ]  # RL action that is modified by CBF
-            nominal_action_steer = self.world_state.nominal_action_steer[
-                :, agent_index
-            ]  # RL action that is modified by CBF
-            current_action_vel = agent.action.u[:, 0]
-            current_action_steer = agent.action.u[:, 1]
+        if self.parameters.is_using_cbf_training:
+            if self.parameters.is_solve_qp:
+                # print("DEBUG CBF penalty calculation")
+                nominal_action_vel = self.world_state.nominal_action_vel[
+                    :, agent_index
+                ]  # RL action that is modified by CBF
+                nominal_action_steer = self.world_state.nominal_action_steer[
+                    :, agent_index
+                ]  # RL action that is modified by CBF
+                current_action_vel = agent.action.u[:, 0]
+                current_action_steer = agent.action.u[:, 1]
 
-            cbf_vel_penalty = self.penalties.deviate_from_cbf_vel * (
-                (current_action_vel - nominal_action_vel).abs() / self.max_speed
-            )
-            cbf_steer_penalty = self.penalties.deviate_from_cbf_steer * (
-                (current_action_steer - nominal_action_steer).abs() / self.max_steering
-            )
+                cbf_vel_penalty = self.penalties.deviate_from_cbf_vel * (
+                    (current_action_vel - nominal_action_vel).abs() / self.max_speed
+                )
+                cbf_steer_penalty = self.penalties.deviate_from_cbf_steer * (
+                    (current_action_steer - nominal_action_steer).abs()
+                    / self.max_steering
+                )
 
-            self.rew += cbf_vel_penalty + cbf_steer_penalty
+                self.rew += cbf_vel_penalty + cbf_steer_penalty
+            else:
+                # self.rew += self.rew_left_bound[:, agent_index]
+                # self.rew += self.rew_right_bound[:, agent_index]
+                # self.rew += self.rew_agent_pair[:, agent_index]
+                self.rew += (
+                    self.rew_left_bound[:, agent_index]
+                    + self.rew_right_bound[:, agent_index]
+                    + self.rew_agent_pair[:, agent_index]
+                ) / 3
         else:
             ##################################################
             ## [penalty] close to lanelet boundaries
@@ -1244,18 +1260,6 @@ class ScenarioRoadTraffic(BaseScenario):
             assert not (
                 is_any_agents_leaving_exit_segment & (self.timer.step == 0)
             ).any()
-
-        # Logs
-        # if is_collision_with_agents.any():
-        #     print("Collide with other agents.")
-        # if is_collision_with_lanelets.any():
-        #     print("Collide with lanelet.")
-        # if is_leaving_entry_segment.any():
-        #     print("At least one agent is leaving its entry segment.")
-        # if is_max_steps_reached.any():
-        #     print("The number of the maximum steps is reached.")
-        # if is_any_agents_leaving_exit_segment.any():
-        #     print("At least one agent is leaving its exit segment.")
 
         return is_done
 

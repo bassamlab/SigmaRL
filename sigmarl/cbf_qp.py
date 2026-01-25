@@ -358,7 +358,8 @@ class CBFQP:
         if self.parameters.is_grouping_agents:
             self.build_grouped_cbf_qps()
         else:
-            self.build_centralized_cbf_qp()
+            if self.parameters.is_solve_qp:
+                self.build_centralized_cbf_qp()
 
         self.cbf_solving_t = []
 
@@ -370,7 +371,8 @@ class CBFQP:
         self.dt_taylor = float(self.r * self.dt)
         self.dx = 0.02
         self.dy = 0.02
-        self.adaptive_lambda = True
+
+        self.adaptive_lambda = True if self.parameters.is_solve_qp else False
 
         self.length = AGENTS["length"]
         self.width = AGENTS["width"]
@@ -791,6 +793,11 @@ class CBFQP:
             for i in range(n)
         ]
 
+        # keep explicit handles to CBF safety constraints (lane + pairwise)
+        cbf_lane_cons_L = [[None for _ in range(n_circles)] for _ in range(n)]
+        cbf_lane_cons_R = [[None for _ in range(n_circles)] for _ in range(n)]
+        cbf_pair_cons = {}  # (i, j, ci, cj) -> cvxpy.Constraint
+
         # Adaptive lambda variables for CBF constraints
         if self.adaptive_lambda:
             A_L = [[cp.Parameter((1, 2)) for _ in range(n_circles)] for _ in range(n)]
@@ -808,18 +815,23 @@ class CBFQP:
                 cons += [lambda_pair >= 0, lambda_pair <= 1]
             for i in range(n):
                 for c in range(n_circles):
-                    cons += [
+                    cL = (
                         A_L[i][c] @ u_var[i, :]
                         + b0_L[i][c]
                         + h_L[i][c] * lambda_bound[idx_bound(i, c, 0)]
                         >= -s_bound[idx_bound(i, c, 0)]
-                    ]
-                    cons += [
+                    )
+                    cR = (
                         A_R[i][c] @ u_var[i, :]
                         + b0_R[i][c]
                         + h_R[i][c] * lambda_bound[idx_bound(i, c, 1)]
                         >= -s_bound[idx_bound(i, c, 1)]
-                    ]
+                    )
+
+                    cons += [cL, cR]
+                    cbf_lane_cons_L[i][c] = cL
+                    cbf_lane_cons_R[i][c] = cR
+
         else:
             A_L = [[cp.Parameter((1, 2)) for _ in range(n_circles)] for _ in range(n)]
             b_L = [[cp.Parameter((1,)) for _ in range(n_circles)] for _ in range(n)]
@@ -827,15 +839,19 @@ class CBFQP:
             b_R = [[cp.Parameter((1,)) for _ in range(n_circles)] for _ in range(n)]
             for i in range(n):
                 for c in range(n_circles):
-                    cons += [
+                    cL = (
                         A_L[i][c] @ u_var[i, :] + b_L[i][c]
                         >= -s_bound[idx_bound(i, c, 0)]
-                    ]
-                    cons += [
+                    )
+                    cR = (
                         A_R[i][c] @ u_var[i, :] + b_R[i][c]
                         >= -s_bound[idx_bound(i, c, 1)]
-                    ]
+                    )
+                    cons += [cL, cR]
+                    cbf_lane_cons_L[i][c] = cL
+                    cbf_lane_cons_R[i][c] = cR
 
+        # Vehicle pairwise CBF constraints
         if self.adaptive_lambda:
             Aij_i = {}
             Aij_j = {}
@@ -850,22 +866,25 @@ class CBFQP:
                             b0ij[(i, j, ci, cj)] = cp.Parameter((1,))
                             hij[(i, j, ci, cj)] = cp.Parameter((1,))
                             if s_pair is None:
-                                cons += [
+                                cP = (
                                     Aij_i[(i, j, ci, cj)] @ u_var[i, :]
                                     + Aij_j[(i, j, ci, cj)] @ u_var[j, :]
                                     + b0ij[(i, j, ci, cj)]
                                     + hij[(i, j, ci, cj)] * 1.0
                                     >= 0
-                                ]
+                                )
                             else:
-                                cons += [
+                                cP = (
                                     Aij_i[(i, j, ci, cj)] @ u_var[i, :]
                                     + Aij_j[(i, j, ci, cj)] @ u_var[j, :]
                                     + b0ij[(i, j, ci, cj)]
                                     + hij[(i, j, ci, cj)]
                                     * lambda_pair[idx_pair(i, j, ci, cj)]
                                     >= -s_pair[idx_pair(i, j, ci, cj)]
-                                ]
+                                )
+                            cons.append(cP)
+                            cbf_pair_cons[(i, j, ci, cj)] = cP
+
         else:
             Aij_i = {}
             Aij_j = {}
@@ -878,32 +897,22 @@ class CBFQP:
                             Aij_j[(i, j, ci, cj)] = cp.Parameter((1, 2))
                             bij[(i, j, ci, cj)] = cp.Parameter((1,))
                             if s_pair is None:
-                                cons += [
+                                cP = (
                                     Aij_i[(i, j, ci, cj)] @ u_var[i, :]
                                     + Aij_j[(i, j, ci, cj)] @ u_var[j, :]
                                     + bij[(i, j, ci, cj)]
                                     >= 0
-                                ]
+                                )
                             else:
-                                cons += [
+                                cP = (
                                     Aij_i[(i, j, ci, cj)] @ u_var[i, :]
                                     + Aij_j[(i, j, ci, cj)] @ u_var[j, :]
                                     + bij[(i, j, ci, cj)]
                                     >= -s_pair[idx_pair(i, j, ci, cj)]
-                                ]
+                                )
 
-        # Objective
-
-        # nom_weight = np.diag([1.0, 1.0])
-
-        # agent_weights = np.linspace(1.0, 2.0, self.parameters.n_agents)
-
-        # blocks = [w * nom_weight for w in agent_weights]
-        # Q = block_diag(*blocks)  # shape (20, 20)
-
-        # # Flatten variables
-        # diff = cp.reshape(u_var - U_nom, (2*self.parameters.n_agents,))
-        # tracking = cp.quad_form(diff, Q)
+                            cons.append(cP)
+                            cbf_pair_cons[(i, j, ci, cj)] = cP
 
         tracking = cp.sum_squares((u_var - U_nom) @ self.nom_weight)
 
@@ -955,6 +964,9 @@ class CBFQP:
                 lambda_pair=lambda_pair,
                 idx_pair=idx_pair,
                 pair_count=pair_count,
+                cbf_lane_cons_L=cbf_lane_cons_L,
+                cbf_lane_cons_R=cbf_lane_cons_R,
+                cbf_pair_cons=cbf_pair_cons,
                 prob=prob,
             )
         else:
@@ -980,6 +992,9 @@ class CBFQP:
                 bij=bij,
                 idx_pair=idx_pair,
                 pair_count=pair_count,
+                cbf_lane_cons_L=cbf_lane_cons_L,
+                cbf_lane_cons_R=cbf_lane_cons_R,
+                cbf_pair_cons=cbf_pair_cons,
                 prob=prob,
             )
 
@@ -1194,96 +1209,337 @@ class CBFQP:
         if C["u_var"].value.shape != C["u_var"].shape:
             C["u_var"].value = np.zeros(C["u_var"].shape)
 
-        # Solve
-        prob: cp.Problem = C["prob"]
+        # TODO Remove: instead of solving CBF, we check if the RL actions violate the QP constraints
+        if self.parameters.is_solve_qp:
+            # Solve
+            prob: cp.Problem = C["prob"]
 
-        solved = False
-        try:
-            prob.solve(
-                solver=cp.OSQP,
-                warm_start=True,
-                max_iter=20000,
-                eps_abs=1e-5,
-                eps_rel=1e-5,
-                polish=True,
-                adaptive_rho=True,
-            )
-
-        except cp.SolverError:
-            print("[WARN] OSQP solver failed, trying CLARABEL...")
+            solved = False
             try:
                 prob.solve(
-                    solver=cp.CLARABEL,
+                    solver=cp.OSQP,
                     warm_start=True,
-                    tol_feas=1e-8,
-                    tol_gap_abs=1e-8,
-                    tol_gap_rel=1e-8,
+                    max_iter=20000,
+                    eps_abs=1e-5,
+                    eps_rel=1e-5,
+                    polish=True,
+                    adaptive_rho=True,
                 )
+
             except cp.SolverError:
-                print("[WARN] CLARABEL solver failed, trying SCS...")
+                print("[WARN] OSQP solver failed, trying CLARABEL...")
                 try:
                     prob.solve(
-                        solver=cp.SCS,
+                        solver=cp.CLARABEL,
                         warm_start=True,
-                        max_iters=100000,
-                        eps=1e-4,
+                        tol_feas=1e-8,
+                        tol_gap_abs=1e-8,
+                        tol_gap_rel=1e-8,
                     )
                 except cp.SolverError:
-                    print(
-                        "[ERROR] SCS solver also failed. Using nominal actions as fallback."
+                    print("[WARN] CLARABEL solver failed, trying SCS...")
+                    try:
+                        prob.solve(
+                            solver=cp.SCS,
+                            warm_start=True,
+                            max_iters=100000,
+                            eps=1e-4,
+                        )
+                    except cp.SolverError:
+                        print(
+                            "[ERROR] SCS solver also failed. Using nominal actions as fallback."
+                        )
+
+            solved = (
+                prob.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]
+                and C["u_var"].value is not None
+                and np.isfinite(C["u_var"].value).all()
+            )
+
+            if self.env.scenario_name.parameters.is_apply_cbf_action:
+                # Only replace RL actions with CBF actions if is_apply_cbf_action is True
+                if solved:
+                    for i in range(n):
+                        s_i = states[i]
+                        actions_v_steer_safe = self.u_to_rl_action(
+                            C["u_var"].value[i, :], s_i[3], s_i[4]
+                        ).detach()
+                        tensordict[("agents", "action")][
+                            self.env_idx, i
+                        ] = actions_v_steer_safe
+                else:
+                    # Fallback: use nominal actions
+                    for i in range(n):
+                        s_i = states[i]
+                        actions_v_steer_nom = self.u_to_rl_action(
+                            nom_acc_omega[i, :], s_i[3], s_i[4]
+                        ).detach()
+                        tensordict[("agents", "action")][
+                            self.env_idx, i
+                        ] = actions_v_steer_nom
+                    self.hist.evt.append("QP-INF")
+
+            st = prob.solver_stats
+            if hasattr(st, "solve_time"):
+                self.hist.qp_solving_t.append(st.solve_time)
+                # print(f"[INFO] Centralized QP solving time: {st.solve_time * 1000:.2f} ms. Over all time steps: {np.mean(self.hist.qp_solving_t)*1000:.2f} ms.")
+            if hasattr(st, "num_iters"):
+                self.hist.qp_solving_iter.append(st.num_iters)
+
+            # if self.adaptive_lambda and C["lambda_pair"] is not None:
+            #     print(f"lambda_bound mean {np.mean(C['lambda_bound'].value):.4f}; max {np.max(C['lambda_bound'].value):.4f}; min {np.min(C['lambda_bound'].value):.4f}")
+            #     print(f"lambda_pair mean {np.mean(C['lambda_pair'].value):.4f}; max {np.max(C['lambda_pair'].value):.4f}; min {np.min(C['lambda_pair'].value):.4f}")
+
+            # For visualization of nominal actions
+            if self.env.scenario_name.parameters.is_apply_cbf_action:
+                if self.nom_controller_type == "rl":
+                    self.env.base_env.scenario_name.world_state.nominal_action_vel[
+                        self.env_idx, :
+                    ] = rl_actions[:, 0]
+                    self.env.base_env.scenario_name.world_state.nominal_action_steer[
+                        self.env_idx, :
+                    ] = rl_actions[:, 1]
+                else:
+                    # na = torch.from_numpy(C["U_nom"].value).to(self.device)
+                    self.env.base_env.scenario_name.world_state.nominal_action_vel[
+                        self.env_idx, :
+                    ] = torch.tensor(
+                        nom_v_steer[:, 0], device=self.device, dtype=torch.float32
+                    )
+                    self.env.base_env.scenario_name.world_state.nominal_action_steer[
+                        self.env_idx, :
+                    ] = torch.tensor(
+                        nom_v_steer[:, 1], device=self.device, dtype=torch.float32
+                    )
+            else:
+                # Store the CBF actions
+                if solved:
+                    for i in range(n):
+                        s_i = states[i]
+                        actions_v_steer_safe = self.u_to_rl_action(
+                            C["u_var"].value[i, :], s_i[3], s_i[4]
+                        ).detach()
+
+                        self.env.base_env.scenario_name.world_state.nominal_action_vel[
+                            self.env_idx, i
+                        ] = actions_v_steer_safe[0]
+                        self.env.base_env.scenario_name.world_state.nominal_action_steer[
+                            self.env_idx, i
+                        ] = actions_v_steer_safe[
+                            1
+                        ]
+                else:
+                    # Fallback: use nominal actions
+                    for i in range(n):
+                        s_i = states[i]
+                        actions_v_steer_nom = self.u_to_rl_action(
+                            nom_acc_omega[i, :], s_i[3], s_i[4]
+                        ).detach()
+
+                        self.env.base_env.scenario_name.world_state.nominal_action_vel[
+                            self.env_idx, i
+                        ] = actions_v_steer_nom[0]
+                        self.env.base_env.scenario_name.world_state.nominal_action_steer[
+                            self.env_idx, i
+                        ] = actions_v_steer_nom[
+                            1
+                        ]
+
+                    self.hist.evt.append("QP-INF")
+        else:
+            if self.adaptive_lambda:
+                # Ensure lambda variables have values before reading constraint.expr.value
+                if C["lambda_bound"].value is None:
+                    C["lambda_bound"].value = np.full(
+                        C["lambda_bound"].shape,
+                        float(self.lambda_ttcbf),
+                        dtype=np.float64,
+                    )
+                if (
+                    C.get("lambda_pair", None) is not None
+                    and C["lambda_pair"].value is None
+                ):
+                    C["lambda_pair"].value = np.full(
+                        C["lambda_pair"].shape,
+                        float(self.lambda_ttcbf),
+                        dtype=np.float64,
                     )
 
-        solved = (
-            prob.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]
-            and C["u_var"].value is not None
-            and np.isfinite(C["u_var"].value).all()
+            # Read constraint.expr.value for CBF constraints only (lane + pairwise).
+            self.nominal_cbf_constraint_values = (
+                self._get_nominal_cbf_constraint_values(tol=1e-9)
+            )
+
+            r_left, r_right, r_pair = self.compute_nominal_cbf_violation_rewards()
+            self.env.base_env.scenario_name.rew_left_bound[
+                self.env_idx, :
+            ] = torch.tensor(r_left, device=self.device, dtype=torch.float32)
+            self.env.base_env.scenario_name.rew_right_bound[
+                self.env_idx, :
+            ] = torch.tensor(r_right, device=self.device, dtype=torch.float32)
+            self.env.base_env.scenario_name.rew_agent_pair[
+                self.env_idx, :
+            ] = torch.tensor(r_pair, device=self.device, dtype=torch.float32)
+
+    def _get_nominal_cbf_constraint_values(self, tol: float = 1e-9):
+        """
+        Evaluate CBF constraint residuals at the current variable values
+
+        Returns:
+            A dict with:
+            - lane_L_expr[i, c], lane_R_expr[i, c]: constraint.expr.value (float)
+            - pair_expr[(i, j, ci, cj)]: constraint.expr.value (float)
+            - satisfied_* booleans using expr <= tol convention (CVXPY inequality canonical form)
+        """
+
+        if self.parameters.is_grouping_agents:
+            raise ValueError("Not implemented for grouped QPs")
+
+        C = self._qp_cache
+        n, n_circles = C["n"], C["n_circles"]
+
+        def _to_float(v):
+            if v is None:
+                return np.nan
+            return float(np.asarray(v).squeeze())
+
+        lane_L_expr = np.zeros((n, n_circles), dtype=np.float64)
+        lane_R_expr = np.zeros((n, n_circles), dtype=np.float64)
+        lane_L_ok = np.zeros((n, n_circles), dtype=bool)
+        lane_R_ok = np.zeros((n, n_circles), dtype=bool)
+
+        # Lane CBFs
+        for i in range(n):
+            for c in range(n_circles):
+                cL = C["cbf_lane_cons_L"][i][c]
+                cR = C["cbf_lane_cons_R"][i][c]
+
+                vL = _to_float(cL.expr.value)
+                vR = _to_float(cR.expr.value)
+
+                lane_L_expr[i, c] = vL
+                lane_R_expr[i, c] = vR
+
+                # CVXPY stores inequalities in canonical form expr <= 0.
+                # So "satisfied" means expr.value <= tol.
+                lane_L_ok[i, c] = vL <= tol
+                lane_R_ok[i, c] = vR <= tol
+
+        # Pairwise CBFs
+        pair_expr = {}
+        pair_ok = {}
+        for key, cP in C["cbf_pair_cons"].items():
+            vP = _to_float(cP.expr.value)
+            pair_expr[key] = vP
+            pair_ok[key] = vP <= tol
+
+        return dict(
+            lane_L_expr=lane_L_expr,
+            lane_R_expr=lane_R_expr,
+            lane_L_ok=lane_L_ok,
+            lane_R_ok=lane_R_ok,
+            pair_expr=pair_expr,
+            pair_ok=pair_ok,
         )
 
-        if solved:
-            for i in range(n):
-                s_i = states[i]
-                actions_v_steer_safe = self.u_to_rl_action(
-                    C["u_var"].value[i, :], s_i[3], s_i[4]
-                ).detach()
-                tensordict[("agents", "action")][self.env_idx, i] = actions_v_steer_safe
+    def compute_nominal_cbf_violation_rewards(
+        self,
+        cbf_values: dict | None = None,
+        agg: str = "max",
+        eps: float = 1e-9,
+    ):
+        """
+        Compute per-agent reward signals from CBF constraint violations at the nominal action.
+
+        Reward definition (per signal):
+        - If a constraint is violated: reward is negative.
+        - More violation => more negative.
+        - If not violated: reward is exactly 0.
+        - Normalized to roughly [-1, 0] using a data-driven scale (worst violation in this step).
+
+        Inputs:
+        cbf_values:
+            Dict returned by your nominal CBF evaluation, e.g. self.nominal_cbf_constraint_values.
+            If None, this function uses self.nominal_cbf_constraint_values.
+        agg:
+            How to aggregate multiple violations per agent:
+            - "max": uses the worst (largest) violation (recommended; insensitive to #constraints)
+            - "sum": uses the sum of violations
+        eps:
+            Numerical epsilon.
+
+        Returns:
+        r_left, r_right, r_pair:
+            Three Python lists, each of length n_agents, with values in [-1, 0].
+        """
+        if cbf_values is None:
+            cbf_values = self.nominal_cbf_constraint_values
+
+        lane_L_expr = np.asarray(
+            cbf_values["lane_L_expr"], dtype=np.float64
+        )  # (n, n_circles)
+        lane_R_expr = np.asarray(
+            cbf_values["lane_R_expr"], dtype=np.float64
+        )  # (n, n_circles)
+        pair_expr = cbf_values[
+            "pair_expr"
+        ]  # dict keyed by (i, j, ci, cj) -> scalar residual
+
+        n = lane_L_expr.shape[0]
+
+        # Helper: positive part, because expr > 0 indicates violation in CVXPY canonical form.
+        def pos(x):
+            return np.maximum(x, 0.0)
+
+        # ---------- Lane violation magnitudes per agent ----------
+        vL = pos(lane_L_expr)  # (n, n_circles)
+        vR = pos(lane_R_expr)  # (n, n_circles)
+
+        if agg == "sum":
+            vL_agent = np.sum(vL, axis=1)  # (n,)
+            vR_agent = np.sum(vR, axis=1)  # (n,)
+        elif agg == "max":
+            vL_agent = np.max(vL, axis=1)  # (n,)
+            vR_agent = np.max(vR, axis=1)  # (n,)
         else:
-            # Fallback: use nominal actions
-            for i in range(n):
-                s_i = states[i]
-                actions_v_steer_nom = self.u_to_rl_action(
-                    nom_acc_omega[i, :], s_i[3], s_i[4]
-                ).detach()
-                tensordict[("agents", "action")][self.env_idx, i] = actions_v_steer_nom
-            self.hist.evt.append("QP-INF")
+            raise ValueError(f"Unknown agg='{agg}'. Use 'max' or 'sum'.")
 
-        st = prob.solver_stats
-        if hasattr(st, "solve_time"):
-            self.hist.qp_solving_t.append(st.solve_time)
-            # print(f"[INFO] Centralized QP solving time: {st.solve_time * 1000:.2f} ms. Over all time steps: {np.mean(self.hist.qp_solving_t)*1000:.2f} ms.")
-        if hasattr(st, "num_iters"):
-            self.hist.qp_solving_iter.append(st.num_iters)
+        # ---------- Pairwise violation magnitudes per agent ----------
+        vP_agent = np.zeros((n,), dtype=np.float64)
 
-        # if self.adaptive_lambda and C["lambda_pair"] is not None:
-        #     print(f"lambda_bound mean {np.mean(C['lambda_bound'].value):.4f}; max {np.max(C['lambda_bound'].value):.4f}; min {np.min(C['lambda_bound'].value):.4f}")
-        #     print(f"lambda_pair mean {np.mean(C['lambda_pair'].value):.4f}; max {np.max(C['lambda_pair'].value):.4f}; min {np.min(C['lambda_pair'].value):.4f}")
+        # Accumulate violation to both agents involved in each pairwise constraint
+        # Key format: (i, j, ci, cj)
+        for (i, j, ci, cj), expr_val in pair_expr.items():
+            v = max(
+                float(expr_val), 0.0
+            )  # violation magnitude for this specific circle-circle constraint
+            if agg == "sum":
+                vP_agent[i] += v
+                vP_agent[j] += v
+            else:  # agg == "max"
+                vP_agent[i] = max(vP_agent[i], v)
+                vP_agent[j] = max(vP_agent[j], v)
 
-        # For visualization of nominal actions
-        if self.nom_controller_type == "rl":
-            self.env.base_env.scenario_name.world_state.nominal_action_vel[
-                self.env_idx, :
-            ] = rl_actions[:, 0]
-            self.env.base_env.scenario_name.world_state.nominal_action_steer[
-                self.env_idx, :
-            ] = rl_actions[:, 1]
+        # ---------- Normalization (step-wise, per signal) ----------
+        # We normalize each reward channel by its maximum violation in this step, so outputs are in [-1, 0].
+        # If there are no violations in a channel, scale becomes ~0 and we return exactly zeros.
+        scale_L = float(np.max(vL_agent)) + eps
+        scale_R = float(np.max(vR_agent)) + eps
+        scale_P = float(np.max(vP_agent)) + eps
 
-        else:
-            # na = torch.from_numpy(C["U_nom"].value).to(self.device)
-            self.env.base_env.scenario_name.world_state.nominal_action_vel[
-                self.env_idx, :
-            ] = torch.tensor(nom_v_steer[:, 0], device=self.device, dtype=torch.float32)
-            self.env.base_env.scenario_name.world_state.nominal_action_steer[
-                self.env_idx, :
-            ] = torch.tensor(nom_v_steer[:, 1], device=self.device, dtype=torch.float32)
+        # Convert violation magnitudes into rewards:
+        #   - No violation => 0
+        #   - Violation v => negative, with worst violation near -1
+        def to_reward(v_agent, scale):
+            v_norm = v_agent / scale
+            v_norm = np.clip(v_norm, 0.0, 1.0)  # bounded normalization
+            return (-v_norm).tolist()
+
+        r_left = to_reward(vL_agent, scale_L)
+        r_right = to_reward(vR_agent, scale_R)
+        r_pair = to_reward(vP_agent, scale_P)
+
+        return r_left, r_right, r_pair
 
     # =========================
     # Grouped multi-QP path
@@ -2266,4 +2522,284 @@ class CBFQP:
         if self.parameters.is_grouping_agents:
             self.update_grouped_cbf_qps(tensordict)
         else:
-            self.update_centralized_cbf_qp(tensordict)
+            if self.parameters.is_solve_qp:
+                self.update_centralized_cbf_qp(tensordict)
+            else:
+                cbf_margins = self.compute_nominal_cbf_constraint_margins(tensordict)
+                (
+                    r_left,
+                    r_right,
+                    r_pair,
+                ) = self.compute_cbf_violation_rewards_from_margins(cbf_margins)
+                self.env.base_env.scenario_name.rew_left_bound[
+                    self.env_idx, :
+                ] = torch.tensor(r_left, device=self.device, dtype=torch.float32)
+                self.env.base_env.scenario_name.rew_right_bound[
+                    self.env_idx, :
+                ] = torch.tensor(r_right, device=self.device, dtype=torch.float32)
+                self.env.base_env.scenario_name.rew_agent_pair[
+                    self.env_idx, :
+                ] = torch.tensor(r_pair, device=self.device, dtype=torch.float32)
+
+    def compute_nominal_cbf_constraint_margins(
+        self, tensordict, agg_pair_keys: bool = False
+    ):
+        """
+        Compute nominal CBF constraint *margins* without CVXPY.
+
+        Margin convention:
+        - Each CBF inequality is written as g(u) >= 0 (with slack assumed 0 here).
+        - If g >= 0: satisfied
+        - If g < 0: violated, with violation magnitude = -g
+
+        Returns:
+        dict with:
+            lane_L_margin: (n, n_circles) margins for left boundary CBFs
+            lane_R_margin: (n, n_circles) margins for right boundary CBFs
+            pair_margin: dict (i, j, ci, cj) -> margin (float)
+        """
+        n = int(self.parameters.n_agents)
+        n_circles = int(self.parameters.n_circles_approximate_vehicle)
+
+        agents: list[Vehicle] = self.env.base_env.scenario_name.world.agents
+        path_ids_t = tensordict["agents", "info", "path_id"][self.env_idx]
+        path_ids = [int(path_ids_t[i].item()) for i in range(n)]
+
+        # --------- Build states and circle centers (same as your update function) ---------
+        states = []
+        circles_all = []
+        for i in range(n):
+            s = torch.cat(
+                [
+                    agents[i].state.pos[self.env_idx],
+                    agents[i].state.rot[self.env_idx],
+                    agents[i].state.speed[self.env_idx],
+                    agents[i].state.steering[self.env_idx],
+                ],
+                dim=-1,
+            )
+            states.append(s)
+            circles_all.append(self.get_circle_centers(s))
+
+        # --------- Nominal action u_nom (accel, steer_rate) per agent ---------
+        u_nom = np.zeros((n, 2), dtype=np.float64)
+
+        if self.nom_controller_type == "rl":
+            for i in range(n):
+                rl_i = tensordict[("agents", "action")][self.env_idx, i].clone()
+                if self.is_obs_noise:
+                    rl_i = rl_i + torch.rand_like(rl_i) * self.obs_noise_level
+
+                # Your function returns (rl_actions, u_nom)
+                _, u_nom_i = self.rl_action_to_u(
+                    rl_actions=rl_i, v=states[i][3], steering=states[i][4]
+                )
+                u_nom[i, :] = u_nom_i.detach().cpu().numpy()
+        else:
+            # "clf" nominal controller
+            for i in range(n):
+                ref_xy = tensordict["agents", "info", "ref"][self.env_idx, i, 4:6]
+                e_h, e_v = self._clf_errors_for_agent(states[i], ref_xy)
+                u1_nom = np.clip(self.k_clf_speed * e_v, self.a_min, self.a_max)
+                u2_nom = np.clip(
+                    self.k_clf_heading * e_h,
+                    self.steering_rate_min,
+                    self.steering_rate_max,
+                )
+                u_nom[i, 0] = float(u1_nom)
+                u_nom[i, 1] = float(u2_nom)
+
+        # --------- Lane CBF margins g_L >= 0 and g_R >= 0 ---------
+        lane_L_margin = np.zeros((n, n_circles), dtype=np.float64)
+        lane_R_margin = np.zeros((n, n_circles), dtype=np.float64)
+
+        for i in range(n):
+            kins_i = self.linearized_center_kinematics_coeffs(states[i])
+            ui = u_nom[i, :]  # shape (2,)
+            for ci in range(n_circles):
+                circle_pos_i = circles_all[i][ci][0:2]
+                smL, gL, HL, smR, gR, HR = self.estimate_agent_2_lane_safety_margin(
+                    circle_pos_i, path_ids[i]
+                )
+
+                if self.adaptive_lambda:
+                    # returns (A, b0, h); inequality: A u + b0 + h*lambda >= 0
+                    A_L_ic, b0_L_ic, h_L_ic = self.ttcbf_lane_affine_coeffs(
+                        kins_i, ci, smL, gL, HL, self.dt_taylor, None
+                    )
+                    A_R_ic, b0_R_ic, h_R_ic = self.ttcbf_lane_affine_coeffs(
+                        kins_i, ci, smR, gR, HR, self.dt_taylor, None
+                    )
+
+                    # If you do not optimize lambda, you must pick a value.
+                    # Here we use your default lambda_ttcbf.
+                    lam_L = float(self.lambda_ttcbf)
+                    lam_R = float(self.lambda_ttcbf)
+
+                    g_left = (
+                        float(np.asarray(A_L_ic).reshape(1, 2) @ ui.reshape(2, 1))
+                        + float(np.asarray(b0_L_ic).squeeze())
+                        + float(np.asarray(h_L_ic).squeeze()) * lam_L
+                    )
+
+                    g_right = (
+                        float(np.asarray(A_R_ic).reshape(1, 2) @ ui.reshape(2, 1))
+                        + float(np.asarray(b0_R_ic).squeeze())
+                        + float(np.asarray(h_R_ic).squeeze()) * lam_R
+                    )
+                else:
+                    # returns (A, b); inequality: A u + b >= 0
+                    A_L_ic, b_L_ic = self.ttcbf_lane_affine_coeffs(
+                        kins_i, ci, smL, gL, HL, self.dt_taylor, self.lambda_ttcbf
+                    )
+                    A_R_ic, b_R_ic = self.ttcbf_lane_affine_coeffs(
+                        kins_i, ci, smR, gR, HR, self.dt_taylor, self.lambda_ttcbf
+                    )
+
+                    g_left = float(
+                        np.asarray(A_L_ic).reshape(1, 2) @ ui.reshape(2, 1)
+                    ) + float(np.asarray(b_L_ic).squeeze())
+
+                    g_right = float(
+                        np.asarray(A_R_ic).reshape(1, 2) @ ui.reshape(2, 1)
+                    ) + float(np.asarray(b_R_ic).squeeze())
+
+                lane_L_margin[i, ci] = g_left
+                lane_R_margin[i, ci] = g_right
+
+        # --------- Pairwise CBF margins g_ij >= 0 ---------
+        d_safe = float(2.0 * self.circle_radius + self.safety_buffer)
+        d_safe_sq = d_safe * d_safe
+
+        pair_margin = {}  # (i, j, ci, cj) -> margin float
+
+        for i in range(n - 1):
+            kins_i = self.linearized_center_kinematics_coeffs(states[i])
+            ui = u_nom[i, :]
+
+            for j in range(i + 1, n):
+                kins_j = self.linearized_center_kinematics_coeffs(states[j])
+                uj = u_nom[j, :]
+
+                for ci in range(n_circles):
+                    pi = circles_all[i][ci][0:2]
+                    for cj in range(n_circles):
+                        pj = circles_all[j][cj][0:2]
+                        delta = pi - pj
+                        dx = float(delta[0].item())
+                        dy = float(delta[1].item())
+
+                        if self.adaptive_lambda:
+                            # returns (A_i, A_j, b0, h); inequality: A_i u_i + A_j u_j + b0 + h*lambda >= 0
+                            A_i, A_j, b0, h = self.ttcbf_pair_affine_coeffs(
+                                kins_i,
+                                kins_j,
+                                ci,
+                                cj,
+                                dx,
+                                dy,
+                                d_safe_sq,
+                                self.dt_taylor,
+                                None,
+                            )
+                            lam = float(self.lambda_ttcbf)
+
+                            g_pair = (
+                                float(np.asarray(A_i).reshape(1, 2) @ ui.reshape(2, 1))
+                                + float(
+                                    np.asarray(A_j).reshape(1, 2) @ uj.reshape(2, 1)
+                                )
+                                + float(np.asarray(b0).squeeze())
+                                + float(np.asarray(h).squeeze()) * lam
+                            )
+                        else:
+                            # returns (A_i, A_j, b, h) but your non-adaptive branch uses b in the constraint
+                            A_i, A_j, b, _ = self.ttcbf_pair_affine_coeffs(
+                                kins_i,
+                                kins_j,
+                                ci,
+                                cj,
+                                dx,
+                                dy,
+                                d_safe_sq,
+                                self.dt_taylor,
+                                self.lambda_ttcbf,
+                            )
+                            g_pair = (
+                                float(np.asarray(A_i).reshape(1, 2) @ ui.reshape(2, 1))
+                                + float(
+                                    np.asarray(A_j).reshape(1, 2) @ uj.reshape(2, 1)
+                                )
+                                + float(np.asarray(b).squeeze())
+                            )
+
+                        pair_margin[(i, j, ci, cj)] = float(g_pair)
+
+        return {
+            "lane_L_margin": lane_L_margin,
+            "lane_R_margin": lane_R_margin,
+            "pair_margin": pair_margin,
+        }
+
+    def compute_cbf_violation_rewards_from_margins(
+        self, cbf_margins: dict, agg: str = "max", eps: float = 1e-9
+    ):
+        """
+        Compute three per-agent reward signals from CBF margins (no CVXPY).
+
+        For each constraint margin g:
+        - violation magnitude = max(0, -g)
+        - reward is 0 if no violation, else negative
+        - normalized per channel so the worst violation in the step maps near -1
+
+        Returns:
+        r_left, r_right, r_pair: Python lists of length n_agents, values in [-1, 0]
+        """
+        lane_L = np.asarray(
+            cbf_margins["lane_L_margin"], dtype=np.float64
+        )  # (n, n_circles)
+        lane_R = np.asarray(
+            cbf_margins["lane_R_margin"], dtype=np.float64
+        )  # (n, n_circles)
+        pair_margin = cbf_margins["pair_margin"]  # dict (i, j, ci, cj) -> float
+
+        n = lane_L.shape[0]
+
+        # violation magnitudes
+        vL = np.maximum(-lane_L, 0.0)  # (n, n_circles)
+        vR = np.maximum(-lane_R, 0.0)  # (n, n_circles)
+
+        if agg == "sum":
+            vL_agent = np.sum(vL, axis=1)
+            vR_agent = np.sum(vR, axis=1)
+        elif agg == "max":
+            vL_agent = np.max(vL, axis=1)
+            vR_agent = np.max(vR, axis=1)
+        else:
+            raise ValueError(f"Unknown agg='{agg}'. Use 'max' or 'sum'.")
+
+        # pairwise aggregation per agent
+        vP_agent = np.zeros((n,), dtype=np.float64)
+        for (i, j, ci, cj), g in pair_margin.items():
+            v = max(-float(g), 0.0)
+            if agg == "sum":
+                vP_agent[i] += v
+                vP_agent[j] += v
+            else:  # "max"
+                vP_agent[i] = max(vP_agent[i], v)
+                vP_agent[j] = max(vP_agent[j], v)
+
+        # normalize each channel to [-1, 0]
+        scale_L = float(np.max(vL_agent)) + eps
+        scale_R = float(np.max(vR_agent)) + eps
+        scale_P = float(np.max(vP_agent)) + eps
+
+        def to_reward(v_agent, scale):
+            v_norm = np.clip(v_agent / scale, 0.0, 1.0)
+            return (-v_norm).tolist()
+
+        r_left = to_reward(vL_agent, scale_L)
+        r_right = to_reward(vR_agent, scale_R)
+        r_pair = to_reward(vP_agent, scale_P)
+
+        return r_left, r_right, r_pair

@@ -102,6 +102,8 @@ class Parameters:
         is_using_cbf_testing: bool = False,  # Whether to use Control Barrier Function (CBF) during testing
         is_using_cbf_training: bool = False,  # Whether to use Control Barrier Function (CBF) during training
         is_using_centralized_cbf: bool = False,  # Whether to use centralized solving for CBF-constrained MARL
+        is_apply_cbf_action: bool = False,  # Whether to apply CBF action (use when is_using_cbf_training is True, deciding if CBF action or RL action should be applied)
+        is_solve_qp: bool = True,  # Whether to solve QP (if False, use the nominal action to access the constraint violation/value)
         experiment_type: str = "simulation",  # One of {"simulation", "lab"}. If you only use simulation, you do not need to worry about "lab".
         is_obs_steering: bool = False,  # Whether to observe the steering angle of other agents
         predefined_ref_path_idx: list[
@@ -201,6 +203,8 @@ class Parameters:
         self.is_using_cbf_testing = is_using_cbf_testing
         self.is_using_cbf_training = is_using_cbf_training
         self.is_using_centralized_cbf = is_using_centralized_cbf
+        self.is_apply_cbf_action = is_apply_cbf_action
+        self.is_solve_qp = is_solve_qp
 
         self.experiment_type = experiment_type
         self.is_obs_steering = is_obs_steering
