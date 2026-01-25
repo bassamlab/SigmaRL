@@ -1028,11 +1028,14 @@ class ScenarioRoadTraffic(BaseScenario):
                 # self.rew += self.rew_left_bound[:, agent_index]
                 # self.rew += self.rew_right_bound[:, agent_index]
                 # self.rew += self.rew_agent_pair[:, agent_index]
-                self.rew += (
+                cbf_rew = (
                     self.rew_left_bound[:, agent_index]
                     + self.rew_right_bound[:, agent_index]
                     + self.rew_agent_pair[:, agent_index]
                 ) / 3
+                if (cbf_rew == 0).all():
+                    print(f"cbf_rew: {cbf_rew}")
+                self.rew += cbf_rew
         else:
             ##################################################
             ## [penalty] close to lanelet boundaries

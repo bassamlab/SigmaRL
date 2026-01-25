@@ -401,7 +401,7 @@ class CBFQP:
         self.obs_noise_level = self.parameters.obs_noise_level
 
         self.safety_buffer = 0
-        self.lambda_ttcbf = 0.1
+        self.lambda_ttcbf = 0.5
 
         # Nominal controller selection
         self.nom_controller_type = self.parameters.nom_controller_type
@@ -2745,7 +2745,7 @@ class CBFQP:
         self, cbf_margins: dict, agg: str = "max", eps: float = 1e-9
     ):
         """
-        Compute three per-agent reward signals from CBF margins (no CVXPY).
+        Compute three per-agent reward signals from CBF margins.
 
         For each constraint margin g:
         - violation magnitude = max(0, -g)
@@ -2753,8 +2753,10 @@ class CBFQP:
         - normalized per channel so the worst violation in the step maps near -1
 
         Returns:
-        r_left, r_right, r_pair: Python lists of length n_agents, values in [-1, 0]
+        r_left, r_right, r_pair: lists of length n_agents, values in [-1, 0]
         """
+        h_normalizer = 0.1
+
         lane_L = np.asarray(
             cbf_margins["lane_L_margin"], dtype=np.float64
         )  # (n, n_circles)
@@ -2790,16 +2792,20 @@ class CBFQP:
                 vP_agent[j] = max(vP_agent[j], v)
 
         # normalize each channel to [-1, 0]
-        scale_L = float(np.max(vL_agent)) + eps
-        scale_R = float(np.max(vR_agent)) + eps
-        scale_P = float(np.max(vP_agent)) + eps
+        # scale_L = float(np.max(vL_agent)) + eps
+        # scale_R = float(np.max(vR_agent)) + eps
+        # scale_P = float(np.max(vP_agent)) + eps
 
         def to_reward(v_agent, scale):
             v_norm = np.clip(v_agent / scale, 0.0, 1.0)
             return (-v_norm).tolist()
 
-        r_left = to_reward(vL_agent, scale_L)
-        r_right = to_reward(vR_agent, scale_R)
-        r_pair = to_reward(vP_agent, scale_P)
+        # r_left = to_reward(vL_agent, scale_L)
+        # r_right = to_reward(vR_agent, scale_R)
+        # r_pair = to_reward(vP_agent, scale_P)
+
+        r_left = to_reward(vL_agent, h_normalizer)
+        r_right = to_reward(vR_agent, h_normalizer)
+        r_pair = to_reward(vP_agent, h_normalizer)
 
         return r_left, r_right, r_pair
