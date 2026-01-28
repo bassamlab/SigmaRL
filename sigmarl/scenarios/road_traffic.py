@@ -931,74 +931,74 @@ class ScenarioRoadTraffic(BaseScenario):
         ##################################################
         ## [reward] high velocity
         ##################################################
-        v_proj = torch.sum(agent.state.vel.unsqueeze(1) * ref_points_vecs, dim=-1).mean(
-            -1
-        )
-        factor_moving_direction = torch.where(
-            v_proj > 0, 1, 2
-        )  # Get penalty if move in negative direction
+        # v_proj = torch.sum(agent.state.vel.unsqueeze(1) * ref_points_vecs, dim=-1).mean(
+        #     -1
+        # )
+        # factor_moving_direction = torch.where(
+        #     v_proj > 0, 1, 2
+        # )  # Get penalty if move in negative direction
 
-        reward_vel = (
-            factor_moving_direction * v_proj / agent.max_speed * self.rewards.higth_v
-        )
-        self.rew += reward_vel  # / 2  # TODO: Remove / 2
+        # reward_vel = (
+        #     factor_moving_direction * v_proj / agent.max_speed * self.rewards.higth_v
+        # )
+        # self.rew += reward_vel  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [reward] reach goal
         ##################################################
-        reward_goal = (
-            self.world_state.collisions.with_exit_segments[:, agent_index]
-            * self.rewards.reach_goal
-        )
-        self.rew += reward_goal  # / 2  # TODO: Remove / 2
+        # reward_goal = (
+        #     self.world_state.collisions.with_exit_segments[:, agent_index]
+        #     * self.rewards.reach_goal
+        # )
+        # self.rew += reward_goal  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [penalty/reward] time
         ##################################################
         # Get time reward if moving in positive direction; otherwise get time penalty
-        time_reward = (
-            torch.where(v_proj > 0, 1, -1)
-            * agent.state.vel.norm(dim=-1)
-            / agent.max_speed
-            * self.penalties.time
-        )
-        self.rew += time_reward  # / 2  # TODO: Remove / 2
+        # time_reward = (
+        #     torch.where(v_proj > 0, 1, -1)
+        #     * agent.state.vel.norm(dim=-1)
+        #     / agent.max_speed
+        #     * self.penalties.time
+        # )
+        # self.rew += time_reward  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [penalty] deviating from reference path
         ##################################################
-        self.rew += (
-            self.world_state.distances.ref_paths[:, agent_index]
-            / self.thresholds.deviate_from_ref_path
-            * self.penalties.deviate_from_ref_path
-        )  # / 2  # TODO: Remove / 2
+        # self.rew += (
+        #     self.world_state.distances.ref_paths[:, agent_index]
+        #     / self.thresholds.deviate_from_ref_path
+        #     * self.penalties.deviate_from_ref_path
+        # )  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [penalty] changing steering too quick
         ##################################################
-        steering_current = (
-            self.observation_provider.observations.past_action_steering.get_latest(n=1)[
-                :, agent_index
-            ]
-        )
-        steering_past = (
-            self.observation_provider.observations.past_action_steering.get_latest(n=2)[
-                :, agent_index
-            ]
-        )
+        # steering_current = (
+        #     self.observation_provider.observations.past_action_steering.get_latest(n=1)[
+        #         :, agent_index
+        #     ]
+        # )
+        # steering_past = (
+        #     self.observation_provider.observations.past_action_steering.get_latest(n=2)[
+        #         :, agent_index
+        #     ]
+        # )
 
-        steering_change = torch.clamp(
-            (steering_current - steering_past).abs() * self.normalizers.steering
-            - self.thresholds.change_steering,  # Not forget to denormalize
-            min=0,
-        )
-        steering_change_reward_factor = steering_change / (
-            2 * agent.u_range[1] - 2 * self.thresholds.change_steering
-        )
-        penalty_change_steering = (
-            steering_change_reward_factor * self.penalties.change_steering
-        )
-        self.rew += penalty_change_steering  # / 2  # TODO: Remove / 2
+        # steering_change = torch.clamp(
+        #     (steering_current - steering_past).abs() * self.normalizers.steering
+        #     - self.thresholds.change_steering,  # Not forget to denormalize
+        #     min=0,
+        # )
+        # steering_change_reward_factor = steering_change / (
+        #     2 * agent.u_range[1] - 2 * self.thresholds.change_steering
+        # )
+        # penalty_change_steering = (
+        #     steering_change_reward_factor * self.penalties.change_steering
+        # )
+        # self.rew += penalty_change_steering  # / 2  # TODO: Remove / 2
 
         ##################################################
         ## [penalty] deviating from CBF safe action

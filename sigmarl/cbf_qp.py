@@ -2755,7 +2755,7 @@ class CBFQP:
         Returns:
         r_left, r_right, r_pair: lists of length n_agents, values in [-1, 0]
         """
-        h_normalizer = 0.1
+        h_normalizer = 0.02
 
         lane_L = np.asarray(
             cbf_margins["lane_L_margin"], dtype=np.float64
@@ -2767,42 +2767,20 @@ class CBFQP:
 
         n = lane_L.shape[0]
 
-        # violation magnitudes
-        vL = np.maximum(-lane_L, 0.0)  # (n, n_circles)
-        vR = np.maximum(-lane_R, 0.0)  # (n, n_circles)
-
-        if agg == "sum":
-            vL_agent = np.sum(vL, axis=1)
-            vR_agent = np.sum(vR, axis=1)
-        elif agg == "max":
-            vL_agent = np.max(vL, axis=1)
-            vR_agent = np.max(vR, axis=1)
-        else:
-            raise ValueError(f"Unknown agg='{agg}'. Use 'max' or 'sum'.")
+        vL_agent = np.min(lane_L, axis=1)
+        vR_agent = np.min(lane_R, axis=1)
 
         # pairwise aggregation per agent
         vP_agent = np.zeros((n,), dtype=np.float64)
         for (i, j, ci, cj), g in pair_margin.items():
-            v = max(-float(g), 0.0)
-            if agg == "sum":
-                vP_agent[i] += v
-                vP_agent[j] += v
-            else:  # "max"
-                vP_agent[i] = max(vP_agent[i], v)
-                vP_agent[j] = max(vP_agent[j], v)
-
-        # normalize each channel to [-1, 0]
-        # scale_L = float(np.max(vL_agent)) + eps
-        # scale_R = float(np.max(vR_agent)) + eps
-        # scale_P = float(np.max(vP_agent)) + eps
+            v = min(float(g), 0.0)
+            # Replace if v is more negative
+            vP_agent[i] = min(vP_agent[i], v)
+            vP_agent[j] = min(vP_agent[j], v)
 
         def to_reward(v_agent, scale):
-            v_norm = np.clip(v_agent / scale, 0.0, 1.0)
-            return (-v_norm).tolist()
-
-        # r_left = to_reward(vL_agent, scale_L)
-        # r_right = to_reward(vR_agent, scale_R)
-        # r_pair = to_reward(vP_agent, scale_P)
+            v_norm = np.clip(v_agent / scale, -1.0, 0.0)
+            return v_norm.tolist()
 
         r_left = to_reward(vL_agent, h_normalizer)
         r_right = to_reward(vR_agent, h_normalizer)
