@@ -2755,7 +2755,6 @@ class CBFQP:
         Returns:
         r_left, r_right, r_pair: lists of length n_agents, values in [-1, 0]
         """
-        h_normalizer = 0.02
 
         lane_L = np.asarray(
             cbf_margins["lane_L_margin"], dtype=np.float64
@@ -2782,8 +2781,8 @@ class CBFQP:
             v_norm = np.clip(v_agent / scale, -1.0, 0.0)
             return v_norm.tolist()
 
-        r_left = to_reward(vL_agent, h_normalizer)
-        r_right = to_reward(vR_agent, h_normalizer)
-        r_pair = to_reward(vP_agent, h_normalizer)
+        r_left = to_reward(vL_agent, self.parameters.h_nom)
+        r_right = to_reward(vR_agent, self.parameters.h_nom)
+        r_pair = to_reward(vP_agent, self.parameters.h_nom)
 
         return r_left, r_right, r_pair

@@ -629,7 +629,7 @@ class ScenarioRoadTraffic(BaseScenario):
                 device=device,
                 dtype=torch.float32,
             ).sqrt()
-            * 1.2,
+            * 1.5,
         )
 
         if self.parameters.is_challenging_initial_state_buffer:

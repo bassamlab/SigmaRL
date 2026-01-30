@@ -250,7 +250,7 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
             if self.params.scenario_type == "CPM_mixed":
                 # In the mixed scenarios of the CPM case, we avoid using the beginning part of a path, making agents encounter each other more frequently. Additionally, We avoid initializing agents to be at a very end of a path.
-                start_point_idx = 6
+                start_point_idx = 3
                 end_point_idx = int(num_points / 2)
             else:
                 start_point_idx = 3  # Do not set to an overly small value to make sure agents are fully inside its lane

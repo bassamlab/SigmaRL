@@ -11,6 +11,7 @@ from vmas.simulator.utils import TorchUtils, override
 
 import torch
 from torch import Tensor
+from tensordict import TensorDict
 
 import typing
 from matplotlib import colormaps
@@ -123,6 +124,7 @@ class Parameters:
         nom_controller_type: str = "rl",  # Type of the nominal controller: {"rl", "clf"}
         adaptive_lambda: bool = False,  # Whether to use adaptive lambda for CBF-QP
         rs: float = 0.5,  # (0,1), responsibility score for CBF-QP (the higher, the more responsible that an agent is for avoiding collisions)
+        h_nom: float = 0.2,  # Nominizer of the CBF function (use when is_using_cbf_training True)
     ):
 
         self.n_agents = n_agents
@@ -226,6 +228,7 @@ class Parameters:
         self.nom_controller_type = nom_controller_type
         self.adaptive_lambda = adaptive_lambda
         self.rs = rs
+        self.h_nom = h_nom
 
         if (model_name is None) and (scenario_name is not None):
             self.model_name = get_model_name(self)
@@ -545,3 +548,36 @@ def get_name_suffix(
                 f"nom_{nom}_only_scenario_{scenario.lower()}"
             )
     return name_suffix
+
+
+def trim_td(out_td: TensorDict, keys_to_keep=None) -> TensorDict:
+    """
+    Trim a TensorDict to keep only selected fields.
+
+    Args:
+        out_td: Original TensorDict.
+
+    Returns:
+        A new TensorDict containing only the specified keys.
+    """
+    if keys_to_keep is None:
+        keys_to_keep = [
+            ("agents", "info", "pos"),
+            ("agents", "info", "rot"),
+            ("agents", "info", "vel"),
+            ("agents", "info", "ref"),
+            ("agents", "info", "ref_lanelet_ids"),
+            ("agents", "info", "is_collision_with_agents"),
+            ("agents", "info", "is_collision_with_lanelets"),
+        ]
+
+    trimmed = TensorDict(
+        {},
+        batch_size=out_td.batch_size,
+        device=out_td.device,
+    )
+
+    for key in keys_to_keep:
+        trimmed.set(key, out_td.get(key))
+
+    return trimmed

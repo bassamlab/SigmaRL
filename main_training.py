@@ -17,19 +17,42 @@ if hpc_environment:
 # ===============================
 # Handle command-line arguments
 # ===============================
-# Usage: python main_training.py [seed]
-# Default seed = 1
+# Usage:
+#   python main_training.py [seed] [h_nom]
+# Defaults:
+#   seed = 1
+#   h_nom = None
+random_seed = 1
+h_nom = None
+
 if len(sys.argv) > 1:
     print(f"sys.argv: {sys.argv}")
+
+    # Parse seed
     try:
         random_seed = int(sys.argv[1])
     except ValueError:
         print(f"[WARNING] Invalid seed '{sys.argv[1]}', falling back to default = 1")
         random_seed = 1
+
+    # Parse h_nom (optional)
+    if len(sys.argv) > 2:
+        try:
+            h_nom = float(sys.argv[2])
+        except ValueError:
+            if sys.argv[2].lower() in {"none", "null"}:
+                h_nom = None
+            else:
+                print(
+                    f"[WARNING] Invalid h_nom '{sys.argv[2]}', falling back to default = None"
+                )
+                h_nom = None
 else:
-    random_seed = 1
+    print(f"sys.argv: {sys.argv}")
 
 print(f"[INFO] Using random seed = {random_seed}")
+print(f"[INFO] Using h_nom = {h_nom}")
+
 
 # ===============================
 # Training configuration
@@ -44,19 +67,23 @@ parameters.scenario_type = scenario_type
 parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
 
 # parameters.where_to_save = "outputs/marl_cbf_fixed_group_2_episode_100_rl/"
-parameters.where_to_save = (
-    "outputs/cbf_informed_marl/do_not_apply_cbf_action_do_not_solve_qp_v2/"
-)
 parameters.n_iters = 1000
 parameters.random_seed = random_seed
-parameters.is_using_cbf_training = True
 parameters.is_using_centralized_cbf = True
 parameters.is_using_cbf_testing = False
 parameters.is_using_prioritized_marl = False
-parameters.is_continue_train = True
+parameters.is_continue_train = False
 parameters.is_load_model = False
 parameters.is_apply_cbf_action = False
 parameters.is_solve_qp = False
+parameters.h_nom = h_nom
+
+if parameters.h_nom is None:
+    parameters.is_using_cbf_training = False
+else:
+    parameters.is_using_cbf_training = True
+
+parameters.where_to_save = f"outputs/cbf_informed_marl/agil-not/h{parameters.h_nom}_seed{parameters.random_seed}/"
 
 # ===============================
 # Save parameters and AGENTS
