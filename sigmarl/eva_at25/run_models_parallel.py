@@ -124,7 +124,7 @@ def run_one(job: dict, save_video_flag: bool) -> tuple:
 
         parameters.num_vmas_envs = 1
 
-        parameters.scenario_type = "CPM_entire"
+        parameters.scenario_type = "cpm_entire"
         parameters.n_agents = 3
 
         parameters.is_save_simulation_video = bool(save_video_flag)

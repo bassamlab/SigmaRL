@@ -14,7 +14,7 @@
     "lmbda": 0.9,
     "entropy_eps": 5e-4,
     "max_steps": 128,
-    "scenario_type": "CPM_mixed",
+    "scenario_type": "cpm_mixed",
     "is_save_intermediate_model": true,
     "episode_reward_mean_current": 0.00,
     "is_load_model": false,

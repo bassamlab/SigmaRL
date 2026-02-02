@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+from dataclasses import dataclass, fields
 import torch
 
 
@@ -95,6 +96,46 @@ class Penalties:
         self.deviate_from_cbf_steer = (
             deviate_from_cbf_steer  # Penalty for deviating from CBF suggested steering
         )
+
+
+@dataclass
+class RewardInfo:
+    rew_progress: torch.Tensor
+    rew_reach_goal: torch.Tensor
+    rew_speed: torch.Tensor
+    rew_centerline: torch.Tensor
+    rew_near_other_agents: torch.Tensor
+    rew_near_left_lane: torch.Tensor
+    rew_near_right_lane: torch.Tensor
+    rew_collide_other_agents: torch.Tensor
+    rew_collide_lane: torch.Tensor
+    rew_energy_acceleration: torch.Tensor
+    rew_energy_steering: torch.Tensor
+    rew_total: torch.Tensor
+
+    @classmethod
+    def zeros(cls, batch_size: int, n_agents: int, device=None, dtype=torch.float32):
+        """
+        Automatically create zero tensors for all fields.
+        """
+        kwargs = {}
+        for f in fields(cls):
+            kwargs[f.name] = torch.zeros(
+                (batch_size, n_agents), device=device, dtype=dtype
+            )
+        return cls(**kwargs)
+
+    def reset(self):
+        """
+        Reset all tensors to zero in place.
+        """
+        for f in fields(self):
+            if f.name not in [
+                "rew_near_other_agents",
+                "rew_near_left_lane",
+                "rew_near_right_lane",
+            ]:
+                getattr(self, f.name).zero_()
 
 
 class Thresholds:

@@ -6,7 +6,7 @@
 import math
 
 SCENARIOS = {
-    "CPM_entire": {
+    "cpm_entire": {
         "map_path": "cpm.xml",
         "n_agents": 15,
         "name": "CPM Map",
@@ -21,7 +21,7 @@ SCENARIOS = {
         "lane_width": 0.15,  # [m] Lane width
         "scale": 1.0,  # Scale the map
     },
-    "CPM_mixed": {
+    "cpm_mixed": {
         "map_path": "cpm.xml",
         "n_agents": 4,
         "name": "CPM Map",
@@ -445,7 +445,7 @@ SCENARIOS = {
     },
     "on_ramp_1": {
         "map_path": "on_ramp_1.osm",
-        "n_agents": 8,
+        "n_agents": 6,
         "name": "Intersection 3",
         "reference_paths_ids": [
             ["1", "3", "5", "7"],

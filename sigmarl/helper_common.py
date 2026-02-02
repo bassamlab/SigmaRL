@@ -48,9 +48,9 @@ class Parameters:
         entropy_eps: float = 1e-4,  # Controls the trade-off between trying new actions (exploration) and optimizing known good actions (exploitation). Higher entropy_coef encourages more exploration by favoring stochastic (less certain) policies.
         max_steps: int = 128,  # Episode steps before done
         num_vmas_envs: int = 32,  # Number of vectorized environments
-        scenario_type: str = "intersection_1",  # One of {"CPM_entire", "CPM_mixed", "intersection_1", ...}. See SCENARIOS in utilities/constants.py for more scenarios.
-        # "CPM_entire": Entire map of the CPM Lab
-        # "CPM_mixed": Intersection, merge-in, and merge-out of the CPM Lab. Probability defined in `cpm_scenario_probabilities`
+        scenario_type: str = "intersection_1",  # One of {"cpm_entire", "cpm_mixed", "intersection_1", ...}. See SCENARIOS in utilities/constants.py for more scenarios.
+        # "cpm_entire": Entire map of the CPM Lab
+        # "cpm_mixed": Intersection, merge-in, and merge-out of the CPM Lab. Probability defined in `cpm_scenario_probabilities`
         # "intersection_1": Intersection with ID 1
         episode_reward_mean_current: float = 0.00,  # Achieved mean episode reward (total/n_agents)
         episode_reward_intermediate: float = -1e3,  # A arbitrary, small initial value

@@ -25,7 +25,7 @@ class PseudoDistance:
         # self.initialize_map(map)
         # self.prepare_for_calculation()
         self.map = map
-        if "CPM_mixed" == self.scenario_type:
+        if "cpm_mixed" == self.scenario_type:
             # Intersection scenario (TODO: consider actual mixed scenarios consisting of intersection, merge-in, and merge-out)
             self.reference_paths = self.map.parser.reference_paths_intersection
         else:
@@ -395,7 +395,7 @@ class PseudoDistance:
 
 if __name__ == "__main__":
     scenario_types = [
-        "CPM_entire",
+        "cpm_entire",
         # "interchange_1",
         # "interchange_2",
         # "interchange_3",

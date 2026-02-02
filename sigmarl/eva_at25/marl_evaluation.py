@@ -2,7 +2,7 @@
 python sigmarl/eva_at25/marl_evaluation.py \
   --td_path "checkpoints/at25/sigmarl/seed3/init2-1.td" \
   --ref_path_ids "6|2|3" \
-  --scenario CPM_entire \
+  --scenario cpm_entire \
   --per_unit_m 100 \
   --max_steps 1800 \
   --make_plots \
@@ -303,7 +303,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--td_path", type=str, required=True)
     ap.add_argument("--ref_path_ids", type=str, required=True)
-    ap.add_argument("--scenario", type=str, default="CPM_entire")
+    ap.add_argument("--scenario", type=str, default="cpm_entire")
     ap.add_argument("--veh_width", type=float, default=0.107)
     ap.add_argument("--veh_length", type=float, default=0.220)
     ap.add_argument("--per_unit_m", type=float, default=1.0)

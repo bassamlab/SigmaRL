@@ -91,7 +91,7 @@ for _, row in df.iterrows():
             else:
                 parameters.num_vmas_envs = 1
 
-            parameters.scenario_type = "CPM_mixed"  # One of "CPM_mixed", "CPM_entire", "intersection_1", "on_ramp_1", "roundabout_1", etc. See sigmarl/ constants.py for more scenario types
+            parameters.scenario_type = "cpm_mixed"  # One of "cpm_mixed", "cpm_entire", "intersection_1", "on_ramp_1", "roundabout_1", etc. See sigmarl/ constants.py for more scenario types
             # parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
             parameters.n_agents = 3
 

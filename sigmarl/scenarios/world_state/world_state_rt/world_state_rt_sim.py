@@ -248,7 +248,7 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
             num_points = ref_path["center_line"].shape[0]
 
-            if self.params.scenario_type == "CPM_mixed":
+            if self.params.scenario_type == "cpm_mixed":
                 # In the mixed scenarios of the CPM case, we avoid using the beginning part of a path, making agents encounter each other more frequently. Additionally, We avoid initializing agents to be at a very end of a path.
                 start_point_idx = 3
                 end_point_idx = int(num_points / 2)
@@ -310,7 +310,7 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
         self, env_index: int = None, agent_index: int = None
     ) -> tuple:
 
-        if self.params.scenario_type != "CPM_mixed":
+        if self.params.scenario_type != "cpm_mixed":
             ref_paths_scenario = self.ref_paths_map_related.long_term_all
             extended_points = self.ref_paths_map_related.point_extended_all
             # 0 for others, 1 for intersection, 2 for merge-in, 3 for merge-out scenario

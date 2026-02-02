@@ -1,7 +1,7 @@
 import time
 from typing import Optional
 import torch
-from sigmarl.helper_common import get_name_suffix, save_video
+from sigmarl.helper_common import get_name_suffix, save_video, trim_td
 from sigmarl.helper_training import Parameters, SaveData
 import os
 import sys
@@ -48,40 +48,6 @@ for k, v in vars(args).items():
 
 path = args.output_dir
 os.makedirs(path, exist_ok=True)
-
-from tensordict import TensorDict
-
-
-def trim_td(out_td: TensorDict) -> TensorDict:
-    """
-    Trim a TensorDict to keep only selected fields.
-
-    Args:
-        out_td: Original TensorDict.
-
-    Returns:
-        A new TensorDict containing only the specified keys.
-    """
-    keys_to_keep = [
-        ("agents", "info", "pos"),
-        ("agents", "info", "rot"),
-        ("agents", "info", "vel"),
-        ("agents", "info", "ref"),
-        ("agents", "info", "ref_lanelet_ids"),
-        ("agents", "info", "is_collision_with_agents"),
-        ("agents", "info", "is_collision_with_lanelets"),
-    ]
-
-    trimmed = TensorDict(
-        {},
-        batch_size=out_td.batch_size,
-        device=out_td.device,
-    )
-
-    for key in keys_to_keep:
-        trimmed.set(key, out_td.get(key))
-
-    return trimmed
 
 
 # ===============================

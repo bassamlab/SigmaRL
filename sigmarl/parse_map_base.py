@@ -109,7 +109,7 @@ class ParseMapBase(ABC):
             ref_path[
                 "right_boundary_shared_pseudo_vector"
             ] = compute_pseudo_tangent_vector(ref_path["right_boundary_shared"])
-        if self._scenario_type == "CPM_mixed":
+        if self._scenario_type == "cpm_mixed":
             for ref_path in self.reference_paths_intersection:
                 ref_path["left_boundary_pseudo_vector"] = compute_pseudo_tangent_vector(
                     ref_path["left_boundary"]

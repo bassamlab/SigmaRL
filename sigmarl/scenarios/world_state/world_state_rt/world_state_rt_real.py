@@ -97,12 +97,12 @@ class WorldStateRTReal(WorldStateRT):
             distance_type=self.distances.type,
             is_set_diagonal=True,
             x_semidim=torch.tensor(
-                SCENARIOS["CPM_entire"]["world_x_dim"],
+                SCENARIOS["cpm_entire"]["world_x_dim"],
                 device=self.device,
                 dtype=torch.float32,
             ),  # currently we only support the full map for real world applications
             y_semidim=torch.tensor(
-                SCENARIOS["CPM_entire"]["world_x_dim"],
+                SCENARIOS["cpm_entire"]["world_x_dim"],
                 device=self.device,
                 dtype=torch.float32,
             ),  # currently we only support the full map for real world applications

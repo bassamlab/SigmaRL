@@ -267,7 +267,7 @@ class ParseXML(ParseMapBase):
             if self._n_agents_visu is None:
                 self._n_agents_visu = SCENARIOS[self._scenario_type]["n_agents"]
 
-            if self._scenario_type == "CPM_mixed":
+            if self._scenario_type == "cpm_mixed":
                 self._visualize_random_agents(ax, self.reference_paths_intersection)
             else:
                 self._visualize_random_agents(ax, self.reference_paths)
@@ -872,7 +872,7 @@ class ParseXML(ParseMapBase):
 
 if __name__ == "__main__":
     parser = ParseXML(
-        scenario_type="CPM_entire",
+        scenario_type="cpm_entire",
         device="cpu" if not torch.cuda.is_available() else "cuda:0",
         is_visualize_map=True,
         is_save_fig=True,

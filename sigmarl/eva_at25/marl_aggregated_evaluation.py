@@ -71,7 +71,7 @@ def main():
     ap.add_argument("--veh_length", type=float, default=0.220)
     ap.add_argument("--per_unit_m", type=float, default=10.0)
     ap.add_argument(
-        "--scenario", type=str, default="CPM_entire"
+        "--scenario", type=str, default="cpm_entire"
     )  # fallback if missing in CSV
     ap.add_argument("--n1", type=int, default=3)
     ap.add_argument("--n2", type=int, default=5)

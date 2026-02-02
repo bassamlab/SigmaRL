@@ -57,7 +57,7 @@ print(f"[INFO] Using h_nom = {h_nom}")
 # ===============================
 # Training configuration
 # ===============================
-scenario_type = "CPM_mixed"  # One of "CPM_mixed", "CPM_entire", "intersection_1", etc.
+scenario_type = "cpm_mixed"  # One of "cpm_mixed", "cpm_entire", "intersection_1", etc.
 config_file = "sigmarl/config.json"  # Adjust parameters therein
 
 parameters = Parameters.from_json(config_file)
@@ -77,13 +77,14 @@ parameters.is_load_model = False
 parameters.is_apply_cbf_action = False
 parameters.is_solve_qp = False
 parameters.h_nom = h_nom
+parameters.is_testing_mode = False
 
 if parameters.h_nom is None:
     parameters.is_using_cbf_training = False
 else:
     parameters.is_using_cbf_training = True
 
-parameters.where_to_save = f"outputs/cbf_informed_marl/agil-not/h{parameters.h_nom}_seed{parameters.random_seed}/"
+parameters.where_to_save = f"outputs/cbf_informed_marl/not-agil/{scenario_type}/seed{random_seed}/h{parameters.h_nom}/"
 
 # ===============================
 # Save parameters and AGENTS

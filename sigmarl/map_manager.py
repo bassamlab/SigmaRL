@@ -13,8 +13,8 @@ from sigmarl.parse_xml import ParseXML
 class MapManager:
     def __init__(self, **kwargs):
         self._scenario_type = kwargs.pop(
-            "scenario_type", "CPM_entire"
-        )  # One of {"CPM_entire", "CPM_mixed", "intersection_1", "design you own map and name it here"}
+            "scenario_type", "cpm_entire"
+        )  # One of {"cpm_entire", "cpm_mixed", "intersection_1", "design you own map and name it here"}
 
         self._device = kwargs.pop("device", "cpu")
         self._width = kwargs.pop("lane_width", None)
@@ -24,7 +24,7 @@ class MapManager:
 
     def _parse_map_file(self):
         # Get map data
-        if "CPM" in self._scenario_type:
+        if "cpm" in self._scenario_type:
             # Load the map data of the CPM Lab
             map_parser = ParseXML(
                 scenario_type=self._scenario_type,

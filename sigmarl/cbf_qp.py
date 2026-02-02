@@ -1371,13 +1371,13 @@ class CBFQP:
             )
 
             r_left, r_right, r_pair = self.compute_nominal_cbf_violation_rewards()
-            self.env.base_env.scenario_name.rew_left_bound[
+            self.env.base_env.scenario_name.reward_info.rew_near_left_lane[
                 self.env_idx, :
             ] = torch.tensor(r_left, device=self.device, dtype=torch.float32)
-            self.env.base_env.scenario_name.rew_right_bound[
+            self.env.base_env.scenario_name.reward_info.rew_near_right_lane[
                 self.env_idx, :
             ] = torch.tensor(r_right, device=self.device, dtype=torch.float32)
-            self.env.base_env.scenario_name.rew_agent_pair[
+            self.env.base_env.scenario_name.reward_info.rew_near_other_agents[
                 self.env_idx, :
             ] = torch.tensor(r_pair, device=self.device, dtype=torch.float32)
 
@@ -2531,13 +2531,14 @@ class CBFQP:
                     r_right,
                     r_pair,
                 ) = self.compute_cbf_violation_rewards_from_margins(cbf_margins)
-                self.env.base_env.scenario_name.rew_left_bound[
+
+                self.env.base_env.scenario_name.reward_info.rew_near_left_lane[
                     self.env_idx, :
                 ] = torch.tensor(r_left, device=self.device, dtype=torch.float32)
-                self.env.base_env.scenario_name.rew_right_bound[
+                self.env.base_env.scenario_name.reward_info.rew_near_right_lane[
                     self.env_idx, :
                 ] = torch.tensor(r_right, device=self.device, dtype=torch.float32)
-                self.env.base_env.scenario_name.rew_agent_pair[
+                self.env.base_env.scenario_name.reward_info.rew_near_other_agents[
                     self.env_idx, :
                 ] = torch.tensor(r_pair, device=self.device, dtype=torch.float32)
 
@@ -2741,9 +2742,7 @@ class CBFQP:
             "pair_margin": pair_margin,
         }
 
-    def compute_cbf_violation_rewards_from_margins(
-        self, cbf_margins: dict, agg: str = "max", eps: float = 1e-9
-    ):
+    def compute_cbf_violation_rewards_from_margins(self, cbf_margins: dict):
         """
         Compute three per-agent reward signals from CBF margins.
 
