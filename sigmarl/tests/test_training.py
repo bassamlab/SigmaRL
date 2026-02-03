@@ -18,7 +18,7 @@ class TestTrainingScenarios(unittest.TestCase):
 
     def test_training_scenarios(self):
         """Test training for different scenarios."""
-        scenarios_to_test = ["CPM_mixed", "intersection_1"]
+        scenarios_to_test = ["cpm_mixed", "intersection_1"]
 
         for scenario in scenarios_to_test:
             with self.subTest(scenario=scenario):
