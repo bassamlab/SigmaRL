@@ -996,7 +996,7 @@ def save(
     plt.plot(save_data.episode_reward_mean_list)
     plt.xlabel("Iterations")
     plt.ylabel("Episode mean reward")
-    plt.tight_layout()  # Set the layout to be tight to minimize white space !!! deprecated
+    # plt.tight_layout()
     plt.savefig(PATH_FIG, format="jpg", dpi=300, bbox_inches="tight")
 
     # Save models

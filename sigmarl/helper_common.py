@@ -409,15 +409,32 @@ class Vehicle(Agent):
         )
 
 
-def is_latex_available():
+def is_latex_available() -> bool:
     try:
-        # Try running `latex -version` to check if it's installed
+        # latex executable exists?
         subprocess.run(
             ["latex", "-version"],
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+
+        # required style file exists?
+        subprocess.run(
+            ["kpsewhich", "type1cm.sty"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # type1ec is often also needed by matplotlib's tex preamble on some setups
+        subprocess.run(
+            ["kpsewhich", "type1ec.sty"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
