@@ -42,6 +42,8 @@ from torchrl.data.utils import DEVICE_TYPING
 import matplotlib
 from matplotlib import pyplot as plt
 
+matplotlib.rcParams["text.usetex"] = is_latex_available()
+
 from typing import Callable, Optional, Callable, Optional, Dict, Sequence, Union
 
 import json
@@ -1632,9 +1634,6 @@ def cbf_constrained_centralized_policy(
         time_pseudo_dis,
         tensordict,
     )
-
-
-matplotlib.rcParams["text.usetex"] = is_latex_available()
 
 
 def reduce_out_td(
