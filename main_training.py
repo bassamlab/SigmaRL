@@ -57,14 +57,17 @@ print(f"[INFO] Using h_nom = {h_nom}")
 # ===============================
 # Training configuration
 # ===============================
-scenario_type = "cpm_mixed"  # One of "cpm_mixed", "cpm_entire", "intersection_1", etc.
+scenario_type = (
+    "interchange_3"  # One of "cpm_mixed", "cpm_entire", "intersection_1", etc.
+)
 config_file = "sigmarl/config.json"  # Adjust parameters therein
 
 parameters = Parameters.from_json(config_file)
 
 # Set parameters
 parameters.scenario_type = scenario_type
-parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
+# parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
+parameters.n_agents = 4
 
 # parameters.where_to_save = "outputs/marl_cbf_fixed_group_2_episode_100_rl/"
 parameters.n_iters = 1000
@@ -78,6 +81,7 @@ parameters.is_apply_cbf_action = False
 parameters.is_solve_qp = False
 parameters.h_nom = h_nom
 parameters.is_testing_mode = False
+parameters.lane_width = 0.25  # lane width in meter (except cpm_mixed and cpm_entire)
 
 if parameters.h_nom is None:
     parameters.is_using_cbf_training = False

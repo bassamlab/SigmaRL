@@ -81,12 +81,13 @@ with open(path_to_json_file, "r") as file:
     # parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
     parameters.n_agents = 4
     parameters.dt = 0.1
+    parameters.lane_width = 0.25
 
     parameters.is_save_simulation_video = False
     parameters.is_visualize_short_term_path = True
     parameters.is_visualize_lane_boundary = False
     parameters.is_visualize_extra_info = True
-    parameters.is_using_cbf_testing = True
+    parameters.is_using_cbf_testing = False
     parameters.is_using_cbf_training = False
     parameters.is_using_prioritized_marl = False
     parameters.is_using_centralized_cbf = True

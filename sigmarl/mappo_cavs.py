@@ -125,7 +125,7 @@ class MAPPOCAVs:
         env.scenario.i_iter = i_iter  # To be used later in the scenario if needed
         for tensordict_data in collector:
             i_iter += 1
-            print(f"[INFO] Starting iteration {i_iter}...")
+            # print(f"[INFO] Starting iteration {i_iter}...")
             env.scenario.i_iter = i_iter  # To be used later in the scenario if needed
             self._process_tensordict_data(tensordict_data, env)
             self._compute_gae(tensordict_data, optimization_module, priority_module)

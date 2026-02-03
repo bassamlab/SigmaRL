@@ -705,10 +705,7 @@ class SyncDataCollectorCustom(SyncDataCollector):
                 ):
                     self.env.rand_action(self._tensordict)
                 else:
-                    if (
-                        self.env.base_env.scenario_name.parameters.is_using_cbf_training
-                        and self.env.base_env.scenario_name.i_iter >= 0
-                    ):
+                    if self.env.base_env.scenario_name.parameters.is_using_cbf_training:
                         # print("[INFO] Using CBF-constrained policy during training.")
                         (
                             time_rl,

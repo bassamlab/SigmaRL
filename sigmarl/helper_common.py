@@ -116,7 +116,7 @@ class Parameters:
         random_seed: int = 0,  # Random seed,
         is_using_pseudo_distance: bool = False,  # Whether to use pseudo distance
         n_circles_approximate_vehicle: int = 3,  # Number of circles to approximate the vehicle shape
-        lane_width=0.3,  # For custom scenarios only
+        lane_width=0.25,  # For custom scenarios only
         reset_agent_fixed_duration: int = 0,  # Reset agents after fixed duration in seconds. Set to 0 if not used.
         is_grouping_agents: bool = False,  # Whether to use grouping agents
         max_group_size: int = 2,  # Maximum number of agents in a group
