@@ -129,9 +129,13 @@ class ScenarioRoadTraffic(BaseScenario):
         # This is useful for RL algorithms with an actor-critic architecture where the critic's
         # output is limited to [-1, 1] (e.g., due to tanh activation function).
 
-        reward_progress = (
-            kwargs.pop("reward_progress", 10) / r_p_normalizer
-        )  # Reward for moving along reference paths
+        if hasattr(self, "parameters"):
+            reward_progress = self.parameters.reward_progress / r_p_normalizer
+        else:
+            reward_progress = (
+                kwargs.pop("reward_progress", 10) / r_p_normalizer
+            )  # Reward for moving along reference paths
+
         reward_vel = (
             kwargs.pop("reward_vel", 5) / r_p_normalizer
         )  # Reward for moving in high velocities.
@@ -899,8 +903,8 @@ class ScenarioRoadTraffic(BaseScenario):
         # [update] mutual distances between agents, vertices of each agent, and collision matrices
         self.world_state.update_state_before_rewarding(agent_index)
 
-        if self.parameters.is_testing_mode:
-            # No reward shaping during testing, since reward shaping is only for guiding the learning but may not reflect the actual performance of the learned policy
+        if self.parameters.rew_method == "sparse":
+            # No reward shaping, usually during testing, since reward shaping is only for guiding the learning but may not reflect the actual performance of the learned policy
             #################################################
             # [reward] reach goal
             #################################################
@@ -938,6 +942,7 @@ class ScenarioRoadTraffic(BaseScenario):
             self.reward_info.rew_collide_lane[:, agent_index] = penalty_collide_lanelet
 
         else:
+            # Use reward shaping, usually during training
             ##################################################
             ## [reward] forward movement
             ##################################################
@@ -961,142 +966,10 @@ class ScenarioRoadTraffic(BaseScenario):
                 / (agent.max_speed * self.world.dt)
                 * self.rewards.progress
             )
-            self.rew += reward_movement  # / 2  # TODO: Remove / 2
+            self.rew += reward_movement
 
-            ##################################################
-            ## [reward] high velocity
-            ##################################################
-            # v_proj = torch.sum(agent.state.vel.unsqueeze(1) * ref_points_vecs, dim=-1).mean(
-            #     -1
-            # )
-            # factor_moving_direction = torch.where(
-            #     v_proj > 0, 1, 2
-            # )  # Get penalty if move in negative direction
-
-            # reward_vel = (
-            #     factor_moving_direction * v_proj / agent.max_speed * self.rewards.higth_v
-            # )
-            # self.rew += reward_vel  # / 2  # TODO: Remove / 2
-
-            ##################################################
-            ## [reward] reach goal
-            ##################################################
-            # reward_goal = (
-            #     self.world_state.collisions.with_exit_segments[:, agent_index]
-            #     * self.rewards.reach_goal
-            # )
-            # self.rew += reward_goal  # / 2  # TODO: Remove / 2
-
-            ##################################################
-            ## [penalty/reward] time
-            ##################################################
-            # Get time reward if moving in positive direction; otherwise get time penalty
-            # time_reward = (
-            #     torch.where(v_proj > 0, 1, -1)
-            #     * agent.state.vel.norm(dim=-1)
-            #     / agent.max_speed
-            #     * self.penalties.time
-            # )
-            # self.rew += time_reward  # / 2  # TODO: Remove / 2
-
-            ##################################################
-            ## [penalty] deviating from reference path
-            ##################################################
-            # self.rew += (
-            #     self.world_state.distances.ref_paths[:, agent_index]
-            #     / self.thresholds.deviate_from_ref_path
-            #     * self.penalties.deviate_from_ref_path
-            # )  # / 2  # TODO: Remove / 2
-
-            ##################################################
-            ## [penalty] changing steering too quick
-            ##################################################
-            # steering_current = (
-            #     self.observation_provider.observations.past_action_steering.get_latest(n=1)[
-            #         :, agent_index
-            #     ]
-            # )
-            # steering_past = (
-            #     self.observation_provider.observations.past_action_steering.get_latest(n=2)[
-            #         :, agent_index
-            #     ]
-            # )
-
-            # steering_change = torch.clamp(
-            #     (steering_current - steering_past).abs() * self.normalizers.steering
-            #     - self.thresholds.change_steering,  # Not forget to denormalize
-            #     min=0,
-            # )
-            # steering_change_reward_factor = steering_change / (
-            #     2 * agent.u_range[1] - 2 * self.thresholds.change_steering
-            # )
-            # penalty_change_steering = (
-            #     steering_change_reward_factor * self.penalties.change_steering
-            # )
-            # self.rew += penalty_change_steering  # / 2  # TODO: Remove / 2
-
-            ##################################################
-            ## [penalty] deviating from CBF safe action
-            ##################################################
-            if self.parameters.is_using_cbf_training:
-                if self.parameters.is_solve_qp:
-                    # print("DEBUG CBF penalty calculation")
-                    nominal_action_vel = self.world_state.nominal_action_vel[
-                        :, agent_index
-                    ]  # RL action that is modified by CBF
-                    nominal_action_steer = self.world_state.nominal_action_steer[
-                        :, agent_index
-                    ]  # RL action that is modified by CBF
-                    current_action_vel = agent.action.u[:, 0]
-                    current_action_steer = agent.action.u[:, 1]
-
-                    cbf_vel_penalty = self.penalties.deviate_from_cbf_vel * (
-                        (current_action_vel - nominal_action_vel).abs() / self.max_speed
-                    )
-                    cbf_steer_penalty = self.penalties.deviate_from_cbf_steer * (
-                        (current_action_steer - nominal_action_steer).abs()
-                        / self.max_steering
-                    )
-
-                    self.rew += cbf_vel_penalty + cbf_steer_penalty
-                else:
-                    cbf_rew = (
-                        self.reward_info.rew_near_left_lane[:, agent_index]
-                        + self.reward_info.rew_near_right_lane[:, agent_index]
-                        + self.reward_info.rew_near_other_agents[:, agent_index]
-                    ) / 3
-                    if (cbf_rew >= 0).all():
-                        print(f"cbf_rew: {cbf_rew}")
-                    self.rew += cbf_rew
-            else:
-                ##################################################
-                ## [penalty] close to lanelet boundaries
-                ##################################################
-                penalty_close_to_lanelets = (
-                    exponential_decreasing_fcn(
-                        x=self.world_state.distances.boundaries[:, agent_index],
-                        x0=self.thresholds.near_boundary_low,
-                        x1=self.thresholds.near_boundary_high,
-                    )
-                    * self.penalties.near_boundary
-                )
-                self.rew += penalty_close_to_lanelets
-
-                ##################################################
-                ## [penalty] close to other agents
-                ##################################################
-                # mutual_distance_exp_fcn = exponential_decreasing_fcn(
-                #     x=self.world_state.distances.agents[:, agent_index, :],
-                #     x0=self.thresholds.near_other_agents_low,
-                #     x1=self.thresholds.near_other_agents_high,
-                # )
-                # penalty_close_to_agents_old = (
-                #     torch.sum(mutual_distance_exp_fcn, dim=1)
-                #     * self.penalties.near_other_agents
-                # )
-                # self.rew += penalty_close_to_agents
-
-                # TODO: train baseline model with TTC-based penalty
+            # Near-agent reward/penalty
+            if self.parameters.rew_method == "ttc":
                 ##################################################
                 ## [penalty] close to other agents (TTC-based, 2D)
                 ##################################################
@@ -1126,12 +999,8 @@ class ScenarioRoadTraffic(BaseScenario):
 
                 # TTC thresholds (seconds). Recommended to add to your config/thresholds.
                 # Fallback values are conservative and should be tuned.
-                ttc_low = float(
-                    getattr(self.thresholds, "ttc_low", 0.75)
-                )  # danger zone
-                ttc_high = float(
-                    getattr(self.thresholds, "ttc_high", 3.00)
-                )  # safe zone
+                ttc_low = 0.75  # danger zone
+                ttc_high = 3.00  # safe zone
 
                 eps = 1e-6
 
@@ -1187,6 +1056,154 @@ class ScenarioRoadTraffic(BaseScenario):
                 self.reward_info.rew_near_other_agents[
                     :, agent_index
                 ] = penalty_close_to_agents
+
+            elif self.parameters.rew_method == "cbf":
+                ##################################################
+                ## [penalty] deviating from CBF safe action
+                ##################################################
+                if self.parameters.is_solve_qp:
+                    # print("DEBUG CBF penalty calculation")
+                    nominal_action_vel = self.world_state.nominal_action_vel[
+                        :, agent_index
+                    ]  # RL action that is modified by CBF
+                    nominal_action_steer = self.world_state.nominal_action_steer[
+                        :, agent_index
+                    ]  # RL action that is modified by CBF
+                    current_action_vel = agent.action.u[:, 0]
+                    current_action_steer = agent.action.u[:, 1]
+
+                    cbf_vel_penalty = self.penalties.deviate_from_cbf_vel * (
+                        (current_action_vel - nominal_action_vel).abs() / self.max_speed
+                    )
+                    cbf_steer_penalty = self.penalties.deviate_from_cbf_steer * (
+                        (current_action_steer - nominal_action_steer).abs()
+                        / self.max_steering
+                    )
+
+                    self.rew += cbf_vel_penalty + cbf_steer_penalty
+                else:
+                    cbf_rew = (
+                        self.reward_info.rew_near_left_lane[:, agent_index]
+                        + self.reward_info.rew_near_right_lane[:, agent_index]
+                        + self.reward_info.rew_near_other_agents[:, agent_index]
+                    ) / 3
+                    if (cbf_rew >= 0).all():
+                        print(f"cbf_rew: {cbf_rew}")
+                    self.rew += cbf_rew
+
+            elif self.parameters.rew_method == "default":
+                ##################################################
+                ## [penalty] close to other agents
+                ##################################################
+                mutual_distance_exp_fcn = exponential_decreasing_fcn(
+                    x=self.world_state.distances.agents[:, agent_index, :],
+                    x0=self.thresholds.near_other_agents_low,
+                    x1=self.thresholds.near_other_agents_high,
+                )
+                penalty_close_to_agents_old = (
+                    torch.sum(mutual_distance_exp_fcn, dim=1)
+                    * self.penalties.near_other_agents
+                )
+                self.rew += penalty_close_to_agents
+            else:
+                raise ValueError(
+                    f"The given reward method {self.parameters.rew_method} is not supported. Expected: 'sparse', 'ttc', 'cbf', or 'default'."
+                )
+
+            # Addition reward shaping for default reward method
+            if self.parameters.rew_method == "default":
+                #################################################
+                # [reward] high velocity
+                #################################################
+                v_proj = torch.sum(
+                    agent.state.vel.unsqueeze(1) * ref_points_vecs, dim=-1
+                ).mean(-1)
+                factor_moving_direction = torch.where(
+                    v_proj > 0, 1, 2
+                )  # Get penalty if move in negative direction
+
+                reward_vel = (
+                    factor_moving_direction
+                    * v_proj
+                    / agent.max_speed
+                    * self.rewards.higth_v
+                )
+                self.rew += reward_vel
+
+                #################################################
+                # [reward] reach goal
+                #################################################
+                reward_goal = (
+                    self.world_state.collisions.with_exit_segments[:, agent_index]
+                    * self.rewards.reach_goal
+                )
+                self.rew += reward_goal
+
+                #################################################
+                # [penalty/reward] time
+                #################################################
+                # Get time reward if moving in positive direction; otherwise get time penalty
+                time_reward = (
+                    torch.where(v_proj > 0, 1, -1)
+                    * agent.state.vel.norm(dim=-1)
+                    / agent.max_speed
+                    * self.penalties.time
+                )
+                self.rew += time_reward
+
+                #################################################
+                # [penalty] deviating from reference path
+                #################################################
+                self.rew += (
+                    self.world_state.distances.ref_paths[:, agent_index]
+                    / self.thresholds.deviate_from_ref_path
+                    * self.penalties.deviate_from_ref_path
+                )
+
+                #################################################
+                # [penalty] changing steering too quick
+                #################################################
+                steering_current = self.observation_provider.observations.past_action_steering.get_latest(
+                    n=1
+                )[
+                    :, agent_index
+                ]
+                steering_past = self.observation_provider.observations.past_action_steering.get_latest(
+                    n=2
+                )[
+                    :, agent_index
+                ]
+
+                steering_change = torch.clamp(
+                    (steering_current - steering_past).abs() * self.normalizers.steering
+                    - self.thresholds.change_steering,  # Not forget to denormalize
+                    min=0,
+                )
+                steering_change_reward_factor = steering_change / (
+                    2 * agent.u_range[1] - 2 * self.thresholds.change_steering
+                )
+                penalty_change_steering = (
+                    steering_change_reward_factor * self.penalties.change_steering
+                )
+                self.rew += penalty_change_steering
+
+            # Addition reward shaping for both default and ttc-based reward method
+            if (
+                self.parameters.rew_method == "default"
+                or self.parameters.rew_method == "ttc"
+            ):
+                ##################################################
+                ## [penalty] close to lanelet boundaries
+                ##################################################
+                penalty_close_to_lanelets = (
+                    exponential_decreasing_fcn(
+                        x=self.world_state.distances.boundaries[:, agent_index],
+                        x0=self.thresholds.near_boundary_low,
+                        x1=self.thresholds.near_boundary_high,
+                    )
+                    * self.penalties.near_boundary
+                )
+                self.rew += penalty_close_to_lanelets
 
                 # ##################################################
                 # ## [penalty] colliding with other agents

@@ -125,6 +125,8 @@ class Parameters:
         adaptive_lambda: bool = False,  # Whether to use adaptive lambda for CBF-QP
         rs: float = 0.5,  # (0,1), responsibility score for CBF-QP (the higher, the more responsible that an agent is for avoiding collisions)
         h_nom: float = 0.2,  # Nominizer of the CBF function (use when is_using_cbf_training True)
+        rew_method: str = "default",  # Reward method: {"default", "cbf", "ttc", "sparse"}
+        reward_progress: float = 10,  # Reward for progress along the reference path
     ):
 
         self.n_agents = n_agents
@@ -229,6 +231,8 @@ class Parameters:
         self.adaptive_lambda = adaptive_lambda
         self.rs = rs
         self.h_nom = h_nom
+        self.rew_method = rew_method
+        self.reward_progress = reward_progress
 
         if (model_name is None) and (scenario_name is not None):
             self.model_name = get_model_name(self)

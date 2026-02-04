@@ -18,14 +18,17 @@ if hpc_environment:
 # Handle command-line arguments
 # ===============================
 # Usage:
-#   python main_training.py [seed] [h_nom]
+#   python main_training.py [seed] [h_nom] [reward_progress]
 # Defaults:
 #   seed = 1
 #   h_nom = None
+#   reward_progress = 10
 random_seed = 1
 h_nom = None
+reward_progress = 10
 
-if len(sys.argv) > 1:
+print(f"sys.argv: {sys.argv}")
+if len(sys.argv) >= 2:
     print(f"sys.argv: {sys.argv}")
 
     # Parse seed
@@ -36,7 +39,7 @@ if len(sys.argv) > 1:
         random_seed = 1
 
     # Parse h_nom (optional)
-    if len(sys.argv) > 2:
+    if len(sys.argv) >= 3:
         try:
             h_nom = float(sys.argv[2])
         except ValueError:
@@ -47,19 +50,24 @@ if len(sys.argv) > 1:
                     f"[WARNING] Invalid h_nom '{sys.argv[2]}', falling back to default = None"
                 )
                 h_nom = None
-else:
-    print(f"sys.argv: {sys.argv}")
+
+        if len(sys.argv) >= 4:
+            try:
+                reward_progress = float(sys.argv[3])
+            except ValueError:
+                print(
+                    f"[WARNING] Invalid reward_progress '{sys.argv[3]}', falling back to default = 10"
+                )
+                reward_progress = 10
 
 print(f"[INFO] Using random seed = {random_seed}")
 print(f"[INFO] Using h_nom = {h_nom}")
-
+print(f"[INFO] Using reward_progress = {reward_progress}")
 
 # ===============================
 # Training configuration
 # ===============================
-scenario_type = (
-    "interchange_3"  # One of "cpm_mixed", "cpm_entire", "intersection_1", etc.
-)
+scenario_type = "cpm_mixed"  # One of "cpm_mixed", "cpm_entire", "intersection_1", etc.
 config_file = "sigmarl/config.json"  # Adjust parameters therein
 
 parameters = Parameters.from_json(config_file)
@@ -82,13 +90,20 @@ parameters.is_solve_qp = False
 parameters.h_nom = h_nom
 parameters.is_testing_mode = False
 parameters.lane_width = 0.25  # lane width in meter (except cpm_mixed and cpm_entire)
+parameters.reward_progress = reward_progress
 
 if parameters.h_nom is None:
     parameters.is_using_cbf_training = False
 else:
     parameters.is_using_cbf_training = True
 
-parameters.where_to_save = f"outputs/cbf_informed_marl/not-agil/{scenario_type}/seed{random_seed}/h{parameters.h_nom}/"
+if parameters.is_using_cbf_training:
+    parameters.rew_method = "cbf"
+else:
+    parameters.rew_method = "ttc"  # Reward method: {"default", "cbf", "ttc", "sparse"}
+
+print(f"[INFO] Using reward method = {parameters.rew_method}")
+parameters.where_to_save = f"outputs/cbf_informed_marl/not-agil/{scenario_type}/h{parameters.h_nom}/reward_progress{reward_progress}/seed{random_seed}/"
 
 # ===============================
 # Save parameters and AGENTS
