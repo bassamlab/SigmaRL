@@ -1446,33 +1446,30 @@ class ScenarioRoadTraffic(BaseScenario):
         # Observation of the policy in the priority-assignment module
         prio_obs = self.stored_observations[agent_index].clone()
 
-        if self.parameters.is_using_cbf_testing:
-            if is_action_empty:
-                cbf_action_vel = self.constants.empty_action_vel[:, agent_index]
-                cbf_action_steer = self.constants.empty_action_steering[:, agent_index]
-                nominal_action_vel = self.constants.empty_action_vel[:, agent_index]
-                nominal_action_steer = self.constants.empty_action_steering[
-                    :, agent_index
-                ]
-            else:
-                cbf_action_vel = agent.action.u[:, 0]
-                cbf_action_steer = agent.action.u[:, 1]
-                nominal_action_vel = self.world_state.nominal_action_vel[:, agent_index]
-                nominal_action_steer = self.world_state.nominal_action_steer[
-                    :, agent_index
-                ]
-        else:
-            # Do not use CBF
-            cbf_action_vel = self.constants.empty_action_vel[:, agent_index]
-            cbf_action_steer = self.constants.empty_action_steering[:, agent_index]
-            if is_action_empty:
-                nominal_action_vel = self.constants.empty_action_vel[:, agent_index]
-                nominal_action_steer = self.constants.empty_action_steering[
-                    :, agent_index
-                ]
-            else:
-                nominal_action_vel = agent.action.u[:, 0]
-                nominal_action_steer = agent.action.u[:, 1]
+        if (not self.parameters.is_using_cbf_testing) and (
+            not self.parameters.is_using_cbf_training
+        ):
+            # Nominal and applied actions are considered the same if not using CBF, since there is no modification on the original action from the policy
+            self.world_state.nominal_action_vel[:, agent_index] = (
+                agent.action.u[:, 0]
+                if not is_action_empty
+                else self.constants.empty_action_vel[:, agent_index]
+            )
+            self.world_state.nominal_action_steer[:, agent_index] = (
+                agent.action.u[:, 1]
+                if not is_action_empty
+                else self.constants.empty_action_steering[:, agent_index]
+            )
+            self.world_state.applied_action_vel[:, agent_index] = (
+                agent.action.u[:, 0]
+                if not is_action_empty
+                else self.constants.empty_action_vel[:, agent_index]
+            )
+            self.world_state.applied_action_steer[:, agent_index] = (
+                agent.action.u[:, 1]
+                if not is_action_empty
+                else self.constants.empty_action_steering[:, agent_index]
+            )
 
         info = {
             "pos": agent.state.pos,
@@ -1531,10 +1528,14 @@ class ScenarioRoadTraffic(BaseScenario):
                 :, agent_index
             ],
             "path_id": self.world_state.ref_paths_agent_related.path_id[:, agent_index],
-            "cbf_action_vel": cbf_action_vel,
-            "cbf_action_steer": cbf_action_steer,
-            "nominal_action_vel": nominal_action_vel,
-            "nominal_action_steer": nominal_action_steer,
+            "applied_action_vel": self.world_state.applied_action_vel[:, agent_index],
+            "applied_action_steer": self.world_state.applied_action_steer[
+                :, agent_index
+            ],
+            "nominal_action_vel": self.world_state.nominal_action_vel[:, agent_index],
+            "nominal_action_steer": self.world_state.nominal_action_steer[
+                :, agent_index
+            ],
             **(
                 {"base_observation": base_obs}
                 if self.parameters.is_using_prioritized_marl
@@ -1948,13 +1949,19 @@ class ScenarioRoadTraffic(BaseScenario):
                 # Heading angle of the current agent
                 heading = self.world.agents[i].state.rot[env_index]
                 # CBF and nominal actions for the current agent
-                cbf_action_vel = self.world.agents[i].action.u[env_index, 0]
-                cbf_action_steering = self.world.agents[i].action.u[env_index, 1]
+                cbf_action_vel = self.world_state.applied_action_vel[env_index, i]
+                cbf_action_steering = self.world_state.applied_action_steer[
+                    env_index, i
+                ]
 
                 nominal_action_vel = self.world_state.nominal_action_vel[env_index, i]
                 nominal_action_steer = self.world_state.nominal_action_steer[
                     env_index, i
                 ]
+
+                # if (cbf_action_vel - nominal_action_vel).abs() < 1e-3 and (cbf_action_steering - nominal_action_steer).abs() < 1e-3:
+                #     print(f"[DEBUG] Agent {i} in env {env_index} has identical CBF and nominal actions.")
+
                 # Render directional arrow for CBF conrrected action
                 # Mainline of the arrow
                 cbf_line = rendering.Line(
@@ -2054,7 +2061,7 @@ class ScenarioRoadTraffic(BaseScenario):
                         * nominal_action_vel
                         * 0.5,
                     ),
-                    width=5,  # Set line width
+                    width=3,  # Set line width
                 )
                 # Wings of the arrowhead
                 nominal_arrow_line1 = rendering.Line(
@@ -2084,7 +2091,7 @@ class ScenarioRoadTraffic(BaseScenario):
                         * torch.sign(nominal_action_vel)
                         * 0.07,
                     ),
-                    width=5,
+                    width=3,
                 )
                 nominal_arrow_line2 = rendering.Line(
                     (
@@ -2113,7 +2120,7 @@ class ScenarioRoadTraffic(BaseScenario):
                         * torch.sign(nominal_action_vel)
                         * 0.07,
                     ),
-                    width=5,
+                    width=3,
                 )
                 # Add transform and set the color of the arrow
                 xform = rendering.Transform()

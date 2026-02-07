@@ -246,14 +246,17 @@ class MAPPOCAVs:
         """Load the final model."""
         decision_making_module.policy.load_state_dict(
             torch.load(
-                self.parameters.where_to_save + "final_policy.pth", weights_only=True
+                os.path.join(self.parameters.where_to_save, "final_policy.pth"),
+                weights_only=True,
             )
         )
         cprint("[INFO] Loaded the final model", "red")
         if priority_module and self.parameters.prioritization_method.lower() == "marl":
             priority_module.policy.load_state_dict(
                 torch.load(
-                    self.parameters.where_to_save + "final_priority_policy.pth",
+                    os.path.join(
+                        self.parameters.where_to_save + "final_priority_policy.pth"
+                    ),
                     weights_only=True,
                 )
             )

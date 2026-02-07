@@ -1279,6 +1279,13 @@ class CBFQP:
                         ] = actions_v_steer_nom
                     self.hist.evt.append("QP-INF")
 
+            self.env.base_env.scenario_name.world_state.applied_action_vel[
+                self.env_idx, :
+            ] = tensordict[("agents", "action")][self.env_idx, :, 0]
+            self.env.base_env.scenario_name.world_state.applied_action_steer[
+                self.env_idx, :
+            ] = tensordict[("agents", "action")][self.env_idx, :, 1]
+
             st = prob.solver_stats
             if hasattr(st, "solve_time"):
                 self.hist.qp_solving_t.append(st.solve_time)
@@ -1380,6 +1387,11 @@ class CBFQP:
             self.env.base_env.scenario_name.reward_info.rew_near_other_agents[
                 self.env_idx, :
             ] = torch.tensor(r_pair, device=self.device, dtype=torch.float32)
+
+        # print(f"obj: {prob.objective.value}")
+
+        # print(f"abs vel: {(self.env.base_env.scenario_name.world_state.applied_action_vel[self.env_idx, :] - self.env.base_env.scenario_name.world_state.nominal_action_vel[self.env_idx, :]).abs()}")
+        # print(f"abs steer: {(self.env.base_env.scenario_name.world_state.applied_action_steer[self.env_idx, :] - self.env.base_env.scenario_name.world_state.nominal_action_steer[self.env_idx, :]).abs()}")
 
     def _get_nominal_cbf_constraint_values(self, tol: float = 1e-9):
         """

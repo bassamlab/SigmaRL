@@ -269,6 +269,12 @@ class WorldStateRT(WorldState):
         self.nominal_action_steer = torch.zeros(
             (self.batch_dim, self.n_agents), device=self.device, dtype=torch.float32
         )
+        self.applied_action_vel = torch.zeros(
+            (self.batch_dim, self.n_agents), device=self.device, dtype=torch.float32
+        )  # In case CBF is not used, applied action = nominal action
+        self.applied_action_steer = torch.zeros(
+            (self.batch_dim, self.n_agents), device=self.device, dtype=torch.float32
+        )
 
     def _extend_map_related_ref_path(self):
         # Extended the reference path by several points along the last vector of the center line
