@@ -953,15 +953,41 @@ def get_short_term_reference_path(
     return short_term_path, future_points_idx
 
 
-def exponential_decreasing_fcn(x, x0, x1):
+def decreasing_fcn(x, x0, x1, type: str = "linear"):
     """
-    Exponential function y(x) = (e^( -(x-x0) / (x1-x0) ) - e^-1) / (1 - e^-1), so that y decreases exponentially from 1 to 0 when x increases from x0 to x1, where
-    x = max(min(x, x1), x0),
-    x1 = threshold_near_boundary, and
-    x0 = agent.shape.width/2.
+    Decreasing function defined on [x0, x1] with output in [0, 1].
+
+    Inputs:
+        x: torch.Tensor
+        x0: float or torch scalar
+        x1: float or torch scalar
+        type: "linear" or "exponential" (default: "linear")
+
+    Behavior:
+        - x is clamped to [x0, x1]
+        - y(x0) = 1, y(x1) = 0
+
+    Linear:
+        y(x) = 1 - (x - x0) / (x1 - x0)
+
+    Exponential:
+        y(x) = (exp(-(x - x0) / (x1 - x0)) - e^-1) / (1 - e^-1)
     """
-    x = torch.clamp(x, min=x0, max=x1)  # x stays inside [x0, x1]
-    y = (torch.exp(-(x - x0) / (x1 - x0)) - 1 / torch.e) / (1 - 1 / torch.e)
+    # Ensure x stays inside [x0, x1]
+    x = torch.clamp(x, min=x0, max=x1)
+
+    denom = x1 - x0
+    if denom < 0:
+        raise ValueError("x1 must be strictly non-negative.")
+
+    if type == "linear":
+        y = 1.0 - (x - x0) / denom
+
+    elif type == "exponential":
+        y = (torch.exp(-(x - x0) / denom) - 1.0 / torch.e) / (1.0 - 1.0 / torch.e)
+
+    else:
+        raise ValueError(f'Unsupported type "{type}". Use "linear" or "exponential".')
 
     return y
 

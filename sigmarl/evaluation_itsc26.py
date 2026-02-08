@@ -310,7 +310,7 @@ def run_evaluations():
                 parameters.is_using_cbf_training = False
                 parameters.is_using_cbf_testing = True
                 parameters.is_solve_qp = True
-                parameters.is_apply_cbf_action = True
+                parameters.is_apply_cbf_action = False
 
                 parameters.is_load_final_model = "final" in train_path
                 parameters.is_load_out_td = False
@@ -356,8 +356,10 @@ def run_evaluations():
                     priority_module=priority_module,
                     cbf_controllers=cbf_controllers,
                     callback=lambda env, _: env.render(
-                        mode="rgb_array", visualize_when_rgb=True
-                    ),
+                        mode="rgb_array", visualize_when_rgb=False
+                    )
+                    if parameters.is_save_simulation_video
+                    else None,  # Mode can be "human" or "rgb_array". Use "rgb_array" for headless evaluation.
                     auto_cast_to_device=True,
                     break_when_any_done=False,
                     is_save_simulation_video=parameters.is_save_simulation_video,
@@ -386,8 +388,7 @@ def run_evaluations():
 
 
 def _load_out_td(out_td_path: Path):
-    # torch.load should return a tensordict TensorDict saved by your script
-    return torch.load(out_td_path, map_location="cpu")
+    return torch.load(out_td_path, weights_only=False)
 
 
 def compute_collision_rate_percent(out_td) -> float:
@@ -461,6 +462,49 @@ def compute_total_reward(out_td) -> float:
     return r_total.sum().item()
 
 
+def compute_cbf_activation_percentage(out_td) -> float:
+    """
+    Compute the mean absolute difference between nominal and applied actions,
+    averaged over all batches, time steps, agents, and action dimensions (vel, steer).
+
+    Expected shapes (for each key):
+        [B, T, N, 1]
+    """
+    key_applied_vel = ("agents", "info", "applied_action_vel")
+    key_applied_steer = ("agents", "info", "applied_action_steer")
+    key_nominal_vel = ("agents", "info", "nominal_action_vel")
+    key_nominal_steer = ("agents", "info", "nominal_action_steer")
+
+    applied_vel = out_td.get(key_applied_vel).float()
+    applied_steer = out_td.get(key_applied_steer).float()
+    nominal_vel = out_td.get(key_nominal_vel).float()
+    nominal_steer = out_td.get(key_nominal_steer).float()
+
+    # Differences: [B, T, N, 1]
+    d_vel = applied_vel - nominal_vel
+    d_steer = applied_steer - nominal_steer
+
+    # Mean absolute difference over all dims (B, T, N, 1) and over both channels (vel+steer)
+    mean_abs_diff = 0.5 * (d_vel.abs().mean() + d_steer.abs().mean())
+
+    applied_vel_abs_mean = applied_vel.abs().mean()
+    applied_steer_abs_mean = applied_steer.abs().mean()
+    mean_abs_diff_normalized = 0.5 * (
+        d_vel.abs().mean() / (applied_vel_abs_mean + 1e-9)
+        + d_steer.abs().mean() / (applied_steer_abs_mean + 1e-9)
+    )
+
+    # Activation count: any channel differs (with tolerance)
+    eps = 1e-9
+    activated = (d_vel.abs() > eps) | (d_steer.abs() > eps)  # [B, T, N, 1]
+    n_activations = int(activated.sum().item())
+    total_elements = activated.numel()
+
+    return float(100 * mean_abs_diff_normalized.item()), float(
+        100 * n_activations / total_elements
+    )
+
+
 # -----------------------------
 # Plotting
 # -----------------------------
@@ -484,15 +528,31 @@ def save_boxplot_pdf(
 
     bp = ax.boxplot(
         data,
-        labels=method_order,
+        tick_labels=method_order,
         showfliers=True,
         widths=0.6,
         patch_artist=True,
+        showmeans=True,
+        meanline=False,  # mean as a point marker
+        meanprops=dict(marker="o", markersize=4, markeredgewidth=0.8),
         medianprops=dict(linewidth=1.4),
         whiskerprops=dict(linewidth=1.2),
         capprops=dict(linewidth=1.2),
         boxprops=dict(linewidth=1.2),
     )
+
+    # bp = ax.boxplot(
+    #     data,
+    #     tick_labels=method_order,
+    #     showfliers=True,
+    #     widths=0.6,
+    #     patch_artist=True,
+    #     showmeans=True,
+    #     meanline=False,
+    #     meanprops=dict(marker="o", markersize=4, markeredgewidth=0.8),
+    #     medianprops=dict(linewidth=0),  # hide median
+    # )
+
     if ylim is not None:
         ax.set_ylim(ylim)
 
@@ -609,6 +669,8 @@ def plot_figures(fig_dir: Path) -> None:
     avg_speeds: Dict[str, Dict[str, List[float]]] = {}
     avg_rews: Dict[str, Dict[str, List[float]]] = {}
     train_reward_curves: Dict[str, List[List[float]]] = {m: [] for m in method_order}
+    cbf_activation_degree: Dict[str, Dict[str, List[float]]] = {}
+    cbf_activation_times: Dict[str, Dict[str, List[float]]] = {}
 
     # Training reward curves (independent of scenario)
     for model_dir in path_list:
@@ -628,6 +690,8 @@ def plot_figures(fig_dir: Path) -> None:
         coll_rates[scenario_type] = {m: [] for m in method_order}
         avg_speeds[scenario_type] = {m: [] for m in method_order}
         avg_rews[scenario_type] = {m: [] for m in method_order}
+        cbf_activation_degree[scenario_type] = {m: [] for m in method_order}
+        cbf_activation_times[scenario_type] = {m: [] for m in method_order}
 
         # Each entry in path_list is a model folder (often .../h*/seed*)
         for model_dir in path_list:
@@ -654,10 +718,19 @@ def plot_figures(fig_dir: Path) -> None:
                         cr = compute_collision_rate_percent(out_td)
                         vbar = compute_average_speed(out_td)
                         rew = compute_total_reward(out_td)
+                        cbf_act_deg, cbf_act_times = compute_cbf_activation_percentage(
+                            out_td
+                        )
 
                         coll_rates[scenario_type][method_label].append(cr)
                         avg_speeds[scenario_type][method_label].append(vbar)
                         avg_rews[scenario_type][method_label].append(rew)
+                        cbf_activation_degree[scenario_type][method_label].append(
+                            cbf_act_deg
+                        )
+                        cbf_activation_times[scenario_type][method_label].append(
+                            cbf_act_times
+                        )
                     except Exception as e:
                         print(f"[WARNING] Failed on {out_td_path}: {e}")
 
@@ -667,25 +740,103 @@ def plot_figures(fig_dir: Path) -> None:
         out_speed_pdf = fig_dir / f"{scenario_tag}_avg_speed.pdf"
         out_rew_pdf = fig_dir / f"{scenario_tag}_avg_total_reward.pdf"
         out_train_rew_pdf = fig_dir / "training_reward_curve.pdf"
+        out_cbf_act_degree_pdf = fig_dir / f"{scenario_tag}_cbf_activation_degree.pdf"
+        out_cbf_act_time_pdf = fig_dir / f"{scenario_tag}_cbf_activation_time.pdf"
 
         title_coll = f"{scenario_type}"
         title_speed = f"{scenario_type}"
 
-        print(f"--- Scenario: {scenario_type} ---")
-        for method in method_order:
-            cr_list = coll_rates[scenario_type][method]
-            vbar_list = avg_speeds[scenario_type][method]
-            rew_list = avg_rews[scenario_type][method]
-            if len(cr_list) == 0:
-                print(f"[INFO] Method: {method}: No data")
-                continue
-            cr_avg = sum(cr_list) / len(cr_list)
-            vbar_avg = sum(vbar_list) / len(vbar_list)
-            rew_avg = sum(rew_list) / len(rew_list)
-            print(
-                f"[INFO] Method: {method}: Collision Rate: {cr_avg:.3f} %, "
-                f"Avg Speed: {vbar_avg:.3f} m/s, Avg Total Reward: {rew_avg:.3f}"
-            )
+        log_path = fig_dir / f"{scenario_type}_summary.txt"
+
+        # 1) Find baseline averages for this scenario (same rp if multiple exist).
+        baseline_method = None
+        for m in method_order:
+            if m.startswith("baseline"):
+                baseline_method = m
+                break
+
+        baseline_stats = None
+        if baseline_method is not None:
+            cr_list_b = coll_rates[scenario_type][baseline_method]
+            vbar_list_b = avg_speeds[scenario_type][baseline_method]
+            rew_list_b = avg_rews[scenario_type][baseline_method]
+            deg_list_b = cbf_activation_degree[scenario_type][baseline_method]
+            time_list_b = cbf_activation_times[scenario_type][baseline_method]
+
+            if len(cr_list_b) > 0:
+                baseline_stats = {
+                    "cr": sum(cr_list_b) / len(cr_list_b),
+                    "v": sum(vbar_list_b) / len(vbar_list_b),
+                    "rew": sum(rew_list_b) / len(rew_list_b),
+                    "deg": sum(deg_list_b) / len(deg_list_b),
+                    "t": sum(time_list_b) / len(time_list_b),
+                }
+
+        with open(log_path, "w", encoding="utf-8") as f:
+            header = f"--- Scenario: {scenario_type} ---"
+            print(header)
+            f.write(header + "\n")
+
+            if baseline_stats is None:
+                warn = "[WARNING] Baseline not found or has no data; improvements will not be logged."
+                print(warn)
+                f.write(warn + "\n")
+
+            for method in method_order:
+                cr_list = coll_rates[scenario_type][method]
+                vbar_list = avg_speeds[scenario_type][method]
+                rew_list = avg_rews[scenario_type][method]
+                cbf_act_deg_list = cbf_activation_degree[scenario_type][method]
+                cbf_act_time_list = cbf_activation_times[scenario_type][method]
+
+                if len(cr_list) == 0:
+                    line = f"[INFO] Method: {method}: No data"
+                    print(line)
+                    f.write(line + "\n")
+                    continue
+
+                cr_avg = sum(cr_list) / len(cr_list)
+                vbar_avg = sum(vbar_list) / len(vbar_list)
+                rew_avg = sum(rew_list) / len(rew_list)
+                cbf_act_deg_avg = sum(cbf_act_deg_list) / len(cbf_act_deg_list)
+                cbf_act_time_avg = sum(cbf_act_time_list) / len(cbf_act_time_list)
+
+                line = (
+                    f"[INFO] Method: {method}: Collision Rate: {cr_avg:.3f} %, "
+                    f"Avg Speed: {vbar_avg:.3f} m/s, Avg Total Reward: {rew_avg:.3f}, "
+                    f"CBF Activation Degree: {cbf_act_deg_avg:.3f} %, CBF Activation Time: {cbf_act_time_avg:.3f} %"
+                )
+                print(line)
+                f.write(line + "\n")
+
+                # 2) Log improvements vs baseline (if available and method is not baseline)
+                if baseline_stats is not None and not method.startswith("baseline"):
+                    d_cr = baseline_stats["cr"] - cr_avg  # positive = fewer collisions
+                    d_v = vbar_avg - baseline_stats["v"]  # positive = faster
+                    d_rew = rew_avg - baseline_stats["rew"]  # positive = higher reward
+                    d_deg = (
+                        baseline_stats["deg"] - cbf_act_deg_avg
+                    )  # positive = fewer activations
+                    d_t = (
+                        baseline_stats["t"] - cbf_act_time_avg
+                    )  # positive = fewer activations
+
+                    # Relative improvements (%), guarded for divide-by-zero
+                    def rel(delta, base):
+                        return (
+                            100.0 * delta / base if abs(base) > 1e-12 else float("nan")
+                        )
+
+                    line_imp = (
+                        f"    Improvement vs {baseline_method}: "
+                        f"ΔCollision Rate={d_cr:+.3f} % (rel {rel(d_cr, baseline_stats['cr']):+.2f} %), "
+                        f"ΔAvg Speed={d_v:+.3f} m/s (rel {rel(d_v, baseline_stats['v']):+.2f} %), "
+                        f"ΔAvg Total Reward={d_rew:+.3f} (rel {rel(d_rew, baseline_stats['rew']):+.2f} %), "
+                        f"ΔCBF Activation Degree={d_deg:+.3f} % (rel {rel(d_deg, baseline_stats['deg']):+.2f} %), "
+                        f"ΔCBF Activation Time={d_t:+.3f} % (rel {rel(d_t, baseline_stats['t']):+.2f} %)"
+                    )
+                    print(line_imp)
+                    f.write(line_imp + "\n")
 
         save_boxplot_pdf(
             data_by_method=coll_rates[scenario_type],
@@ -722,10 +873,29 @@ def plot_figures(fig_dir: Path) -> None:
             ylabel="Episode Reward",
         )
 
+        save_boxplot_pdf(
+            data_by_method=cbf_activation_degree[scenario_type],
+            method_order=method_order,
+            ylabel=r"CBF Activation Rel. Degree [$\%$]",
+            out_pdf=out_cbf_act_degree_pdf,
+            # title="CBF Activation (Rel. Mean Abs. Diff.)",
+            ylim=(0, 20),
+        )
+
+        save_boxplot_pdf(
+            data_by_method=cbf_activation_times[scenario_type],
+            method_order=method_order,
+            ylabel=r"CBF Activation Ratio [$\%$]",
+            out_pdf=out_cbf_act_time_pdf,
+            ylim=(0, 20),
+        )
+
         print(f"[INFO] Saved: {out_coll_pdf}")
         print(f"[INFO] Saved: {out_speed_pdf}")
         print(f"[INFO] Saved: {out_rew_pdf}")
         print(f"[INFO] Saved: {out_train_rew_pdf}")
+        print(f"[INFO] Saved: {out_cbf_act_degree_pdf}")
+        print(f"[INFO] Saved: {out_cbf_act_time_pdf}")
 
 
 if __name__ == "__main__":
@@ -777,7 +947,7 @@ if __name__ == "__main__":
     #     'checkpoints/itsc26/cpm_mixed/h0.12/seed5',
     # ]
 
-    random_seed_list = [1, 2, 3, 4, 5]
+    random_seed_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
     # -----------------------------
     # Metric extraction from out_td

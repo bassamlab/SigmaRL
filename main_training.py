@@ -3,6 +3,7 @@ import sys
 from sigmarl.mappo_cavs import mappo_cavs
 from sigmarl.helper_training import Parameters
 from sigmarl.constants import SCENARIOS, AGENTS
+import argparse
 
 # ===============================
 # Check if running in HPC environment
@@ -14,55 +15,45 @@ if hpc_environment:
     )
     os.environ["PYGLET_HEADLESS"] = "True"  # Enable if run in HPC
 
-# ===============================
-# Handle command-line arguments
-# ===============================
-# Usage:
-#   python main_training.py [seed] [h_nom] [reward_progress]
-# Defaults:
-#   seed = 1
-#   h_nom = None
-#   reward_progress = 10
-random_seed = 1
-h_nom = None
-reward_progress = 10
 
-print(f"sys.argv: {sys.argv}")
-if len(sys.argv) >= 2:
-    print(f"sys.argv: {sys.argv}")
 
-    # Parse seed
-    try:
-        random_seed = int(sys.argv[1])
-    except ValueError:
-        print(f"[WARNING] Invalid seed '{sys.argv[1]}', falling back to default = 1")
-        random_seed = 1
+def _float_or_none(s: str):
+    if s is None:
+        return None
+    s = str(s).strip()
+    if s.lower() in {"none", "null", ""}:
+        return None
+    return float(s)
 
-    # Parse h_nom (optional)
-    if len(sys.argv) >= 3:
-        try:
-            h_nom = float(sys.argv[2])
-        except ValueError:
-            if sys.argv[2].lower() in {"none", "null"}:
-                h_nom = None
-            else:
-                print(
-                    f"[WARNING] Invalid h_nom '{sys.argv[2]}', falling back to default = None"
-                )
-                h_nom = None
 
-        if len(sys.argv) >= 4:
-            try:
-                reward_progress = float(sys.argv[3])
-            except ValueError:
-                print(
-                    f"[WARNING] Invalid reward_progress '{sys.argv[3]}', falling back to default = 10"
-                )
-                reward_progress = 10
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--h-nom", type=_float_or_none, default=None)
+    parser.add_argument("--reward-progress", type=float, default=10.0)
+    parser.add_argument(
+        "--rew-method",
+        type=str,
+        choices=["cbf", "ttc", "default", "sparse"],
+        default=None,
+    )
+
+    # If you sometimes pass extra flags and do not want errors:
+    args, _unknown = parser.parse_known_args()
+    return args
+
+
+args = parse_args()
+
+random_seed = args.seed
+h_nom = args.h_nom
+reward_progress = args.reward_progress
+rew_method = args.rew_method
 
 print(f"[INFO] Using random seed = {random_seed}")
 print(f"[INFO] Using h_nom = {h_nom}")
 print(f"[INFO] Using reward_progress = {reward_progress}")
+print(f"[INFO] Using rew_method = {rew_method}")
 
 # ===============================
 # Training configuration
@@ -94,16 +85,20 @@ parameters.reward_progress = reward_progress
 
 if parameters.h_nom is None:
     parameters.is_using_cbf_training = False
+    if rew_method is not None:
+        parameters.rew_method = rew_method
+    else:
+        print("[INFO] No reward method specified. Using default reward method.")
+        parameters.rew_method = (
+            "default"  # Reward method: {"default", "cbf", "ttc", "sparse"}
+        )
 else:
     parameters.is_using_cbf_training = True
-
-if parameters.is_using_cbf_training:
     parameters.rew_method = "cbf"
-else:
-    parameters.rew_method = "ttc"  # Reward method: {"default", "cbf", "ttc", "sparse"}
+
 
 print(f"[INFO] Using reward method = {parameters.rew_method}")
-parameters.where_to_save = f"outputs/cbf_informed_marl/not-agil/{scenario_type}/h{parameters.h_nom}/reward_progress{reward_progress}/seed{random_seed}/"
+parameters.where_to_save = f"checkpoints/itsc26/{scenario_type}/rew_method_{parameters.rew_method}/reward_progress{reward_progress}/seed{random_seed}/"
 
 # ===============================
 # Save parameters and AGENTS

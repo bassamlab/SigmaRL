@@ -58,7 +58,7 @@ from sigmarl.helper_scenario import (
     Constants,
     StateBuffer,
     InitialStateBuffer,
-    exponential_decreasing_fcn,
+    decreasing_fcn,
     angle_eliminate_two_pi,
 )
 
@@ -941,6 +941,35 @@ class ScenarioRoadTraffic(BaseScenario):
             self.rew += penalty_collide_lanelet
             self.reward_info.rew_collide_lane[:, agent_index] = penalty_collide_lanelet
 
+            if not self.parameters.is_testing_mode:
+                # If not in testing mode, we can still use reward shaping to guide the learning
+                ##################################################
+                ## [reward] forward movement
+                ##################################################
+                latest_state = self.state_buffer.get_latest(n=1)
+                move_vec = (
+                    agent.state.pos - latest_state[:, agent_index, 0:2]
+                ).unsqueeze(
+                    1
+                )  # Vector of the current movement
+
+                ref_points_vecs = self.world_state.ref_paths_agent_related.short_term[
+                    :, agent_index
+                ] - latest_state[:, agent_index, 0:2].unsqueeze(
+                    1
+                )  # Vectors from the previous position to the points on the short-term reference path
+                move_projected = torch.sum(move_vec * ref_points_vecs, dim=-1)
+                move_projected_weighted = torch.matmul(
+                    move_projected, self.rewards.weighting_ref_directions
+                )  # Put more weights on nearing reference points
+
+                reward_movement = (
+                    move_projected_weighted
+                    / (agent.max_speed * self.world.dt)
+                    * self.rewards.progress
+                )
+                self.rew += reward_movement
+
         else:
             # Use reward shaping, usually during training
             ##################################################
@@ -1041,11 +1070,11 @@ class ScenarioRoadTraffic(BaseScenario):
                     dist <= d_gate, ttc, torch.full_like(ttc, float("inf"))
                 )
 
-                # Map TTC to a bounded risk in [0,1] using your existing exponential_decreasing_fcn
+                # Map TTC to a bounded risk in [0,1]
                 # Smaller TTC => larger penalty weight; large TTC/inf => ~0.
                 ttc_for_shape = torch.clamp(ttc, max=ttc_high)
-                risk_per_agent = exponential_decreasing_fcn(
-                    x=ttc_for_shape, x0=ttc_low, x1=ttc_high
+                risk_per_agent = decreasing_fcn(
+                    x=ttc_for_shape, x0=ttc_low, x1=ttc_high, type="linear"
                 )  # [B, N]
 
                 # Aggregate across other agents. Normalize to reduce dependence on N.
@@ -1095,12 +1124,13 @@ class ScenarioRoadTraffic(BaseScenario):
                 ##################################################
                 ## [penalty] close to other agents
                 ##################################################
-                mutual_distance_exp_fcn = exponential_decreasing_fcn(
+                mutual_distance_exp_fcn = decreasing_fcn(
                     x=self.world_state.distances.agents[:, agent_index, :],
                     x0=self.thresholds.near_other_agents_low,
                     x1=self.thresholds.near_other_agents_high,
+                    type="linear",
                 )
-                penalty_close_to_agents_old = (
+                penalty_close_to_agents = (
                     torch.sum(mutual_distance_exp_fcn, dim=1)
                     * self.penalties.near_other_agents
                 )
@@ -1111,81 +1141,81 @@ class ScenarioRoadTraffic(BaseScenario):
                 )
 
             # Addition reward shaping for default reward method
-            if self.parameters.rew_method == "default":
-                #################################################
-                # [reward] high velocity
-                #################################################
-                v_proj = torch.sum(
-                    agent.state.vel.unsqueeze(1) * ref_points_vecs, dim=-1
-                ).mean(-1)
-                factor_moving_direction = torch.where(
-                    v_proj > 0, 1, 2
-                )  # Get penalty if move in negative direction
+            # if self.parameters.rew_method == "default":
+            #     #################################################
+            #     # [reward] high velocity
+            #     #################################################
+            #     v_proj = torch.sum(
+            #         agent.state.vel.unsqueeze(1) * ref_points_vecs, dim=-1
+            #     ).mean(-1)
+            #     factor_moving_direction = torch.where(
+            #         v_proj > 0, 1, 2
+            #     )  # Get penalty if move in negative direction
 
-                reward_vel = (
-                    factor_moving_direction
-                    * v_proj
-                    / agent.max_speed
-                    * self.rewards.higth_v
-                )
-                self.rew += reward_vel
+            #     reward_vel = (
+            #         factor_moving_direction
+            #         * v_proj
+            #         / agent.max_speed
+            #         * self.rewards.higth_v
+            #     )
+            #     self.rew += reward_vel
 
-                #################################################
-                # [reward] reach goal
-                #################################################
-                reward_goal = (
-                    self.world_state.collisions.with_exit_segments[:, agent_index]
-                    * self.rewards.reach_goal
-                )
-                self.rew += reward_goal
+            #     #################################################
+            #     # [reward] reach goal
+            #     #################################################
+            #     reward_goal = (
+            #         self.world_state.collisions.with_exit_segments[:, agent_index]
+            #         * self.rewards.reach_goal
+            #     )
+            #     self.rew += reward_goal
 
-                #################################################
-                # [penalty/reward] time
-                #################################################
-                # Get time reward if moving in positive direction; otherwise get time penalty
-                time_reward = (
-                    torch.where(v_proj > 0, 1, -1)
-                    * agent.state.vel.norm(dim=-1)
-                    / agent.max_speed
-                    * self.penalties.time
-                )
-                self.rew += time_reward
+            #     #################################################
+            #     # [penalty/reward] time
+            #     #################################################
+            #     # Get time reward if moving in positive direction; otherwise get time penalty
+            #     time_reward = (
+            #         torch.where(v_proj > 0, 1, -1)
+            #         * agent.state.vel.norm(dim=-1)
+            #         / agent.max_speed
+            #         * self.penalties.time
+            #     )
+            #     self.rew += time_reward
 
-                #################################################
-                # [penalty] deviating from reference path
-                #################################################
-                self.rew += (
-                    self.world_state.distances.ref_paths[:, agent_index]
-                    / self.thresholds.deviate_from_ref_path
-                    * self.penalties.deviate_from_ref_path
-                )
+            #     #################################################
+            #     # [penalty] deviating from reference path
+            #     #################################################
+            #     self.rew += (
+            #         self.world_state.distances.ref_paths[:, agent_index]
+            #         / self.thresholds.deviate_from_ref_path
+            #         * self.penalties.deviate_from_ref_path
+            #     )
 
-                #################################################
-                # [penalty] changing steering too quick
-                #################################################
-                steering_current = self.observation_provider.observations.past_action_steering.get_latest(
-                    n=1
-                )[
-                    :, agent_index
-                ]
-                steering_past = self.observation_provider.observations.past_action_steering.get_latest(
-                    n=2
-                )[
-                    :, agent_index
-                ]
+            #     #################################################
+            #     # [penalty] changing steering too quick
+            #     #################################################
+            #     steering_current = self.observation_provider.observations.past_action_steering.get_latest(
+            #         n=1
+            #     )[
+            #         :, agent_index
+            #     ]
+            #     steering_past = self.observation_provider.observations.past_action_steering.get_latest(
+            #         n=2
+            #     )[
+            #         :, agent_index
+            #     ]
 
-                steering_change = torch.clamp(
-                    (steering_current - steering_past).abs() * self.normalizers.steering
-                    - self.thresholds.change_steering,  # Not forget to denormalize
-                    min=0,
-                )
-                steering_change_reward_factor = steering_change / (
-                    2 * agent.u_range[1] - 2 * self.thresholds.change_steering
-                )
-                penalty_change_steering = (
-                    steering_change_reward_factor * self.penalties.change_steering
-                )
-                self.rew += penalty_change_steering
+            #     steering_change = torch.clamp(
+            #         (steering_current - steering_past).abs() * self.normalizers.steering
+            #         - self.thresholds.change_steering,  # Not forget to denormalize
+            #         min=0,
+            #     )
+            #     steering_change_reward_factor = steering_change / (
+            #         2 * agent.u_range[1] - 2 * self.thresholds.change_steering
+            #     )
+            #     penalty_change_steering = (
+            #         steering_change_reward_factor * self.penalties.change_steering
+            #     )
+            #     self.rew += penalty_change_steering
 
             # Addition reward shaping for both default and ttc-based reward method
             if (
@@ -1196,10 +1226,11 @@ class ScenarioRoadTraffic(BaseScenario):
                 ## [penalty] close to lanelet boundaries
                 ##################################################
                 penalty_close_to_lanelets = (
-                    exponential_decreasing_fcn(
+                    decreasing_fcn(
                         x=self.world_state.distances.boundaries[:, agent_index],
                         x0=self.thresholds.near_boundary_low,
                         x1=self.thresholds.near_boundary_high,
+                        type="linear",
                     )
                     * self.penalties.near_boundary
                 )
@@ -1208,25 +1239,25 @@ class ScenarioRoadTraffic(BaseScenario):
                 # ##################################################
                 # ## [penalty] colliding with other agents
                 # ##################################################
-                is_collide_with_agents = self.world_state.collisions.with_agents[
-                    :, agent_index
-                ]
-                penalty_collide_other_agents = (
-                    is_collide_with_agents.any(dim=-1)
-                    * self.penalties.collide_with_agents
-                )
-                self.rew += penalty_collide_other_agents
+                # is_collide_with_agents = self.world_state.collisions.with_agents[
+                #     :, agent_index
+                # ]
+                # penalty_collide_other_agents = (
+                #     is_collide_with_agents.any(dim=-1)
+                #     * self.penalties.collide_with_agents
+                # )
+                # self.rew += penalty_collide_other_agents
 
                 ##################################################
                 ## [penalty] colliding with lanelet boundaries
                 ##################################################
-                is_collide_with_lanelets = self.world_state.collisions.with_lanelets[
-                    :, agent_index
-                ]
-                penalty_collide_lanelet = (
-                    is_collide_with_lanelets * self.penalties.collide_with_boundaries
-                )
-                self.rew += penalty_collide_lanelet
+                # is_collide_with_lanelets = self.world_state.collisions.with_lanelets[
+                #     :, agent_index
+                # ]
+                # penalty_collide_lanelet = (
+                #     is_collide_with_lanelets * self.penalties.collide_with_boundaries
+                # )
+                # self.rew += penalty_collide_lanelet
 
         if agent_index == (self.n_agents - 1):  # Avoid repeated updating
             state_add = torch.cat(
