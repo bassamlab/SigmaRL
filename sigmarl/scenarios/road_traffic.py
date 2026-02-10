@@ -148,10 +148,10 @@ class ScenarioRoadTraffic(BaseScenario):
             "penalty_deviate_from_ref_path", -2 / r_p_normalizer
         )  # Penalty for deviating from reference paths
         penalty_near_boundary = kwargs.pop(
-            "penalty_near_boundary", -20 / r_p_normalizer
+            "penalty_near_boundary", -40 / r_p_normalizer
         )  # Penalty for being too close to lanelet boundaries
         penalty_near_other_agents = kwargs.pop(
-            "penalty_near_other_agents", -20 / r_p_normalizer
+            "penalty_near_other_agents", -40 / r_p_normalizer
         )  # Penalty for being too close to other agents
         penalty_collide_with_agents = kwargs.pop(
             "penalty_collide_with_agents", -100 / r_p_normalizer
