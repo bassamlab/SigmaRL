@@ -707,6 +707,13 @@ class ScenarioRoadTraffic(BaseScenario):
             self.world_state,
         )
 
+        self.num_task_tries = (
+            torch.zeros(batch_dim, device=device, dtype=torch.int32) + self.n_agents
+        )  # The total number of tries to complete tasks, initialized to n_agents
+        self.task_success_times = torch.zeros(
+            batch_dim, device=device, dtype=torch.int32
+        )  # The number of successful tasks
+
     def _init_world(self, batch_dim: int, device: torch.device):
         # Make world
         world = WorldCustom(
@@ -825,9 +832,17 @@ class ScenarioRoadTraffic(BaseScenario):
                 initial_state_buffer=self.state_buffer,
             )
 
+            if self.world.agents[0].action.u is not None:
+                # Simulation starts when agents start to generate actions
+                # The reset_world_at is called at very beginning of each episode, even though the simulation has not started yet
+                self.num_task_tries[env_i] += (
+                    self.n_agents if agent_index is None else 1
+                )
+
         reset_indices = (
             range(self.n_agents) if agent_index is None else agent_index.unsqueeze(0)
         )
+
         env_j = slice(None)
 
         if env_index:
@@ -936,6 +951,11 @@ class ScenarioRoadTraffic(BaseScenario):
             self.world_state.collisions.with_exit_segments[:, agent_index]
             * self.rewards.reach_goal
         )
+        self.task_success_times[:] += self.world_state.collisions.with_exit_segments[
+            :, agent_index
+        ].to(
+            torch.int32
+        )  # Each time an agent reaches the goal (i.e., the exit in this case), increment the task success times by 1
         self.reward_info.rew_reach_goal[:, agent_index] = reward_goal
 
         # ##################################################
@@ -1358,6 +1378,7 @@ class ScenarioRoadTraffic(BaseScenario):
                     # print(colored(f"[LOG] Record states with path ids: {self.ref_paths_agent_related.path_id[env_collide]}.", "blue"))
 
         if self.parameters.is_testing_mode:
+            # In testing mode, if a collision occurs, we only reset the colliding agent(s)
             is_done = (
                 is_max_steps_reached | is_fixed_duration_reset
             )  # In test mode, we only reset the whole env if the maximum time steps are reached or the fixed duration is reached (if configured)
@@ -1376,6 +1397,7 @@ class ScenarioRoadTraffic(BaseScenario):
                 if not is_done[env_idx]:
                     self.reset_world_at(env_index=env_idx, agent_index=agent_idx)
         else:
+            # If not in testing mode, we reset all agents in an env if any agent collides with others or lanelets
             is_done = (
                 is_max_steps_reached
                 | is_collision_with_agents

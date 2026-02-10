@@ -317,6 +317,7 @@ def run_evaluations():
                 name_suffix = get_name_suffix(scenario_type, n_agents, random_seed)
                 out_td_filename = f"out_td_{name_suffix}.td"
                 video_basename = f"video_{name_suffix}"
+                task_performance_filename = f"task_performance_{name_suffix}.json"
                 out_td_path = os.path.join(train_path, out_td_filename)
 
                 if os.path.exists(out_td_path):
@@ -348,6 +349,28 @@ def run_evaluations():
                     is_save_simulation_video=parameters.is_save_simulation_video,
                 )
                 print(f"[INFO] Simulation time: {time.time() - t_0:.2f} seconds")
+
+                task_performance_filename = f"task_performance_{name_suffix}.json"
+                env.scenario_name.num_task_tries  # example value: tensor([11], dtype=torch.int32)
+                env.scenario_name.task_success_times  # example value: tensor([3], dtype=torch.int32)
+
+                # Pack into a dictionary
+                task_performance_data = {
+                    "num_task_tries": int(env.scenario_name.num_task_tries.item()),
+                    "task_success_times": int(
+                        env.scenario_name.task_success_times.item()
+                    ),
+                }
+
+                task_performance_path = os.path.join(
+                    train_path, task_performance_filename
+                )
+
+                # Save to JSON
+                with open(task_performance_path, "w") as f:
+                    json.dump(task_performance_data, f, indent=4)
+
+                print(f"[INFO] Saved task performance to {task_performance_path}")
 
                 if parameters.is_save_eval_results:
                     is_trim_td = True
@@ -488,6 +511,26 @@ def compute_cbf_activation_percentage(out_td) -> float:
     )
 
 
+def _load_task_performance(task_perf_path: Path) -> Optional[Dict[str, int]]:
+    """
+    Load task performance JSON:
+      {"num_task_tries": int, "task_success_times": int}
+    Returns None if not found or malformed.
+    """
+    if not task_perf_path.exists():
+        return None
+    try:
+        with open(task_perf_path, "r") as f:
+            d = json.load(f)
+        a = d.get("num_task_tries", None)
+        b = d.get("task_success_times", None)
+        if a is None or b is None:
+            return None
+        return {"num_task_tries": int(a), "task_success_times": int(b)}
+    except Exception:
+        return None
+
+
 # -----------------------------
 # Plotting
 # -----------------------------
@@ -495,53 +538,6 @@ def _style_axis(ax: plt.Axes) -> None:
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(True, axis="y", linewidth=0.6, alpha=0.35)
-
-
-def save_boxplot_pdf(
-    data_by_method: Dict[str, List[float]],
-    method_order: List[str],
-    ylabel: str,
-    out_pdf: Path,
-    title: Optional[str] = None,
-    ylim: Optional[tuple] = None,
-) -> None:
-    fig, ax = plt.subplots(figsize=(4.8, 2.6), constrained_layout=True)
-
-    data = [data_by_method.get(m, []) for m in method_order]
-
-    bp = ax.boxplot(
-        data,
-        tick_labels=method_order,
-        showfliers=True,
-        widths=0.6,
-        patch_artist=True,
-        showmeans=True,
-        meanline=False,  # mean as a point marker
-        meanprops=dict(marker="o", markersize=4, markeredgewidth=0.8),
-        medianprops=dict(linewidth=1.4),
-        whiskerprops=dict(linewidth=1.2),
-        capprops=dict(linewidth=1.2),
-        boxprops=dict(linewidth=1.2),
-    )
-
-    if ylim is not None:
-        ax.set_ylim(ylim)
-
-    # Use matplotlib default color cycle for boxes (no explicit color spec)
-    # but set a light alpha for better print readability.
-    for b in bp["boxes"]:
-        b.set_alpha(0.75)
-
-    ax.set_ylabel(ylabel)
-    if title is not None:
-        ax.set_title(title)
-
-    ax.tick_params(axis="x", rotation=20)
-    _style_axis(ax)
-
-    out_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.02)
-    plt.close(fig)
 
 
 def save_boxplot_pdf(
@@ -696,6 +692,8 @@ def plot_figures(fig_dir: Path) -> None:
     train_reward_curves: Dict[str, List[List[float]]] = {m: [] for m in method_order}
     cbf_activation_degree: Dict[str, Dict[str, List[float]]] = {}
     cbf_activation_rates: Dict[str, Dict[str, List[float]]] = {}
+    task_num_tries: Dict[str, Dict[str, List[float]]] = {}
+    task_success_times: Dict[str, Dict[str, List[float]]] = {}
 
     # Training reward curves (independent of scenario)
     for model_dir in path_list:
@@ -717,6 +715,8 @@ def plot_figures(fig_dir: Path) -> None:
         avg_rews[scenario_type] = {m: [] for m in method_order}
         cbf_activation_degree[scenario_type] = {m: [] for m in method_order}
         cbf_activation_rates[scenario_type] = {m: [] for m in method_order}
+        task_num_tries[scenario_type] = {m: [] for m in method_order}
+        task_success_times[scenario_type] = {m: [] for m in method_order}
 
         # Each entry in path_list is a model folder (often .../h*/seed*)
         for model_dir in path_list:
@@ -746,6 +746,10 @@ def plot_figures(fig_dir: Path) -> None:
                         cbf_act_deg, cbf_act_times = compute_cbf_activation_percentage(
                             out_td
                         )
+                        task_perf_path = (
+                            model_dir / f"task_performance_{name_suffix}.json"
+                        )
+                        tp = _load_task_performance(task_perf_path)
 
                         coll_rates[scenario_type][method_label].append(cr)
                         avg_speeds[scenario_type][method_label].append(vbar)
@@ -756,6 +760,14 @@ def plot_figures(fig_dir: Path) -> None:
                         cbf_activation_rates[scenario_type][method_label].append(
                             cbf_act_times
                         )
+
+                        task_num_tries[scenario_type][method_label].append(
+                            float(tp["num_task_tries"])
+                        )
+                        task_success_times[scenario_type][method_label].append(
+                            float(tp["task_success_times"])
+                        )
+
                     except Exception as e:
                         print(f"[WARNING] Failed on {out_td_path}: {e}")
 
@@ -767,6 +779,8 @@ def plot_figures(fig_dir: Path) -> None:
         out_train_rew_pdf = fig_dir / "training_reward_curve.pdf"
         out_cbf_act_degree_pdf = fig_dir / f"{scenario_tag}_cbf_activation_degree.pdf"
         out_cbf_act_rate_pdf = fig_dir / f"{scenario_tag}_cbf_activation_rate.pdf"
+        out_task_tries_pdf = fig_dir / f"{scenario_tag}_num_task_tries.pdf"
+        out_task_success_pdf = fig_dir / f"{scenario_tag}_task_success_times.pdf"
 
         title_coll = f"{scenario_type}"
         title_speed = f"{scenario_type}"
@@ -914,12 +928,32 @@ def plot_figures(fig_dir: Path) -> None:
             ylim=(0, 20),
         )
 
+        save_boxplot_pdf(
+            data_by_method=task_num_tries[scenario_type],
+            method_order=method_order,
+            ylabel="Num. Task Tries",
+            out_pdf=out_task_tries_pdf,
+            title=title_speed,
+            ylim=None,
+        )
+
+        save_boxplot_pdf(
+            data_by_method=task_success_times[scenario_type],
+            method_order=method_order,
+            ylabel="Task Success Times",
+            out_pdf=out_task_success_pdf,
+            title=title_speed,
+            ylim=None,
+        )
+
         print(f"[INFO] Saved: {out_coll_pdf}")
         print(f"[INFO] Saved: {out_speed_pdf}")
         print(f"[INFO] Saved: {out_rew_pdf}")
         print(f"[INFO] Saved: {out_train_rew_pdf}")
         print(f"[INFO] Saved: {out_cbf_act_degree_pdf}")
         print(f"[INFO] Saved: {out_cbf_act_rate_pdf}")
+        print(f"[INFO] Saved: {out_task_tries_pdf}")
+        print(f"[INFO] Saved: {out_task_success_pdf}")
 
 
 if __name__ == "__main__":
