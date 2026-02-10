@@ -1011,7 +1011,7 @@ class ScenarioRoadTraffic(BaseScenario):
             # Training mode
             if self.parameters.rew_method == "sparse":
                 # No reward shaping, usually during testing, since reward shaping is only for guiding the learning but may not reflect the actual performance of the learned policy
-                self.rew += reward_goal
+                # self.rew += reward_goal
                 self.rew += penalty_collide_other_agents
                 self.rew += penalty_collide_lanelet
 
@@ -1029,6 +1029,72 @@ class ScenarioRoadTraffic(BaseScenario):
 
                 self.rew += penalty_close_to_agents
                 self.rew += penalty_close_to_lanelets
+
+            if self.parameters.rew_method == "distance":
+                ##################################################
+                ## [penalty] close to other agents
+                ##################################################
+                mutual_distance_exp_fcn = decreasing_fcn(
+                    x=self.world_state.distances.agents[:, agent_index, :],
+                    x0=self.thresholds.near_other_agents_low,
+                    x1=self.thresholds.near_other_agents_high,
+                    type="linear",
+                )
+                penalty_close_to_agents = (
+                    torch.sum(mutual_distance_exp_fcn, dim=1)
+                    * self.penalties.near_other_agents
+                )
+
+                self.reward_info.rew_near_other_agents[
+                    :, agent_index
+                ] = penalty_close_to_agents
+
+                self.rew += penalty_close_to_agents
+
+                self.rew += penalty_close_to_lanelets
+
+            if self.parameters.rew_method == "ttc_sparse":
+                penalty_close_to_agents = self._apply_ttc_near_agent_penalty(
+                    agent_index=agent_index,
+                    decreasing_fcn=decreasing_fcn,
+                    ttc_low=0.75,
+                    ttc_high=3.00,
+                )
+
+                self.reward_info.rew_near_other_agents[
+                    :, agent_index
+                ] = penalty_close_to_agents
+
+                self.rew += penalty_close_to_agents
+                self.rew += penalty_close_to_lanelets
+
+                self.rew += penalty_collide_other_agents
+                self.rew += penalty_collide_lanelet
+
+            if self.parameters.rew_method == "distance_sparse":
+                ##################################################
+                ## [penalty] close to other agents
+                ##################################################
+                mutual_distance_exp_fcn = decreasing_fcn(
+                    x=self.world_state.distances.agents[:, agent_index, :],
+                    x0=self.thresholds.near_other_agents_low,
+                    x1=self.thresholds.near_other_agents_high,
+                    type="linear",
+                )
+                penalty_close_to_agents = (
+                    torch.sum(mutual_distance_exp_fcn, dim=1)
+                    * self.penalties.near_other_agents
+                )
+
+                self.reward_info.rew_near_other_agents[
+                    :, agent_index
+                ] = penalty_close_to_agents
+
+                self.rew += penalty_close_to_agents
+                self.rew += penalty_close_to_lanelets
+
+                self.rew += penalty_collide_other_agents
+                self.rew += penalty_collide_lanelet
 
             if self.parameters.rew_method == "cbf":
                 ##################################################
@@ -1063,29 +1129,6 @@ class ScenarioRoadTraffic(BaseScenario):
                     if (cbf_rew >= 0).all():
                         print(f"cbf_rew: {cbf_rew}")
                     self.rew += cbf_rew
-
-            if self.parameters.rew_method == "distance":
-                ##################################################
-                ## [penalty] close to other agents
-                ##################################################
-                mutual_distance_exp_fcn = decreasing_fcn(
-                    x=self.world_state.distances.agents[:, agent_index, :],
-                    x0=self.thresholds.near_other_agents_low,
-                    x1=self.thresholds.near_other_agents_high,
-                    type="linear",
-                )
-                penalty_close_to_agents = (
-                    torch.sum(mutual_distance_exp_fcn, dim=1)
-                    * self.penalties.near_other_agents
-                )
-
-                self.reward_info.rew_near_other_agents[
-                    :, agent_index
-                ] = penalty_close_to_agents
-
-                self.rew += penalty_close_to_agents
-
-                self.rew += penalty_close_to_lanelets
 
             # else:
             #     raise ValueError(
