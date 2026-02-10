@@ -82,6 +82,11 @@ parameters.is_testing_mode = False
 parameters.lane_width = 0.25  # lane width in meter (except cpm_mixed and cpm_entire)
 parameters.reward_progress = reward_progress
 
+if parameters.h_nom is not None and "cbf" not in parameters.rew_method:
+    raise ValueError(
+        "CBF reward method is not compatible with h_nom specified. Please set rew_method to a non-CBF method or set h_nom to None."
+    )
+
 if parameters.h_nom is None:
     parameters.is_using_cbf_training = False
     if rew_method is not None:
@@ -98,6 +103,7 @@ else:
 
 print(f"[INFO] Using reward method = {parameters.rew_method}")
 parameters.where_to_save = f"checkpoints/itsc26/{scenario_type}/rew_method_{parameters.rew_method}/reward_progress{reward_progress}/seed{random_seed}/"
+parameters.where_to_save = "outputs/test/"
 
 # ===============================
 # Save parameters and AGENTS
