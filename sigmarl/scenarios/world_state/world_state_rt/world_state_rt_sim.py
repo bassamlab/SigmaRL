@@ -24,6 +24,7 @@ class WorldStateRTSimParameters(WorldStateRTParameters):
     scenario_type: str
     cpm_scenario_probabilities: List[float]
     reset_agent_min_distance: torch.Tensor
+    is_testing_mode: bool = False  # Whether it is in testing mode
 
 
 class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
@@ -248,13 +249,15 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
             num_points = ref_path["center_line"].shape[0]
 
-            if self.params.scenario_type == "cpm_mixed":
-                # In the mixed scenarios of the CPM case, we avoid using the beginning part of a path, making agents encounter each other more frequently. Additionally, We avoid initializing agents to be at a very end of a path.
-                start_point_idx = 3
-                end_point_idx = int(num_points / 2)
+            start_point_idx = 3
+            if self.params.is_testing_mode:
+                end_point_idx = (
+                    start_point_idx + 1
+                )  # In testing mode, we initialize agents at the entry point of the path to make sure they can be initialized in a consistent way
             else:
-                start_point_idx = 3  # Do not set to an overly small value to make sure agents are fully inside its lane
-                end_point_idx = num_points - 3
+                end_point_idx = int(
+                    num_points / 2
+                )  # If not testing mode, we initialize agents at a random point in the first half of the path to avoid repeatedly learn the same experimence at the begining of the path
 
             random_point_id = torch.randint(
                 start_point_idx, end_point_idx, (1,)

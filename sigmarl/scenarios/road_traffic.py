@@ -11,7 +11,7 @@ from termcolor import colored, cprint
 import torch
 from torch import Tensor
 import torch.nn.functional as F
-from typing import Dict
+from typing import Callable, Dict
 
 from sigmarl.scenarios.observations.observation_provider_rt import (
     RoadTrafficObservationProviderSimulation,
@@ -672,6 +672,7 @@ class ScenarioRoadTraffic(BaseScenario):
                 scenario_type=self.parameters.scenario_type,
                 cpm_scenario_probabilities=self.parameters.cpm_scenario_probabilities,
                 reset_agent_min_distance=self.constants.reset_agent_min_distance,
+                is_testing_mode=self.parameters.is_testing_mode,
             ),
             self.map,
         )
@@ -903,190 +904,113 @@ class ScenarioRoadTraffic(BaseScenario):
         # [update] mutual distances between agents, vertices of each agent, and collision matrices
         self.world_state.update_state_before_rewarding(agent_index)
 
-        if self.parameters.rew_method == "sparse":
-            # No reward shaping, usually during testing, since reward shaping is only for guiding the learning but may not reflect the actual performance of the learned policy
-            #################################################
-            # [reward] reach goal
-            #################################################
-            reward_goal = (
-                self.world_state.collisions.with_exit_segments[:, agent_index]
-                * self.rewards.reach_goal
+        ##################################################
+        ## [reward] forward movement
+        ##################################################
+        latest_state = self.state_buffer.get_latest(n=1)
+        move_vec = (agent.state.pos - latest_state[:, agent_index, 0:2]).unsqueeze(
+            1
+        )  # Vector of the current movement
+
+        ref_points_vecs = self.world_state.ref_paths_agent_related.short_term[
+            :, agent_index
+        ] - latest_state[:, agent_index, 0:2].unsqueeze(
+            1
+        )  # Vectors from the previous position to the points on the short-term reference path
+        move_projected = torch.sum(move_vec * ref_points_vecs, dim=-1)
+        move_projected_weighted = torch.matmul(
+            move_projected, self.rewards.weighting_ref_directions
+        )  # Put more weights on nearing reference points
+
+        reward_movement = (
+            move_projected_weighted
+            / (agent.max_speed * self.world.dt)
+            * self.rewards.progress
+        )
+        self.rew += reward_movement  # Shared by all reward methods
+
+        #################################################
+        # [reward] reach goal
+        #################################################
+        reward_goal = (
+            self.world_state.collisions.with_exit_segments[:, agent_index]
+            * self.rewards.reach_goal
+        )
+        self.reward_info.rew_reach_goal[:, agent_index] = reward_goal
+
+        # ##################################################
+        # ## [penalty] colliding with other agents
+        # ##################################################
+        is_collide_with_agents = self.world_state.collisions.with_agents[:, agent_index]
+        penalty_collide_other_agents = (
+            is_collide_with_agents.any(dim=-1) * self.penalties.collide_with_agents
+        )
+        self.reward_info.rew_collide_other_agents[
+            :, agent_index
+        ] = penalty_collide_other_agents
+
+        ##################################################
+        ## [penalty] colliding with lanelet boundaries
+        ##################################################
+        is_collide_with_lanelets = self.world_state.collisions.with_lanelets[
+            :, agent_index
+        ]
+        penalty_collide_lanelet = (
+            is_collide_with_lanelets * self.penalties.collide_with_boundaries
+        )
+        self.reward_info.rew_collide_lane[:, agent_index] = penalty_collide_lanelet
+
+        ##################################################
+        ## [penalty] close to lanelet boundaries
+        ##################################################
+        penalty_close_to_lanelets = (
+            decreasing_fcn(
+                x=self.world_state.distances.boundaries[:, agent_index],
+                x0=self.thresholds.near_boundary_low,
+                x1=self.thresholds.near_boundary_high,
+                type="linear",
             )
+            * self.penalties.near_boundary
+        )
+
+        if self.parameters.is_testing_mode:
+            if self.parameters.rew_method != "sparse":
+                print(
+                    colored(
+                        f"[WARNING] In testing mode, only sparse reward method is allowed. The given reward method {self.parameters.rew_method} will be ignored and the reward will be computed in a sparse way.",
+                        "red",
+                    )
+                )
+
+            # In testing mode, we care more about the actual performance of the learned policy, so we directly use the sparse reward without reward shaping.
+            # In this way, the reward can better reflect the actual performance of the learned policy, although it may be more difficult to learn due to the lack of guidance from reward shaping.
             self.rew += reward_goal
-            self.reward_info.rew_reach_goal[:, agent_index] = reward_goal
-
-            # ##################################################
-            # ## [penalty] colliding with other agents
-            # ##################################################
-            is_collide_with_agents = self.world_state.collisions.with_agents[
-                :, agent_index
-            ]
-            penalty_collide_other_agents = (
-                is_collide_with_agents.any(dim=-1) * self.penalties.collide_with_agents
-            )
             self.rew += penalty_collide_other_agents
-            self.reward_info.rew_collide_other_agents[
-                :, agent_index
-            ] = penalty_collide_other_agents
-
-            ##################################################
-            ## [penalty] colliding with lanelet boundaries
-            ##################################################
-            is_collide_with_lanelets = self.world_state.collisions.with_lanelets[
-                :, agent_index
-            ]
-            penalty_collide_lanelet = (
-                is_collide_with_lanelets * self.penalties.collide_with_boundaries
-            )
             self.rew += penalty_collide_lanelet
-            self.reward_info.rew_collide_lane[:, agent_index] = penalty_collide_lanelet
-
-            if not self.parameters.is_testing_mode:
-                # If not in testing mode, we can still use reward shaping to guide the learning
-                ##################################################
-                ## [reward] forward movement
-                ##################################################
-                latest_state = self.state_buffer.get_latest(n=1)
-                move_vec = (
-                    agent.state.pos - latest_state[:, agent_index, 0:2]
-                ).unsqueeze(
-                    1
-                )  # Vector of the current movement
-
-                ref_points_vecs = self.world_state.ref_paths_agent_related.short_term[
-                    :, agent_index
-                ] - latest_state[:, agent_index, 0:2].unsqueeze(
-                    1
-                )  # Vectors from the previous position to the points on the short-term reference path
-                move_projected = torch.sum(move_vec * ref_points_vecs, dim=-1)
-                move_projected_weighted = torch.matmul(
-                    move_projected, self.rewards.weighting_ref_directions
-                )  # Put more weights on nearing reference points
-
-                reward_movement = (
-                    move_projected_weighted
-                    / (agent.max_speed * self.world.dt)
-                    * self.rewards.progress
-                )
-                self.rew += reward_movement
-
         else:
-            # Use reward shaping, usually during training
-            ##################################################
-            ## [reward] forward movement
-            ##################################################
-            latest_state = self.state_buffer.get_latest(n=1)
-            move_vec = (agent.state.pos - latest_state[:, agent_index, 0:2]).unsqueeze(
-                1
-            )  # Vector of the current movement
+            # Training mode
+            if self.parameters.rew_method == "sparse":
+                # No reward shaping, usually during testing, since reward shaping is only for guiding the learning but may not reflect the actual performance of the learned policy
+                self.rew += reward_goal
+                self.rew += penalty_collide_other_agents
+                self.rew += penalty_collide_lanelet
 
-            ref_points_vecs = self.world_state.ref_paths_agent_related.short_term[
-                :, agent_index
-            ] - latest_state[:, agent_index, 0:2].unsqueeze(
-                1
-            )  # Vectors from the previous position to the points on the short-term reference path
-            move_projected = torch.sum(move_vec * ref_points_vecs, dim=-1)
-            move_projected_weighted = torch.matmul(
-                move_projected, self.rewards.weighting_ref_directions
-            )  # Put more weights on nearing reference points
-
-            reward_movement = (
-                move_projected_weighted
-                / (agent.max_speed * self.world.dt)
-                * self.rewards.progress
-            )
-            self.rew += reward_movement
-
-            # Near-agent reward/penalty
             if self.parameters.rew_method == "ttc":
-                ##################################################
-                ## [penalty] close to other agents (TTC-based, 2D)
-                ##################################################
-                # Positions and velocities of all agents: [B, N, 2]
-                pos_all = torch.stack([a.state.pos for a in self.world.agents], dim=1)[
-                    ..., 0:2
-                ]
-                vel_all = torch.stack([a.state.vel for a in self.world.agents], dim=1)[
-                    ..., 0:2
-                ]
-
-                pos_i = pos_all[:, agent_index, :]  # [B, 2]
-                vel_i = vel_all[:, agent_index, :]  # [B, 2]
-
-                # Relative states for all j: p_ij = p_j - p_i, v_ij = v_j - v_i
-                p_rel = pos_all - pos_i.unsqueeze(1)  # [B, N, 2]
-                v_rel = vel_all - vel_i.unsqueeze(1)  # [B, N, 2]
-
-                # Safety distance (disc approximation).
-                # In your codebase you already have near_other_agents_low/high for distance shaping.
-                # Using near_other_agents_low as the "contact + buffer" distance is consistent with your previous shaping.
-                d_safe = float(self.thresholds.near_other_agents_low)
-
-                # Optional distance gating to avoid penalizing far-away agents even if TTC is finite.
-                # This is helpful in dense scenes with many agents.
-                d_gate = float(self.thresholds.near_other_agents_high)
-
-                # TTC thresholds (seconds). Recommended to add to your config/thresholds.
-                # Fallback values are conservative and should be tuned.
-                ttc_low = 0.75  # danger zone
-                ttc_high = 3.00  # safe zone
-
-                eps = 1e-6
-
-                # Quadratic coefficients: ||p + v t||^2 = d_safe^2
-                a = (v_rel * v_rel).sum(dim=-1)  # [B, N]
-                b = 2.0 * (p_rel * v_rel).sum(dim=-1)  # [B, N]
-                c = (p_rel * p_rel).sum(dim=-1) - (d_safe * d_safe)  # [B, N]
-
-                disc = b * b - 4.0 * a * c  # [B, N]
-                disc_clamped = torch.clamp(disc, min=0.0)
-                sqrt_disc = torch.sqrt(disc_clamped)
-
-                # Current distances for gating and "already unsafe" handling
-                dist = torch.sqrt(
-                    torch.clamp((p_rel * p_rel).sum(dim=-1), min=0.0)
-                )  # [B, N]
-
-                # Valid approaching interactions:
-                # - positive relative speed (a > eps)
-                # - real roots (disc > 0)
-                # - approaching initially (b < 0)
-                valid = (a > eps) & (disc > 0.0) & (b < 0.0)
-
-                # Earliest intersection time (entry time)
-                ttc = torch.full_like(a, float("inf"))  # [B, N]
-                ttc_candidate = (-b - sqrt_disc) / (2.0 * a + eps)  # [B, N]
-
-                ttc = torch.where(valid & (ttc_candidate > 0.0), ttc_candidate, ttc)
-
-                # If already within safety distance, TTC = 0
-                ttc = torch.where(dist <= d_safe, torch.zeros_like(ttc), ttc)
-
-                # Mask out self-interaction j == i
-                ttc[:, agent_index] = float("inf")
-
-                # Distance gating (recommended)
-                ttc = torch.where(
-                    dist <= d_gate, ttc, torch.full_like(ttc, float("inf"))
+                penalty_close_to_agents = self._apply_ttc_near_agent_penalty(
+                    agent_index=agent_index,
+                    decreasing_fcn=decreasing_fcn,
+                    ttc_low=0.75,
+                    ttc_high=3.00,
                 )
 
-                # Map TTC to a bounded risk in [0,1]
-                # Smaller TTC => larger penalty weight; large TTC/inf => ~0.
-                ttc_for_shape = torch.clamp(ttc, max=ttc_high)
-                risk_per_agent = decreasing_fcn(
-                    x=ttc_for_shape, x0=ttc_low, x1=ttc_high, type="linear"
-                )  # [B, N]
-
-                # Aggregate across other agents. Normalize to reduce dependence on N.
-                risk = risk_per_agent.sum(dim=1) / max(1, self.n_agents - 1)  # [B]
-
-                penalty_close_to_agents = risk * self.penalties.near_other_agents  # [B]
-                self.rew += penalty_close_to_agents
                 self.reward_info.rew_near_other_agents[
                     :, agent_index
                 ] = penalty_close_to_agents
 
-            elif self.parameters.rew_method == "cbf":
+                self.rew += penalty_close_to_agents
+                self.rew += penalty_close_to_lanelets
+
+            if self.parameters.rew_method == "cbf":
                 ##################################################
                 ## [penalty] deviating from CBF safe action
                 ##################################################
@@ -1120,7 +1044,7 @@ class ScenarioRoadTraffic(BaseScenario):
                         print(f"cbf_rew: {cbf_rew}")
                     self.rew += cbf_rew
 
-            elif self.parameters.rew_method == "default":
+            if self.parameters.rew_method == "distance":
                 ##################################################
                 ## [penalty] close to other agents
                 ##################################################
@@ -1134,14 +1058,22 @@ class ScenarioRoadTraffic(BaseScenario):
                     torch.sum(mutual_distance_exp_fcn, dim=1)
                     * self.penalties.near_other_agents
                 )
+
+                self.reward_info.rew_near_other_agents[
+                    :, agent_index
+                ] = penalty_close_to_agents
+
                 self.rew += penalty_close_to_agents
-            else:
-                raise ValueError(
-                    f"The given reward method {self.parameters.rew_method} is not supported. Expected: 'sparse', 'ttc', 'cbf', or 'default'."
-                )
+
+                self.rew += penalty_close_to_lanelets
+
+            # else:
+            #     raise ValueError(
+            #         f"The given reward method {self.parameters.rew_method} is not supported. Expected: 'sparse', 'ttc', 'cbf', or 'default'."
+            #     )
 
             # Addition reward shaping for default reward method
-            # if self.parameters.rew_method == "default":
+            # if self.parameters.rew_method == "distance":
             #     #################################################
             #     # [reward] high velocity
             #     #################################################
@@ -1159,15 +1091,6 @@ class ScenarioRoadTraffic(BaseScenario):
             #         * self.rewards.higth_v
             #     )
             #     self.rew += reward_vel
-
-            #     #################################################
-            #     # [reward] reach goal
-            #     #################################################
-            #     reward_goal = (
-            #         self.world_state.collisions.with_exit_segments[:, agent_index]
-            #         * self.rewards.reach_goal
-            #     )
-            #     self.rew += reward_goal
 
             #     #################################################
             #     # [penalty/reward] time
@@ -1217,48 +1140,6 @@ class ScenarioRoadTraffic(BaseScenario):
             #     )
             #     self.rew += penalty_change_steering
 
-            # Addition reward shaping for both default and ttc-based reward method
-            if (
-                self.parameters.rew_method == "default"
-                or self.parameters.rew_method == "ttc"
-            ):
-                ##################################################
-                ## [penalty] close to lanelet boundaries
-                ##################################################
-                penalty_close_to_lanelets = (
-                    decreasing_fcn(
-                        x=self.world_state.distances.boundaries[:, agent_index],
-                        x0=self.thresholds.near_boundary_low,
-                        x1=self.thresholds.near_boundary_high,
-                        type="linear",
-                    )
-                    * self.penalties.near_boundary
-                )
-                self.rew += penalty_close_to_lanelets
-
-                # ##################################################
-                # ## [penalty] colliding with other agents
-                # ##################################################
-                # is_collide_with_agents = self.world_state.collisions.with_agents[
-                #     :, agent_index
-                # ]
-                # penalty_collide_other_agents = (
-                #     is_collide_with_agents.any(dim=-1)
-                #     * self.penalties.collide_with_agents
-                # )
-                # self.rew += penalty_collide_other_agents
-
-                ##################################################
-                ## [penalty] colliding with lanelet boundaries
-                ##################################################
-                # is_collide_with_lanelets = self.world_state.collisions.with_lanelets[
-                #     :, agent_index
-                # ]
-                # penalty_collide_lanelet = (
-                #     is_collide_with_lanelets * self.penalties.collide_with_boundaries
-                # )
-                # self.rew += penalty_collide_lanelet
-
         if agent_index == (self.n_agents - 1):  # Avoid repeated updating
             state_add = torch.cat(
                 (
@@ -1287,6 +1168,99 @@ class ScenarioRoadTraffic(BaseScenario):
         self.reward_info.rew_total[:, agent_index] = rew_clamed
 
         return rew_clamed
+
+    def _apply_ttc_near_agent_penalty(
+        self,
+        agent_index: int,
+        decreasing_fcn: Callable,
+        ttc_low: float = 0.75,
+        ttc_high: float = 3.00,
+        eps: float = 1e-6,
+    ) -> torch.Tensor:
+        # Near-agent reward/penalty
+        if self.parameters.rew_method == "ttc":
+            ##################################################
+            ## [penalty] close to other agents (TTC-based, 2D)
+            ##################################################
+            # Positions and velocities of all agents: [B, N, 2]
+            pos_all = torch.stack([a.state.pos for a in self.world.agents], dim=1)[
+                ..., 0:2
+            ]
+            vel_all = torch.stack([a.state.vel for a in self.world.agents], dim=1)[
+                ..., 0:2
+            ]
+
+            pos_i = pos_all[:, agent_index, :]  # [B, 2]
+            vel_i = vel_all[:, agent_index, :]  # [B, 2]
+
+            # Relative states for all j: p_ij = p_j - p_i, v_ij = v_j - v_i
+            p_rel = pos_all - pos_i.unsqueeze(1)  # [B, N, 2]
+            v_rel = vel_all - vel_i.unsqueeze(1)  # [B, N, 2]
+
+            # Safety distance (disc approximation).
+            # In your codebase you already have near_other_agents_low/high for distance shaping.
+            # Using near_other_agents_low as the "contact + buffer" distance is consistent with your previous shaping.
+            d_safe = float(self.thresholds.near_other_agents_low)
+
+            # Optional distance gating to avoid penalizing far-away agents even if TTC is finite.
+            # This is helpful in dense scenes with many agents.
+            d_gate = float(self.thresholds.near_other_agents_high)
+
+            # TTC thresholds (seconds). Recommended to add to your config/thresholds.
+            # Fallback values are conservative and should be tuned.
+            ttc_low = 0.75  # danger zone
+            ttc_high = 3.00  # safe zone
+
+            eps = 1e-6
+
+            # Quadratic coefficients: ||p + v t||^2 = d_safe^2
+            a = (v_rel * v_rel).sum(dim=-1)  # [B, N]
+            b = 2.0 * (p_rel * v_rel).sum(dim=-1)  # [B, N]
+            c = (p_rel * p_rel).sum(dim=-1) - (d_safe * d_safe)  # [B, N]
+
+            disc = b * b - 4.0 * a * c  # [B, N]
+            disc_clamped = torch.clamp(disc, min=0.0)
+            sqrt_disc = torch.sqrt(disc_clamped)
+
+            # Current distances for gating and "already unsafe" handling
+            dist = torch.sqrt(
+                torch.clamp((p_rel * p_rel).sum(dim=-1), min=0.0)
+            )  # [B, N]
+
+            # Valid approaching interactions:
+            # - positive relative speed (a > eps)
+            # - real roots (disc > 0)
+            # - approaching initially (b < 0)
+            valid = (a > eps) & (disc > 0.0) & (b < 0.0)
+
+            # Earliest intersection time (entry time)
+            ttc = torch.full_like(a, float("inf"))  # [B, N]
+            ttc_candidate = (-b - sqrt_disc) / (2.0 * a + eps)  # [B, N]
+
+            ttc = torch.where(valid & (ttc_candidate > 0.0), ttc_candidate, ttc)
+
+            # If already within safety distance, TTC = 0
+            ttc = torch.where(dist <= d_safe, torch.zeros_like(ttc), ttc)
+
+            # Mask out self-interaction j == i
+            ttc[:, agent_index] = float("inf")
+
+            # Distance gating (recommended)
+            ttc = torch.where(dist <= d_gate, ttc, torch.full_like(ttc, float("inf")))
+
+            # Map TTC to a bounded risk in [0,1]
+            # Smaller TTC => larger penalty weight; large TTC/inf => ~0.
+            ttc_for_shape = torch.clamp(ttc, max=ttc_high)
+            risk_per_agent = decreasing_fcn(
+                x=ttc_for_shape, x0=ttc_low, x1=ttc_high, type="linear"
+            )  # [B, N]
+
+            # Aggregate across other agents. Normalize to reduce dependence on N.
+            risk = risk_per_agent.sum(dim=1) / max(1, self.n_agents - 1)  # [B]
+
+            penalty_close_to_agents = risk * self.penalties.near_other_agents  # [B]
+
+            return penalty_close_to_agents
 
     def observation(self, agent: Agent):
         """

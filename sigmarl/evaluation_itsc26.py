@@ -101,6 +101,22 @@ def _aggregate_curves(
     return x, mean.tolist(), std.tolist()
 
 
+def _reward_method_from_path(p: str) -> str:
+    """
+    Extract reward method from a path containing '/rew_method_cbf', etc.
+    Returns 'unknown' if not found.
+    """
+    m = re.search(r"/rew_method_([^/]+)", p)
+    return m.group(1) if m else "unknown"
+
+
+def _reward_method_label(m: str) -> str:
+    """
+    Optional: map folder token to x-axis label.
+    """
+    return m  # e.g., "cbf", "distance", "distance_old", "sparse", "ttc"
+
+
 def _seed_from_path(p: str) -> Optional[int]:
     """
     Extract seed index from a path containing '/seed3', etc.
@@ -109,56 +125,28 @@ def _seed_from_path(p: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def _h_value_from_key(h_key: str) -> float:
-    """
-    'hNone' -> -inf (so baseline comes first within the same reward_progress)
-    'h0.10' -> 0.10
-    """
-    if h_key == "hNone":
-        return float("-inf")
-    m = re.match(r"h([0-9]+(?:\.[0-9]+)?)", h_key)
-    return float(m.group(1)) if m else float("inf")
-
-
 def _path_sort_key(p: str):
     """
-    Primary: reward_progress (ascending)
-    Secondary: baseline first, then increasing h
+    Primary: reward method (custom order)
+    Secondary: reward_progress (ascending, if present)
     Tertiary: seed (ascending)
     """
+    method = _reward_method_from_path(p)
     rp = _reward_progress_from_path(p)
-    h_key = _method_key_from_path(p)
-    h_val = _h_value_from_key(h_key)
     seed = _seed_from_path(p)
 
-    # Put missing values at the end (should not happen for your paths)
+    method_priority = {
+        "cbf": 0,
+        "distance": 1,
+        "distance_old": 2,
+        "sparse": 3,
+        "ttc": 4,
+    }
+    method_key = method_priority.get(method, 10**6)
+
     rp_key = rp if rp is not None else float("inf")
     seed_key = seed if seed is not None else 10**9
-
-    # h_val already puts baseline first (-inf)
-    return (rp_key, h_val, seed_key)
-
-
-def _method_key_from_path(p: str) -> str:
-    """
-    Extract 'h0.04', 'hNone', etc. from any path containing that segment.
-    Falls back to 'unknown' if not found.
-    """
-    m = re.search(r"(/h[^/]+)", p)
-    return m.group(1)[1:] if m else "unknown"
-
-
-def _method_label_from_key(h_key: str) -> str:
-    """
-    Map method key to a label for figures.
-    'hNone' -> 'baseline'
-    'h0.04' -> 'h=0.04'
-    """
-    if h_key == "hNone":
-        return "baseline"
-    if h_key.startswith("h"):
-        return f"h={h_key[1:]}"
-    return h_key
+    return (method_key, rp_key, seed_key)
 
 
 def _reward_progress_from_path(p: str) -> Optional[float]:
@@ -172,17 +160,10 @@ def _reward_progress_from_path(p: str) -> Optional[float]:
 
 def _exp_label_from_path(p: str) -> str:
     """
-    Build legend label that includes both h and reward_progress.
-    Examples:
-      hNone + reward_progress2.5 -> "baseline, rp=2.5"
-      h0.10 + reward_progress5.0 -> "h=0.10, rp=5.0"
+    New experiment label: reward method only, extracted from '/rew_method_*'.
     """
-    h_key = _method_key_from_path(p)
-    h_label = _method_label_from_key(h_key)
-    rp = _reward_progress_from_path(p)
-    if rp is None:
-        return h_label
-    return f"{h_label}, rp={rp:g}"
+    m = _reward_method_from_path(p)
+    return _reward_method_label(m)
 
 
 def _smooth_curve_ema(y: List[float], alpha: float) -> List[float]:
@@ -302,7 +283,7 @@ def run_evaluations():
                 parameters: Parameters = SaveData.from_dict(data).parameters
 
                 parameters.is_testing_mode = True
-                parameters.rew_method = "sparse"  # Reward method: {"default", "cbf_constraint", "cbf_qp", "ttc", "sparse"}
+                parameters.rew_method = "sparse"  # Reward method: {"distance", "cbf_constraint", "cbf_qp", "ttc", "sparse"}
                 parameters.is_real_time_rendering = False
                 parameters.is_save_eval_results = True
                 parameters.is_load_model = True
@@ -310,7 +291,7 @@ def run_evaluations():
                 parameters.is_using_cbf_training = False
                 parameters.is_using_cbf_testing = True
                 parameters.is_solve_qp = True
-                parameters.is_apply_cbf_action = False
+                parameters.is_apply_cbf_action = "do_not_apply" not in train_path
 
                 parameters.is_load_final_model = "final" in train_path
                 parameters.is_load_out_td = False
@@ -320,7 +301,9 @@ def run_evaluations():
                 parameters.scenario_type = scenario_type
                 parameters.n_agents = n_agents
 
-                parameters.is_save_simulation_video = True
+                parameters.is_save_simulation_video = (
+                    True if random_seed == random_seed_list[0] else False
+                )  # Only save video for the first seed to save disk space
                 parameters.is_visualize_short_term_path = True
                 parameters.is_visualize_lane_boundary = False
                 parameters.is_visualize_extra_info = True
@@ -541,18 +524,6 @@ def save_boxplot_pdf(
         boxprops=dict(linewidth=1.2),
     )
 
-    # bp = ax.boxplot(
-    #     data,
-    #     tick_labels=method_order,
-    #     showfliers=True,
-    #     widths=0.6,
-    #     patch_artist=True,
-    #     showmeans=True,
-    #     meanline=False,
-    #     meanprops=dict(marker="o", markersize=4, markeredgewidth=0.8),
-    #     medianprops=dict(linewidth=0),  # hide median
-    # )
-
     if ylim is not None:
         ax.set_ylim(ylim)
 
@@ -560,6 +531,94 @@ def save_boxplot_pdf(
     # but set a light alpha for better print readability.
     for b in bp["boxes"]:
         b.set_alpha(0.75)
+
+    ax.set_ylabel(ylabel)
+    if title is not None:
+        ax.set_title(title)
+
+    ax.tick_params(axis="x", rotation=20)
+    _style_axis(ax)
+
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
+
+
+def save_boxplot_pdf(
+    data_by_method: Dict[str, List[float]],
+    method_order: List[str],
+    ylabel: str,
+    out_pdf: Path,
+    title: Optional[str] = None,
+    ylim: Optional[tuple] = None,
+) -> None:
+    fig, ax = plt.subplots(figsize=(4.8, 2.6), constrained_layout=True)
+
+    data = [data_by_method.get(m, []) for m in method_order]
+
+    bp = ax.boxplot(
+        data,
+        tick_labels=method_order,
+        showfliers=True,
+        widths=0.6,
+        patch_artist=True,
+        showmeans=True,
+        meanline=False,
+        # red mean marker
+        meanprops=dict(
+            marker="o",
+            markersize=4,
+            markeredgewidth=0.8,
+            markerfacecolor="tab:red",
+            markeredgecolor="tab:red",
+        ),
+        medianprops=dict(linewidth=1.4),
+        whiskerprops=dict(linewidth=1.2),
+        capprops=dict(linewidth=1.2),
+        boxprops=dict(linewidth=1.2),
+    )
+
+    if ylim is not None:
+        ax.set_ylim(ylim)
+
+    # Light alpha for boxes (keep matplotlib default cycle)
+    for b in bp["boxes"]:
+        b.set_alpha(0.75)
+
+    # --- Add red mean value text for each method ---
+    # Place within ylim; if mean exceeds, clamp text to top/bottom.
+    y0, y1 = ax.get_ylim()
+    yr = max(y1 - y0, 1e-12)
+    pad = 0.02 * yr  # small vertical padding
+
+    for i, vals in enumerate(data, start=1):  # box positions are 1..K
+        if vals is None or len(vals) == 0:
+            continue
+        mval = float(sum(vals) / len(vals))
+
+        # Default: show text near mean
+        y_text = mval + pad
+        va = "bottom"
+
+        # If outside, pin to boundary and place inside the plot
+        if mval > y1:
+            y_text = y1 - pad
+            va = "top"
+        elif mval < y0:
+            y_text = y0 + pad
+            va = "bottom"
+
+        ax.text(
+            i,
+            y_text,
+            f"{mval:.3f}",
+            color="red",
+            fontsize=9,
+            ha="center",
+            va=va,
+            clip_on=True,
+            bbox=dict(facecolor="white", edgecolor="none", alpha=0.5, pad=0.2),
+        )
 
     ax.set_ylabel(ylabel)
     if title is not None:
@@ -621,56 +680,22 @@ def save_reward_curve_pdf(
     plt.close(fig)
 
 
-# def plot_figures(fig_dir: Path) -> None:
-#     # Derive unique experiment labels: (h, reward_progress)
-#     exp_labels = sorted({_exp_label_from_path(p) for p in path_list})
-
-#     # Put baseline first if present; keep remaining order stable
-#     if any(lbl.startswith("baseline") for lbl in exp_labels):
-#         exp_labels = (
-#             [lbl for lbl in exp_labels if lbl.startswith("baseline")]
-#             + [lbl for lbl in exp_labels if not lbl.startswith("baseline")]
-#         )
-
-#     # Optional: sort non-baseline by numeric h then rp (more readable)
-#     def _sort_key(lbl: str):
-#         # lbl example: "h=0.10, rp=2.5" or "baseline, rp=2.5"
-#         if lbl.startswith("baseline"):
-#             return (-1.0, -1.0)
-#         mh = re.search(r"h=([0-9]+(?:\.[0-9]+)?)", lbl)
-#         mr = re.search(r"rp=([0-9]+(?:\.[0-9]+)?)", lbl)
-#         h = float(mh.group(1)) if mh else 1e9
-#         rp = float(mr.group(1)) if mr else 1e9
-#         return (h, rp)
-
-#     baseline_part = [lbl for lbl in exp_labels if lbl.startswith("baseline")]
-#     others_part = sorted([lbl for lbl in exp_labels if not lbl.startswith("baseline")], key=_sort_key)
-#     method_order = baseline_part + others_part
 def plot_figures(fig_dir: Path) -> None:
-    # Derive unique experiment labels: (h, reward_progress)
-    exp_labels = list({_exp_label_from_path(p) for p in path_list})
+    # Derive unique reward methods
+    exp_labels = sorted({_exp_label_from_path(p) for p in path_list})
 
-    def _label_sort_key(lbl: str):
-        # lbl example: "h=0.10, rp=2.5" or "baseline, rp=2.5"
-        mr = re.search(r"rp=([0-9]+(?:\.[0-9]+)?)", lbl)
-        rp = float(mr.group(1)) if mr else float("inf")
-
-        if lbl.startswith("baseline"):
-            # baseline first within each rp
-            return (rp, 0, float("-inf"))
-
-        mh = re.search(r"h=([0-9]+(?:\.[0-9]+)?)", lbl)
-        h = float(mh.group(1)) if mh else float("inf")
-        return (rp, 1, h)
-
-    method_order = sorted(exp_labels, key=_label_sort_key)
+    # Preferred x-axis order (only keep those that exist)
+    preferred = ["distance", "cbf", "distance_old", "sparse", "ttc", "unknown"]
+    method_order = [m for m in preferred if m in exp_labels] + [
+        m for m in exp_labels if m not in preferred
+    ]
 
     coll_rates: Dict[str, Dict[str, List[float]]] = {}
     avg_speeds: Dict[str, Dict[str, List[float]]] = {}
     avg_rews: Dict[str, Dict[str, List[float]]] = {}
     train_reward_curves: Dict[str, List[List[float]]] = {m: [] for m in method_order}
     cbf_activation_degree: Dict[str, Dict[str, List[float]]] = {}
-    cbf_activation_times: Dict[str, Dict[str, List[float]]] = {}
+    cbf_activation_rates: Dict[str, Dict[str, List[float]]] = {}
 
     # Training reward curves (independent of scenario)
     for model_dir in path_list:
@@ -691,7 +716,7 @@ def plot_figures(fig_dir: Path) -> None:
         avg_speeds[scenario_type] = {m: [] for m in method_order}
         avg_rews[scenario_type] = {m: [] for m in method_order}
         cbf_activation_degree[scenario_type] = {m: [] for m in method_order}
-        cbf_activation_times[scenario_type] = {m: [] for m in method_order}
+        cbf_activation_rates[scenario_type] = {m: [] for m in method_order}
 
         # Each entry in path_list is a model folder (often .../h*/seed*)
         for model_dir in path_list:
@@ -728,7 +753,7 @@ def plot_figures(fig_dir: Path) -> None:
                         cbf_activation_degree[scenario_type][method_label].append(
                             cbf_act_deg
                         )
-                        cbf_activation_times[scenario_type][method_label].append(
+                        cbf_activation_rates[scenario_type][method_label].append(
                             cbf_act_times
                         )
                     except Exception as e:
@@ -741,35 +766,31 @@ def plot_figures(fig_dir: Path) -> None:
         out_rew_pdf = fig_dir / f"{scenario_tag}_avg_total_reward.pdf"
         out_train_rew_pdf = fig_dir / "training_reward_curve.pdf"
         out_cbf_act_degree_pdf = fig_dir / f"{scenario_tag}_cbf_activation_degree.pdf"
-        out_cbf_act_time_pdf = fig_dir / f"{scenario_tag}_cbf_activation_time.pdf"
+        out_cbf_act_rate_pdf = fig_dir / f"{scenario_tag}_cbf_activation_rate.pdf"
 
         title_coll = f"{scenario_type}"
         title_speed = f"{scenario_type}"
 
         log_path = fig_dir / f"{scenario_type}_summary.txt"
 
-        # 1) Find baseline averages for this scenario (same rp if multiple exist).
-        baseline_method = None
-        for m in method_order:
-            if m.startswith("baseline"):
-                baseline_method = m
-                break
+        # 1) Use "distance" as reference method
+        ref_method = "distance" if "distance" in method_order else None
 
-        baseline_stats = None
-        if baseline_method is not None:
-            cr_list_b = coll_rates[scenario_type][baseline_method]
-            vbar_list_b = avg_speeds[scenario_type][baseline_method]
-            rew_list_b = avg_rews[scenario_type][baseline_method]
-            deg_list_b = cbf_activation_degree[scenario_type][baseline_method]
-            time_list_b = cbf_activation_times[scenario_type][baseline_method]
+        ref_stats = None
+        if ref_method is not None:
+            cr_ref = coll_rates[scenario_type][ref_method]
+            v_ref = avg_speeds[scenario_type][ref_method]
+            rew_ref = avg_rews[scenario_type][ref_method]
+            deg_ref = cbf_activation_degree[scenario_type][ref_method]
+            t_ref = cbf_activation_rates[scenario_type][ref_method]
 
-            if len(cr_list_b) > 0:
-                baseline_stats = {
-                    "cr": sum(cr_list_b) / len(cr_list_b),
-                    "v": sum(vbar_list_b) / len(vbar_list_b),
-                    "rew": sum(rew_list_b) / len(rew_list_b),
-                    "deg": sum(deg_list_b) / len(deg_list_b),
-                    "t": sum(time_list_b) / len(time_list_b),
+            if len(cr_ref) > 0:
+                ref_stats = {
+                    "cr": sum(cr_ref) / len(cr_ref),
+                    "v": sum(v_ref) / len(v_ref),
+                    "rew": sum(rew_ref) / len(rew_ref),
+                    "deg": sum(deg_ref) / len(deg_ref),
+                    "t": sum(t_ref) / len(t_ref),
                 }
 
         with open(log_path, "w", encoding="utf-8") as f:
@@ -777,8 +798,8 @@ def plot_figures(fig_dir: Path) -> None:
             print(header)
             f.write(header + "\n")
 
-            if baseline_stats is None:
-                warn = "[WARNING] Baseline not found or has no data; improvements will not be logged."
+            if ref_stats is None:
+                warn = '[WARNING] Reference method "distance" not found or has no data; improvements will not be logged.'
                 print(warn)
                 f.write(warn + "\n")
 
@@ -787,7 +808,7 @@ def plot_figures(fig_dir: Path) -> None:
                 vbar_list = avg_speeds[scenario_type][method]
                 rew_list = avg_rews[scenario_type][method]
                 cbf_act_deg_list = cbf_activation_degree[scenario_type][method]
-                cbf_act_time_list = cbf_activation_times[scenario_type][method]
+                cbf_act_time_list = cbf_activation_rates[scenario_type][method]
 
                 if len(cr_list) == 0:
                     line = f"[INFO] Method: {method}: No data"
@@ -804,36 +825,39 @@ def plot_figures(fig_dir: Path) -> None:
                 line = (
                     f"[INFO] Method: {method}: Collision Rate: {cr_avg:.3f} %, "
                     f"Avg Speed: {vbar_avg:.3f} m/s, Avg Total Reward: {rew_avg:.3f}, "
-                    f"CBF Activation Degree: {cbf_act_deg_avg:.3f} %, CBF Activation Time: {cbf_act_time_avg:.3f} %"
+                    f"CBF Activation Degree: {cbf_act_deg_avg:.3f} %, CBF Activation Rate: {cbf_act_time_avg:.3f} %"
                 )
                 print(line)
                 f.write(line + "\n")
 
-                # 2) Log improvements vs baseline (if available and method is not baseline)
-                if baseline_stats is not None and not method.startswith("baseline"):
-                    d_cr = baseline_stats["cr"] - cr_avg  # positive = fewer collisions
-                    d_v = vbar_avg - baseline_stats["v"]  # positive = faster
-                    d_rew = rew_avg - baseline_stats["rew"]  # positive = higher reward
+                # 2) Log improvements vs "distance"
+                if ref_stats is not None and method != ref_method:
+                    d_cr = (
+                        ref_stats["cr"] - cr_avg
+                    )  # positive = fewer collisions than default
+                    d_v = vbar_avg - ref_stats["v"]  # positive = faster than default
+                    d_rew = (
+                        rew_avg - ref_stats["rew"]
+                    )  # positive = higher reward than default
                     d_deg = (
-                        baseline_stats["deg"] - cbf_act_deg_avg
-                    )  # positive = fewer activations
+                        ref_stats["deg"] - cbf_act_deg_avg
+                    )  # positive = fewer activations than default
                     d_t = (
-                        baseline_stats["t"] - cbf_act_time_avg
-                    )  # positive = fewer activations
+                        ref_stats["t"] - cbf_act_time_avg
+                    )  # positive = fewer activations than default
 
-                    # Relative improvements (%), guarded for divide-by-zero
                     def rel(delta, base):
                         return (
                             100.0 * delta / base if abs(base) > 1e-12 else float("nan")
                         )
 
                     line_imp = (
-                        f"    Improvement vs {baseline_method}: "
-                        f"ΔCollision Rate={d_cr:+.3f} % (rel {rel(d_cr, baseline_stats['cr']):+.2f} %), "
-                        f"ΔAvg Speed={d_v:+.3f} m/s (rel {rel(d_v, baseline_stats['v']):+.2f} %), "
-                        f"ΔAvg Total Reward={d_rew:+.3f} (rel {rel(d_rew, baseline_stats['rew']):+.2f} %), "
-                        f"ΔCBF Activation Degree={d_deg:+.3f} % (rel {rel(d_deg, baseline_stats['deg']):+.2f} %), "
-                        f"ΔCBF Activation Time={d_t:+.3f} % (rel {rel(d_t, baseline_stats['t']):+.2f} %)"
+                        f"    Improvement vs {ref_method}: "
+                        f"ΔCollision Rate={d_cr:+.3f} % (rel {rel(d_cr, ref_stats['cr']):+.2f} %), "
+                        f"ΔAvg Speed={d_v:+.3f} m/s (rel {rel(d_v, ref_stats['v']):+.2f} %), "
+                        f"ΔAvg Total Reward={d_rew:+.3f} (rel {rel(d_rew, ref_stats['rew']):+.2f} %), "
+                        f"ΔCBF Activation Degree={d_deg:+.3f} % (rel {rel(d_deg, ref_stats['deg']):+.2f} %), "
+                        f"ΔCBF Activation Rate={d_t:+.3f} % (rel {rel(d_t, ref_stats['t']):+.2f} %)"
                     )
                     print(line_imp)
                     f.write(line_imp + "\n")
@@ -844,7 +868,7 @@ def plot_figures(fig_dir: Path) -> None:
             ylabel=r"Collision Rate [$\%$]",
             out_pdf=out_coll_pdf,
             title=title_coll,
-            ylim=(0, 2),
+            ylim=(0, 10),
         )
 
         save_boxplot_pdf(
@@ -883,10 +907,10 @@ def plot_figures(fig_dir: Path) -> None:
         )
 
         save_boxplot_pdf(
-            data_by_method=cbf_activation_times[scenario_type],
+            data_by_method=cbf_activation_rates[scenario_type],
             method_order=method_order,
             ylabel=r"CBF Activation Ratio [$\%$]",
-            out_pdf=out_cbf_act_time_pdf,
+            out_pdf=out_cbf_act_rate_pdf,
             ylim=(0, 20),
         )
 
@@ -895,7 +919,7 @@ def plot_figures(fig_dir: Path) -> None:
         print(f"[INFO] Saved: {out_rew_pdf}")
         print(f"[INFO] Saved: {out_train_rew_pdf}")
         print(f"[INFO] Saved: {out_cbf_act_degree_pdf}")
-        print(f"[INFO] Saved: {out_cbf_act_time_pdf}")
+        print(f"[INFO] Saved: {out_cbf_act_rate_pdf}")
 
 
 if __name__ == "__main__":
@@ -921,13 +945,18 @@ if __name__ == "__main__":
 
     print(n_agents_list)
 
-    policy_parent_folder = "checkpoints/itsc26/cpm_mixed_apply_cbf_action/"
+    # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/"
+    # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action/"
+    # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action_final_model/"
+    policy_parent_folder = (
+        "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action_final_model/"
+    )
 
     filtered_path_list = []
 
     for root, dirs, files in os.walk(policy_parent_folder):
         if any(f.endswith(".pth") for f in files):
-            if "reward_progress" in root and "reward_progress10.0" in root:
+            if "reward_progress10.0" in root:
                 # if "reward_progress" in root and "hNone" in root:
                 # if "reward_progress" in root and "h0.10" in root:
                 filtered_path_list.append(root)
@@ -938,14 +967,6 @@ if __name__ == "__main__":
     print(f"Found {len(filtered_path_list)} folders containing .pth files.")
 
     path_list = filtered_path_list
-
-    # path_list = [
-    #     'checkpoints/itsc26/cpm_mixed/h0.12/seed1',
-    #     'checkpoints/itsc26/cpm_mixed/h0.12/seed2',
-    #     'checkpoints/itsc26/cpm_mixed/h0.12/seed3',
-    #     'checkpoints/itsc26/cpm_mixed/h0.12/seed4',
-    #     'checkpoints/itsc26/cpm_mixed/h0.12/seed5',
-    # ]
 
     random_seed_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 

@@ -16,7 +16,6 @@ if hpc_environment:
     os.environ["PYGLET_HEADLESS"] = "True"  # Enable if run in HPC
 
 
-
 def _float_or_none(s: str):
     if s is None:
         return None
@@ -34,7 +33,7 @@ def parse_args():
     parser.add_argument(
         "--rew-method",
         type=str,
-        choices=["cbf", "ttc", "default", "sparse"],
+        choices=["cbf", "ttc", "distance", "sparse"],
         default=None,
     )
 
@@ -90,7 +89,7 @@ if parameters.h_nom is None:
     else:
         print("[INFO] No reward method specified. Using default reward method.")
         parameters.rew_method = (
-            "default"  # Reward method: {"default", "cbf", "ttc", "sparse"}
+            "distance"  # Reward method: {"distance", "cbf", "ttc", "sparse"}
         )
 else:
     parameters.is_using_cbf_training = True
