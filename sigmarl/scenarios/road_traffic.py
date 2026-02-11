@@ -1241,89 +1241,82 @@ class ScenarioRoadTraffic(BaseScenario):
         eps: float = 1e-6,
     ) -> torch.Tensor:
         # Near-agent reward/penalty
-        if self.parameters.rew_method == "ttc":
-            ##################################################
-            ## [penalty] close to other agents (TTC-based, 2D)
-            ##################################################
-            # Positions and velocities of all agents: [B, N, 2]
-            pos_all = torch.stack([a.state.pos for a in self.world.agents], dim=1)[
-                ..., 0:2
-            ]
-            vel_all = torch.stack([a.state.vel for a in self.world.agents], dim=1)[
-                ..., 0:2
-            ]
+        ##################################################
+        ## [penalty] close to other agents (TTC-based, 2D)
+        ##################################################
+        # Positions and velocities of all agents: [B, N, 2]
+        pos_all = torch.stack([a.state.pos for a in self.world.agents], dim=1)[..., 0:2]
+        vel_all = torch.stack([a.state.vel for a in self.world.agents], dim=1)[..., 0:2]
 
-            pos_i = pos_all[:, agent_index, :]  # [B, 2]
-            vel_i = vel_all[:, agent_index, :]  # [B, 2]
+        pos_i = pos_all[:, agent_index, :]  # [B, 2]
+        vel_i = vel_all[:, agent_index, :]  # [B, 2]
 
-            # Relative states for all j: p_ij = p_j - p_i, v_ij = v_j - v_i
-            p_rel = pos_all - pos_i.unsqueeze(1)  # [B, N, 2]
-            v_rel = vel_all - vel_i.unsqueeze(1)  # [B, N, 2]
+        # Relative states for all j: p_ij = p_j - p_i, v_ij = v_j - v_i
+        p_rel = pos_all - pos_i.unsqueeze(1)  # [B, N, 2]
+        v_rel = vel_all - vel_i.unsqueeze(1)  # [B, N, 2]
 
-            # Safety distance (disc approximation).
-            # In your codebase you already have near_other_agents_low/high for distance shaping.
-            # Using near_other_agents_low as the "contact + buffer" distance is consistent with your previous shaping.
-            d_safe = float(self.thresholds.near_other_agents_low)
+        # Safety distance (disc approximation).
+        # In your codebase you already have near_other_agents_low/high for distance shaping.
+        # Using near_other_agents_low as the "contact + buffer" distance is consistent with your previous shaping.
+        d_safe = float(self.thresholds.near_other_agents_low)
 
-            # Optional distance gating to avoid penalizing far-away agents even if TTC is finite.
-            # This is helpful in dense scenes with many agents.
-            d_gate = float(self.thresholds.near_other_agents_high)
+        # Optional distance gating to avoid penalizing far-away agents even if TTC is finite.
+        # This is helpful in dense scenes with many agents.
+        d_gate = float(self.thresholds.near_other_agents_high)
 
-            # TTC thresholds (seconds). Recommended to add to your config/thresholds.
-            # Fallback values are conservative and should be tuned.
-            ttc_low = 0.75  # danger zone
-            ttc_high = 3.00  # safe zone
+        # TTC thresholds (seconds). Recommended to add to your config/thresholds.
+        # Fallback values are conservative and should be tuned.
+        ttc_low = 0.75  # danger zone
+        ttc_high = 3.00  # safe zone
 
-            eps = 1e-6
+        eps = 1e-6
 
-            # Quadratic coefficients: ||p + v t||^2 = d_safe^2
-            a = (v_rel * v_rel).sum(dim=-1)  # [B, N]
-            b = 2.0 * (p_rel * v_rel).sum(dim=-1)  # [B, N]
-            c = (p_rel * p_rel).sum(dim=-1) - (d_safe * d_safe)  # [B, N]
+        # Quadratic coefficients: ||p + v t||^2 = d_safe^2
+        a = (v_rel * v_rel).sum(dim=-1)  # [B, N]
+        b = 2.0 * (p_rel * v_rel).sum(dim=-1)  # [B, N]
+        c = (p_rel * p_rel).sum(dim=-1) - (d_safe * d_safe)  # [B, N]
 
-            disc = b * b - 4.0 * a * c  # [B, N]
-            disc_clamped = torch.clamp(disc, min=0.0)
-            sqrt_disc = torch.sqrt(disc_clamped)
+        disc = b * b - 4.0 * a * c  # [B, N]
+        disc_clamped = torch.clamp(disc, min=0.0)
+        sqrt_disc = torch.sqrt(disc_clamped)
 
-            # Current distances for gating and "already unsafe" handling
-            dist = torch.sqrt(
-                torch.clamp((p_rel * p_rel).sum(dim=-1), min=0.0)
-            )  # [B, N]
+        # Current distances for gating and "already unsafe" handling
+        dist = torch.sqrt(torch.clamp((p_rel * p_rel).sum(dim=-1), min=0.0))  # [B, N]
 
-            # Valid approaching interactions:
-            # - positive relative speed (a > eps)
-            # - real roots (disc > 0)
-            # - approaching initially (b < 0)
-            valid = (a > eps) & (disc > 0.0) & (b < 0.0)
+        # Valid approaching interactions:
+        # - positive relative speed (a > eps)
+        # - real roots (disc > 0)
+        # - approaching initially (b < 0)
+        valid = (a > eps) & (disc > 0.0) & (b < 0.0)
 
-            # Earliest intersection time (entry time)
-            ttc = torch.full_like(a, float("inf"))  # [B, N]
-            ttc_candidate = (-b - sqrt_disc) / (2.0 * a + eps)  # [B, N]
+        # Earliest intersection time (entry time)
+        ttc = torch.full_like(a, float("inf"))  # [B, N]
+        ttc_candidate = (-b - sqrt_disc) / (2.0 * a + eps)  # [B, N]
 
-            ttc = torch.where(valid & (ttc_candidate > 0.0), ttc_candidate, ttc)
+        ttc = torch.where(valid & (ttc_candidate > 0.0), ttc_candidate, ttc)
 
-            # If already within safety distance, TTC = 0
-            ttc = torch.where(dist <= d_safe, torch.zeros_like(ttc), ttc)
+        # If already within safety distance, TTC = 0
+        ttc = torch.where(dist <= d_safe, torch.zeros_like(ttc), ttc)
 
-            # Mask out self-interaction j == i
-            ttc[:, agent_index] = float("inf")
+        # Mask out self-interaction j == i
+        ttc[:, agent_index] = float("inf")
 
-            # Distance gating (recommended)
-            ttc = torch.where(dist <= d_gate, ttc, torch.full_like(ttc, float("inf")))
+        # Distance gating (recommended)
+        ttc = torch.where(dist <= d_gate, ttc, torch.full_like(ttc, float("inf")))
 
-            # Map TTC to a bounded risk in [0,1]
-            # Smaller TTC => larger penalty weight; large TTC/inf => ~0.
-            ttc_for_shape = torch.clamp(ttc, max=ttc_high)
-            risk_per_agent = decreasing_fcn(
-                x=ttc_for_shape, x0=ttc_low, x1=ttc_high, type="linear"
-            )  # [B, N]
+        # Map TTC to a bounded risk in [0,1]
+        # Smaller TTC => larger penalty weight; large TTC/inf => ~0.
+        ttc_for_shape = torch.clamp(ttc, max=ttc_high)
+        risk_per_agent = decreasing_fcn(
+            x=ttc_for_shape, x0=ttc_low, x1=ttc_high, type="linear"
+        )  # [B, N]
 
-            # Aggregate across other agents. Normalize to reduce dependence on N.
-            risk = risk_per_agent.sum(dim=1) / max(1, self.n_agents - 1)  # [B]
+        # Aggregate across other agents. Normalize to reduce dependence on N.
+        risk = risk_per_agent.sum(dim=1) / max(1, self.n_agents - 1)  # [B]
 
-            penalty_close_to_agents = risk * self.penalties.near_other_agents  # [B]
+        penalty_close_to_agents = risk * self.penalties.near_other_agents  # [B]
 
-            return penalty_close_to_agents
+        return penalty_close_to_agents
 
     def observation(self, agent: Agent):
         """

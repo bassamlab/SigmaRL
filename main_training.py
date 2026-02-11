@@ -103,7 +103,6 @@ else:
 
 print(f"[INFO] Using reward method = {parameters.rew_method}")
 parameters.where_to_save = f"checkpoints/itsc26/{scenario_type}/rew_method_{parameters.rew_method}/reward_progress{reward_progress}/seed{random_seed}/"
-parameters.where_to_save = "outputs/test/"
 
 # ===============================
 # Save parameters and AGENTS
