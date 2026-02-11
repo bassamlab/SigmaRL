@@ -39,14 +39,22 @@ class ParseMapBase(ABC):
             "is_visualize_random_agents", False
         )
         self._n_agents_visu = kwargs.pop("n_agents_visu", None)
-        self._is_visualize_intersection = kwargs.pop(
-            "is_visualize_intersection", False
+        self._is_visualize_intersection_area = kwargs.pop(
+            "is_visualize_intersection_area", False
         )  # For the CPM Scenario only
         self._is_visualize_entry_direction = kwargs.pop(
             "is_visualize_entry_direction", False
         )  # Use an arrow to indicate the direction of entries
 
         self._width = kwargs.pop("lane_width", None)
+
+        self._is_visu_intersection_only = kwargs.pop(
+            "is_visu_intersection_only", False
+        )  # Whether to only visualize the intersection area of the map
+
+        self._is_visualize_entry_exit_arrows = kwargs.pop(
+            "is_visualize_entry_exit_arrows", False
+        )  # Draw entry/exit arrows for intersection (CPM scenario)
 
         if self._width is None:
             # Load the lane width from the scenario configuration if not provided

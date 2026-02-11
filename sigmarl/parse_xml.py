@@ -9,6 +9,9 @@ from importlib import resources
 
 import torch
 import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch
+import matplotlib.patheffects as pe
+
 import numpy as np
 
 from sigmarl.parse_map_base import ParseMapBase
@@ -61,7 +64,9 @@ class ParseXML(ParseMapBase):
         self._compute_pseudo_tangent_vectors()
 
         if self._is_visualize_map:
-            self.visualize_map()
+            self.visualize_map(
+                is_visu_intersection_only=self._is_visu_intersection_only
+            )
 
     def _parse_map_file(self):
         with resources.path(
@@ -199,7 +204,7 @@ class ParseXML(ParseMapBase):
         y = float(element.find("y").text) if element.find("y") is not None else None
         return torch.tensor([x, y], device=self._device)
 
-    def visualize_map(self):
+    def visualize_map(self, is_visu_intersection_only: bool = False):
         figsize_x = SCENARIOS[self._scenario_type]["figsize_x"]
         aspect_ratio = self.bounds["max_y"] / self.bounds["max_x"]
 
@@ -212,7 +217,24 @@ class ParseXML(ParseMapBase):
 
         ax.tick_params(axis="both", direction="in")
 
+        intersection_lanelet_ids = None
+        if is_visu_intersection_only:
+            intersection_lanelet_ids = set()
+
+            # All lanelets that appear in any intersection reference path
+            for p in self.reference_paths_intersection:
+                intersection_lanelet_ids.update(p["lanelet_IDs"])
+
+            # Also include outer-boundary lanelets used for shading the intersection
+            intersection_lanelet_ids.update(self._intersection_outer_boundary_ids)
+
         for lanelet in self.lanelets_all:
+            if (
+                intersection_lanelet_ids is not None
+                and lanelet["id"] not in intersection_lanelet_ids
+            ):
+                continue
+
             # Extract coordinates for left, right, and center lines
             left_bound = lanelet["left_boundary"]
             right_bound = lanelet["right_boundary"]
@@ -260,17 +282,33 @@ class ParseXML(ParseMapBase):
                     fontsize=self._fontsize,
                 )
 
-        if self._is_visualize_intersection:
+        if self._is_visualize_intersection_area:
             self._visualize_intersection()
+
+        if self._is_visualize_entry_exit_arrows:
+            self._visualize_entry_exit_arrows(ax)
 
         if self._is_visualize_random_agents:
             if self._n_agents_visu is None:
                 self._n_agents_visu = SCENARIOS[self._scenario_type]["n_agents"]
 
-            if self._scenario_type == "cpm_mixed":
-                self._visualize_random_agents(ax, self.reference_paths_intersection)
+            # If only visualizing the intersection, also sample agents only from intersection reference paths.
+            if self._is_visu_intersection_only:
+                ref_paths_for_agents = self.reference_paths_intersection
             else:
-                self._visualize_random_agents(ax, self.reference_paths)
+                # Keep the original behavior
+                if self._scenario_type == "cpm_mixed":
+                    ref_paths_for_agents = self.reference_paths_intersection
+                else:
+                    ref_paths_for_agents = self.reference_paths
+
+            if self._is_visu_intersection_only and len(ref_paths_for_agents) == 0:
+                raise RuntimeError(
+                    "is_visu_intersection_only=True, but reference_paths_intersection is empty. "
+                    "Ensure _get_reference_paths() has been called and fills intersection paths."
+                )
+
+            self._visualize_random_agents(ax, ref_paths_for_agents)
 
         if self._is_show_axis:
             ax.set_xlabel(r"$x$ [m]", fontsize=self._fontsize)
@@ -332,6 +370,73 @@ class ParseXML(ParseMapBase):
             color="grey",
             alpha=0.2,
         )
+
+    def _visualize_entry_exit_arrows(self, ax: plt.Axes) -> None:
+        """
+        Draw 4 entry arrows (toward intersection) and 4 exit arrows (away from intersection).
+        Robust against TeX/text settings by using patch-based arrows.
+        """
+        # Build intersection boundary polygon from the stored outer-boundary lanelets
+        boundary_list = []
+        for lanelet_id in self._intersection_outer_boundary_ids:
+            lanelet = self.lanelets_all[lanelet_id - 1]  # lanelet IDs start from 1
+            boundary_list.append(lanelet["right_boundary"])
+
+        boundary = torch.vstack(boundary_list)  # (M,2)
+        boundary_np = boundary.detach().cpu().numpy()
+
+        # Center and size from bbox of intersection boundary
+        min_xy = boundary_np.min(axis=0)
+        max_xy = boundary_np.max(axis=0)
+        cx, cy = 0.5 * (min_xy + max_xy)
+        w = max_xy[0] - min_xy[0]
+        h = max_xy[1] - min_xy[1]
+
+        # Geometry (tune if needed)
+        arrow_len = 0.40 * min(w, h)  # arrow length
+        start_dist = 0.75 * min(w, h)  # where entry arrows start (from center)
+        gap = 0.10 * min(w, h)  # keep arrows away from the very center
+
+        # Patch-based arrow with outline
+        def add_arrow(p0, p1):
+            a = FancyArrowPatch(
+                p0,
+                p1,
+                arrowstyle="->",
+                mutation_scale=16,
+                linewidth=2.2,
+                color="white",
+                zorder=10,
+            )
+            a.set_path_effects(
+                [
+                    pe.Stroke(linewidth=4.0, foreground="black"),
+                    pe.Normal(),
+                ]
+            )
+            ax.add_patch(a)
+
+        # Unit directions: N, E, S, W (outward)
+        dirs = [
+            np.array([0.0, 1.0]),  # north
+            np.array([1.0, 0.0]),  # east
+            np.array([0.0, -1.0]),  # south
+            np.array([-1.0, 0.0]),  # west
+        ]
+
+        c = np.array([float(cx), float(cy)])
+
+        # Entries: start outside-ish, point inward
+        for d in dirs:
+            p_start = c + d * start_dist
+            p_end = c + d * gap
+            add_arrow(tuple(p_start), tuple(p_end))
+
+        # Exits: start near center, point outward
+        for d in dirs:
+            p_start = c + d * gap
+            p_end = c + d * (gap + arrow_len)
+            add_arrow(tuple(p_start), tuple(p_end))
 
     def _get_reference_paths(self, is_show_each_ref_path):
         # Mapping agent_id to loop index and starting lanelet: agent_id: (loop_index, starting_lanelet)
@@ -879,8 +984,10 @@ if __name__ == "__main__":
         is_plt_show=False,
         is_visu_lane_ids=False,
         is_visualize_random_agents=True,
-        n_agents_visu=1,
-        is_visualize_intersection=False,
+        n_agents_visu=4,
+        is_visu_intersection_only=True,
+        is_visualize_intersection_area=False,
+        is_visualize_entry_exit_arrows=False,
     )
 
     # print(parser.lanelets_all)
