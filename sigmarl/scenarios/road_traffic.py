@@ -1015,45 +1015,7 @@ class ScenarioRoadTraffic(BaseScenario):
                 self.rew += penalty_collide_other_agents
                 self.rew += penalty_collide_lanelet
 
-            if self.parameters.rew_method == "ttc":
-                penalty_close_to_agents = self._apply_ttc_near_agent_penalty(
-                    agent_index=agent_index,
-                    decreasing_fcn=decreasing_fcn,
-                    ttc_low=0.75,
-                    ttc_high=3.00,
-                )
-
-                self.reward_info.rew_near_other_agents[
-                    :, agent_index
-                ] = penalty_close_to_agents
-
-                self.rew += penalty_close_to_agents
-                self.rew += penalty_close_to_lanelets
-
-            if self.parameters.rew_method == "distance":
-                ##################################################
-                ## [penalty] close to other agents
-                ##################################################
-                mutual_distance_exp_fcn = decreasing_fcn(
-                    x=self.world_state.distances.agents[:, agent_index, :],
-                    x0=self.thresholds.near_other_agents_low,
-                    x1=self.thresholds.near_other_agents_high,
-                    type="linear",
-                )
-                penalty_close_to_agents = (
-                    torch.sum(mutual_distance_exp_fcn, dim=1)
-                    * self.penalties.near_other_agents
-                )
-
-                self.reward_info.rew_near_other_agents[
-                    :, agent_index
-                ] = penalty_close_to_agents
-
-                self.rew += penalty_close_to_agents
-
-                self.rew += penalty_close_to_lanelets
-
-            if self.parameters.rew_method == "ttc_sparse":
+            if "ttc" in self.parameters.rew_method:
                 penalty_close_to_agents = self._apply_ttc_near_agent_penalty(
                     agent_index=agent_index,
                     decreasing_fcn=decreasing_fcn,
@@ -1071,7 +1033,11 @@ class ScenarioRoadTraffic(BaseScenario):
                 self.rew += penalty_collide_other_agents
                 self.rew += penalty_collide_lanelet
 
-            if self.parameters.rew_method == "distance_sparse":
+                if "sparse" in self.parameters.rew_method:
+                    self.rew += penalty_collide_other_agents
+                    self.rew += penalty_collide_lanelet
+
+            if "distance" in self.parameters.rew_method:
                 ##################################################
                 ## [penalty] close to other agents
                 ##################################################
@@ -1093,10 +1059,11 @@ class ScenarioRoadTraffic(BaseScenario):
                 self.rew += penalty_close_to_agents
                 self.rew += penalty_close_to_lanelets
 
-                self.rew += penalty_collide_other_agents
-                self.rew += penalty_collide_lanelet
+                if "sparse" in self.parameters.rew_method:
+                    self.rew += penalty_collide_other_agents
+                    self.rew += penalty_collide_lanelet
 
-            if self.parameters.rew_method == "cbf":
+            if "cbf" in self.parameters.rew_method:
                 ##################################################
                 ## [penalty] deviating from CBF safe action
                 ##################################################
@@ -1120,6 +1087,11 @@ class ScenarioRoadTraffic(BaseScenario):
                     )
 
                     self.rew += cbf_vel_penalty + cbf_steer_penalty
+
+                    if "sparse" in self.parameters.rew_method:
+                        self.rew += penalty_collide_other_agents
+                        self.rew += penalty_collide_lanelet
+
                 else:
                     cbf_rew = (
                         self.reward_info.rew_near_left_lane[:, agent_index]
@@ -1129,6 +1101,10 @@ class ScenarioRoadTraffic(BaseScenario):
                     if (cbf_rew >= 0).all():
                         print(f"cbf_rew: {cbf_rew}")
                     self.rew += cbf_rew
+
+                    if "sparse" in self.parameters.rew_method:
+                        self.rew += penalty_collide_other_agents
+                        self.rew += penalty_collide_lanelet
 
             # else:
             #     raise ValueError(

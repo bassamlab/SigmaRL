@@ -33,7 +33,7 @@ def parse_args():
     parser.add_argument(
         "--rew-method",
         type=str,
-        choices=["cbf", "ttc", "distance", "sparse", "ttc_sparse", "distance_sparse"],
+        choices=["cbf", "ttc", "distance", "sparse", "distance_sparse", "cbf_sparse", "ttc_sparse"],
         default=None,
     )
 
