@@ -280,6 +280,7 @@ def trim_td(out_td: TensorDict, keys_to_keep=None) -> TensorDict:
             ("agents", "info", "ref_lanelet_ids"),
             ("agents", "info", "is_collision_with_agents"),
             ("agents", "info", "is_collision_with_lanelets"),
+            ("agents", "info", "is_reach_goal"),
             ("agents", "info", "rew_reach_goal"),
             ("agents", "info", "rew_collide_other_agents"),
             ("agents", "info", "rew_collide_lane"),

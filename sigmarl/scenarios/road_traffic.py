@@ -947,9 +947,6 @@ class ScenarioRoadTraffic(BaseScenario):
         ].to(
             torch.int32
         )  # Each time an agent reaches the goal (i.e., the exit in this case), increment the task success times by 1
-        print(
-            f"step {self.timer.step[0].item()}: task_success_times: {self.task_success_times[0].item()}, total: {self.num_task_tries[0].item()}"
-        )
         self.reward_info.rew_reach_goal[:, agent_index] = reward_goal
 
         # ##################################################
@@ -1567,6 +1564,9 @@ class ScenarioRoadTraffic(BaseScenario):
             / self.normalizers.distance_lanelet,
             "is_collision_with_agents": is_collision_with_agents,
             "is_collision_with_lanelets": is_collision_with_lanelets,
+            "is_reach_goal": self.world_state.collisions.with_exit_segments[
+                :, agent_index
+            ],
             "ref_lanelet_ids": self.world_state.ref_paths_agent_related.ref_lanelet_ids[
                 :, agent_index
             ],
