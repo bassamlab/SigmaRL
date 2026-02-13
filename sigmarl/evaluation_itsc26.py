@@ -17,36 +17,28 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import sys
 
-# plt.rcParams.update(
-#     {
-#         "font.size": 11,
-#         "axes.labelsize": 11,
-#         "axes.titlesize": 11,
-#         "xtick.labelsize": 11,
-#         "ytick.labelsize": 11,
-#         "legend.fontsize": 11,
-#         "font.family": "serif",
-#         "text.usetex": is_latex_available(),
-#     }
-# )
+import math
+from matplotlib.ticker import FuncFormatter
+import numpy as np
+
 
 # Put near the plotting functions (global constants)
 METHOD_STYLE = {
-    "CBF": {"color": "#0072B2", "ls": "-", "lw": 1.4},  # blue
-    "Distance+Sparse": {"color": "#009E73", "ls": "-", "lw": 1.4},  # green
-    "TTC+Sparse": {"color": "#D55E00", "ls": "-", "lw": 1.4},  # vermillion
-    "Distance": {"color": "#56B4E9", "ls": "--", "lw": 1.4},  # sky blue
+    "CBF (our)": {"color": "#206266", "ls": "-", "lw": 1.2},  # blue
+    "Distance+Sparse": {"color": "#00369B98", "ls": "--", "lw": 1.2},  # green
+    "TTC+Sparse": {"color": "#6937849E", "ls": "--", "lw": 1.2},  # vermillion
+    "Distance": {"color": "#00369B", "ls": "-", "lw": 1.2},  # sky blue
+    "TTC": {"color": "#693784", "ls": "-", "lw": 1.2},  # orange
     "Sparse": {
         "color": "#F0E442",
         "ls": "--",
         "lw": 1.4,
     },  # yellow (use carefully on white)
-    "TTC": {"color": "#E69F00", "ls": "--", "lw": 1.4},  # orange
-    "Distance (Old)": {"color": "#CC79A7", "ls": "--", "lw": 1.4},  # purple
 }
 
 DEFAULT_STYLE = {"color": "0.25", "ls": "-", "lw": 1.2}  # fallback: dark gray
 
+FRAME_PER_ITERATION = 128 * 32
 
 plt.rcParams.update(
     {
@@ -136,6 +128,23 @@ def _aggregate_curves(
     return x, mean.tolist(), std.tolist()
 
 
+def _wrap_method_label(s: str, is_line_break=True) -> str:
+    """
+    Insert line breaks to shorten long method names for x-axis tick labels.
+    """
+    if s == "CBF (our)":
+        return "CBF\n(our)" if is_line_break else "CBF (our)"
+    if s == "Distance+Sparse":
+        return "Distance\nV2" if is_line_break else "Distance V2"
+    if s == "TTC+Sparse":
+        return "TTC\nV2" if is_line_break else "TTC V2"
+    if s == "TTC":
+        return "TTC\nV1" if is_line_break else "TTC V1"
+    if s == "Distance":
+        return "Distance\nV1" if is_line_break else "Distance V1"
+    return s
+
+
 def _reward_method_from_path(p: str) -> str:
     """
     Extract reward method from a path containing '/rew_method_cbf', etc.
@@ -147,7 +156,7 @@ def _reward_method_from_path(p: str) -> str:
 
 def _reward_method_label(m: str) -> str:
     label_map = {
-        "cbf": "CBF",
+        "cbf": "CBF (our)",
         "distance_sparse": "Distance+Sparse",
         "ttc_sparse": "TTC+Sparse",
         "distance": "Distance",
@@ -160,13 +169,12 @@ def _reward_method_label(m: str) -> str:
 
 def _method_sort_key(label: str) -> int:
     priority = {
-        "CBF": 0,
-        "Distance+Sparse": 1,
-        "TTC+Sparse": 2,
-        "Distance": 10,
-        "Sparse": 11,
-        "TTC": 12,
-        "Distance (Old)": 13,
+        "CBF (our)": 0,
+        "Distance": 1,
+        "Distance+Sparse": 2,
+        "TTC": 3,
+        "TTC+Sparse": 4,
+        "Sparse": 5,
     }
     return priority.get(label, 10**6)
 
@@ -377,11 +385,11 @@ def run_evaluations():
                 )
                 out_td_path = os.path.join(train_path, out_td_filename)
 
-                if os.path.exists(out_td_path) and os.path.exists(
-                    task_performance_path
-                ):
-                    print(f"[INFO] Skipping existing output: {train_path}")
-                    continue
+                # if os.path.exists(out_td_path) and os.path.exists(
+                #     task_performance_path
+                # ):
+                #     print(f"[INFO] Skipping existing output: {train_path}")
+                #     continue
 
                 (
                     env,
@@ -592,11 +600,20 @@ def _load_task_performance(task_perf_path: Path) -> Optional[Dict[str, int]]:
 def _style_axis(ax: plt.Axes) -> None:
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.grid(True, axis="y", linewidth=0.6, alpha=0.30)
+
+    ax.grid(True, axis="y", linewidth=0.6, alpha=0.40)
     ax.grid(True, axis="x", linewidth=0.4, alpha=0.15)
+
+    # Start from a clean tick state
+    ax.minorticks_off()
+
+    # Minor ticks only on Y axis
     ax.minorticks_on()
-    ax.tick_params(which="major", length=4, width=0.8)
-    ax.tick_params(which="minor", length=2, width=0.6)
+    ax.xaxis.set_minor_locator(plt.NullLocator())
+
+    # Tick direction "in" for both major and minor
+    ax.tick_params(axis="both", which="major", direction="in", length=4, width=0.8)
+    ax.tick_params(axis="both", which="minor", direction="in", length=2, width=0.6)
 
 
 def save_boxplot_pdf(
@@ -604,9 +621,13 @@ def save_boxplot_pdf(
     method_order: List[str],
     ylabel: str,
     out_pdf: Path,
-    title: Optional[str] = None,
+    unit: Optional[str] = "",
     ylim: Optional[tuple] = None,
     show_fliers: bool = False,  # default cleaner for paper
+    loc_text: str = "center",  # "center" | "right"
+    type_text: str = "average",  # "average" | "median"
+    is_show_x_ticks: bool = True,
+    is_show_x_label: bool = True,
 ) -> None:
     # ~3.35in width matches IEEE single-column better than 4.8in
     fig, ax = plt.subplots(figsize=(3.35, 2.30), constrained_layout=True)
@@ -615,19 +636,10 @@ def save_boxplot_pdf(
 
     bp = ax.boxplot(
         data,
-        tick_labels=method_order,
         showfliers=show_fliers,
         widths=0.55,
         patch_artist=True,
         showmeans=False,
-        # meanline=False,
-        # meanprops=dict(
-        #     marker="o",
-        #     markersize=3.8,
-        #     markeredgewidth=0.8,
-        #     markerfacecolor="tab:red",
-        #     markeredgecolor="tab:red",
-        # ),
         medianprops=dict(linewidth=1.2),
         whiskerprops=dict(linewidth=1.0),
         capprops=dict(linewidth=1.0),
@@ -658,56 +670,94 @@ def save_boxplot_pdf(
 
     if ylim is not None:
         ax.set_ylim(ylim)
-
     y0, y1 = ax.get_ylim()
     yr = max(y1 - y0, 1e-12)
-    pad = 0.02 * yr
 
-    # Annotate mean and n
-    for i, vals in enumerate(data, start=1):  # box positions are 1..K
+    pad_y = 0.02 * yr  # keep text inside axes when clamped
+
+    # box width must match bp widths=0.55
+    box_width = 0.55
+    half_box = 0.5 * box_width
+    gap_x = 0.04  # small gap from box edge when loc_text="right"
+
+    if loc_text not in {"center", "right"}:
+        raise ValueError(f"Unknown loc_text={loc_text}, must be 'center' or 'right'")
+    if type_text not in {"average", "median"}:
+        raise ValueError(
+            f"Unknown type_text={type_text}, must be 'average' or 'median'"
+        )
+
+    for i, vals in enumerate(data, start=1):  # box centers are 1..K
         if vals is None or len(vals) == 0:
             continue
 
         v = torch.tensor([float(x) for x in vals], dtype=torch.float32)
-        med = float(v.median().item())
+        stat_val = (
+            float(v.mean().item())
+            if type_text == "average"
+            else float(v.median().item())
+        )
 
-        # Default: show text near median
-        y_text = med + pad
-        va = "bottom"
-
-        # If outside, pin to boundary and place inside the plot
-        if y_text > y1 - pad:
-            y_text = y1 - pad
+        # y position: at the statistic; clamp inside visible range
+        y_text = stat_val
+        va = "center"
+        if y_text > y1:
+            y_text = y1 - pad_y
             va = "top"
-        elif y_text < y0 + pad:
-            y_text = y0 + pad
+        elif y_text < y0:
+            y_text = y0 + pad_y
             va = "bottom"
 
-        if "%" in ylabel:
-            if plt.rcParams.get("text.usetex", False):
-                text_str = rf"{med:.2f}\%\n(n={len(vals)})"
-            else:
-                text_str = f"{med:.2f}%\n(n={len(vals)})"
+        # x position + alignment
+        if loc_text == "right":
+            x_text = i + half_box + gap_x
+            ha = "left"
+        else:  # "center"
+            x_text = i
+            ha = "center"
+            # tightly above the statistic (unless clamped)
+            if y0 < stat_val < y1:
+                y_text = min(stat_val + pad_y, y1 - pad_y)
+                va = "bottom"
+
+        # format with optional unit
+        if unit is None or unit == "":
+            text_str = f"{stat_val:.2f}"
         else:
-            text_str = f"{med:.2f}\n(n={len(vals)})"
+            if plt.rcParams.get("text.usetex", False) and unit == "%":
+                text_str = f"{stat_val:.2f}\\%"
+            else:
+                text_str = f"{stat_val:.2f}{unit}"
 
         ax.text(
-            i,
+            x_text,
             y_text,
             text_str,
             color="tab:red",
-            fontsize=9,
-            ha="center",
+            fontsize=8,
+            ha=ha,
             va=va,
             clip_on=True,
-            bbox=dict(facecolor="white", edgecolor="none", alpha=0.5, pad=0.2),
+            bbox=dict(facecolor="white", edgecolor="none", alpha=0.5, pad=0.15),
         )
 
     ax.set_ylabel(ylabel)
-    if title is not None:
-        ax.set_title(title)
 
-    ax.tick_params(axis="x", rotation=12)
+    # X label on/off
+    if is_show_x_label:
+        ax.set_xlabel("Reward Methods")
+    else:
+        ax.set_xlabel("")
+
+    # X ticks on/off + wrapped labels
+    if is_show_x_ticks:
+        ax.set_xticks(list(range(1, len(method_order) + 1)))
+        ax.set_xticklabels([_wrap_method_label(m) for m in method_order])
+        ax.tick_params(axis="x", rotation=0)  # rotation usually not needed once wrapped
+    else:
+        ax.set_xticks([])
+        ax.set_xticklabels([])
+
     _style_axis(ax)
 
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
@@ -719,10 +769,10 @@ def save_reward_curve_pdf(
     curves_by_method: Dict[str, List[List[float]]],
     method_order: List[str],
     out_pdf: Path,
-    title: Optional[str] = None,
     ylabel: str = "Episode Reward",
+    frames_per_iteration: int = 1,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(3.35, 2.55), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(3.35, 2.4), constrained_layout=True)
 
     for method in method_order:
         curves = curves_by_method.get(method, [])
@@ -734,6 +784,10 @@ def save_reward_curve_pdf(
         if x is None:
             continue
 
+        x_frames = [frames_per_iteration * xi for xi in x]
+
+        x = x_frames
+
         n_runs = len(curves)
         if n_runs > 1:
             sem = [s / (n_runs**0.5) for s in std]
@@ -741,35 +795,60 @@ def save_reward_curve_pdf(
             sem = [0.0 for _ in std]
 
         style = METHOD_STYLE.get(method, DEFAULT_STYLE)
+        method_legend = _wrap_method_label(method, is_line_break=False)
         line = ax.plot(
             x,
             mean,
             color=style["color"],
             linestyle=style["ls"],
             linewidth=style["lw"],
-            label=f"{method} (n={n_runs})",
+            label=f"{method_legend}",
         )[0]
 
         lo = [m - s for m, s in zip(mean, sem)]
         hi = [m + s for m, s in zip(mean, sem)]
-        ax.fill_between(x, lo, hi, color=style["color"], alpha=0.15, linewidth=0.0)
+        ax.fill_between(x, lo, hi, color=style["color"], alpha=0.2, linewidth=0.0)
 
-        # c = line.get_color()
-        # ax.fill_between(x, lo, hi, color=c, alpha=0.18, linewidth=0.0)
+    def _nice_step(x: float) -> float:
+        """Return a 'nice' step size close to x using {1,2,5}x10^k."""
+        if x <= 0:
+            return 1.0
+        k = math.floor(math.log10(x))
+        base = 10**k
+        m = x / base
+        if m <= 1:
+            return 1 * base
+        if m <= 2:
+            return 2 * base
+        if m <= 5:
+            return 5 * base
+        return 10 * base
 
-    ax.set_xlabel("Episode Index")
-    ax.set_ylabel(ylabel)
-    if title is not None:
-        ax.set_title(title)
-
-    # Cleaner x ticks (avoid dense labels)
+    # Nice x ticks in frames
     if ax.lines:
-        xmax = int(ax.lines[0].get_xdata()[-1])
-        step = max(200, int(xmax / 5))
-        ax.set_xticks(list(range(0, xmax + 1, step)))
+        # Find xmax in frames from plotted data
+        # Use axis limit (not data max) to define ticks
+        xmax_frames = ax.get_xlim()[1]  # this is 4e6
+
+        raw_step = xmax_frames / 5.0
+        step_frames = _nice_step(raw_step)
+
+        n_steps = int(math.floor(xmax_frames / step_frames))
+        xticks = [k * step_frames for k in range(0, n_steps + 1)]  # no +2
+        ax.set_xticks(xticks)
+
+        # Display ticks in millions with clean numbers
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{x/1e6:g}"))
+        ax.set_xlabel(r"Frames ($\times10^6$)")
 
     _style_axis(ax)
-    ax.legend(frameon=False, loc="best")
+    ax.set_xlabel("Frames")
+    ax.set_ylabel(ylabel)
+    ax.set_xlim((0.0, 4.0e6))
+    ax.set_ylim((-0.5, 1.0))
+    ax.set_yticks(np.arange(-0.4, 1.1, 0.2))
+
+    ax.legend(frameon=True, framealpha=0.4, loc="upper left")
 
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.01)
@@ -883,18 +962,15 @@ def plot_figures(fig_dir: Path) -> None:
                         print(f"[WARNING] Failed on {out_td_path}: {e}")
 
         # Per-scenario plots
-        scenario_tag = scenario_type
-        out_coll_pdf = fig_dir / f"{scenario_tag}_collision_rate.pdf"
-        out_speed_pdf = fig_dir / f"{scenario_tag}_avg_speed.pdf"
-        out_rew_pdf = fig_dir / f"{scenario_tag}_avg_total_reward.pdf"
-        out_train_rew_pdf = fig_dir / "training_reward_curve.pdf"
-        out_cbf_act_degree_pdf = fig_dir / f"{scenario_tag}_cbf_activation_degree.pdf"
-        out_cbf_act_rate_pdf = fig_dir / f"{scenario_tag}_cbf_activation_rate.pdf"
-        out_task_tries_pdf = fig_dir / f"{scenario_tag}_num_task_tries.pdf"
-        out_task_success_pdf = fig_dir / f"{scenario_tag}_task_success_rate.pdf"
-
-        title_coll = f"{scenario_type}"
-        title_speed = f"{scenario_type}"
+        out_coll_pdf = fig_dir / "fig_collision_rate.pdf"
+        out_speed_pdf = fig_dir / "fig_speed.pdf"
+        out_rew_pdf = fig_dir / "fig_total_reward.pdf"
+        out_train_rew_pdf = fig_dir / "fig_training_reward_curve.pdf"
+        out_cbf_act_degree_pdf = fig_dir / "fig_cbf_activation_degree.pdf"
+        out_cbf_act_rate_pdf = fig_dir / "fig_cbf_activation_rate.pdf"
+        out_task_tries_pdf = fig_dir / "fig_task_attempts_total.pdf"
+        out_success_task_tries_pdf = fig_dir / "fig_task_attempts_success.pdf"
+        out_task_success_pdf = fig_dir / "fig_task_success_rate.pdf"
 
         log_path = fig_dir / f"{scenario_type}_summary.txt"
 
@@ -996,59 +1072,69 @@ def plot_figures(fig_dir: Path) -> None:
             method_order=method_order,
             ylabel=r"Collision Rate [$\%$]",
             out_pdf=out_coll_pdf,
-            title=title_coll,
+            unit="%",
             ylim=(0, 1),
         )
 
         save_boxplot_pdf(
             data_by_method=avg_speeds[scenario_type],
             method_order=method_order,
-            ylabel=r"Avg. Speed [$\mathrm{m/s}$]",
+            ylabel=r"Speed [$\mathrm{m/s}$]",
             out_pdf=out_speed_pdf,
-            title=title_speed,
+            unit=" m/s",
             ylim=(0, 0.8),
         )
 
         save_boxplot_pdf(
             data_by_method=avg_rews[scenario_type],
             method_order=method_order,
-            ylabel=r"Avg. Total Reward",
+            ylabel=r"Total Reward",
             out_pdf=out_rew_pdf,
-            title=title_speed,
-            ylim=(0, 25),
+            unit="",
+            ylim=(0, 10),
         )
 
         save_reward_curve_pdf(
             curves_by_method=train_reward_curves,
             method_order=method_order,
             out_pdf=out_train_rew_pdf,
-            title="Training Reward",
             ylabel="Episode Reward",
+            frames_per_iteration=FRAME_PER_ITERATION,
         )
 
         save_boxplot_pdf(
             data_by_method=cbf_activation_degree[scenario_type],
             method_order=method_order,
-            ylabel=r"CBF Activation Rel. Degree [$\%$]",
+            ylabel=r"CBF Act. Degree [$\%$]",
             out_pdf=out_cbf_act_degree_pdf,
-            # title="CBF Activation (Rel. Mean Abs. Diff.)",
+            unit="%",
             ylim=(0, 20),
         )
 
         save_boxplot_pdf(
             data_by_method=cbf_activation_rates[scenario_type],
             method_order=method_order,
-            ylabel=r"CBF Activation Ratio [$\%$]",
+            ylabel=r"CBF Act. Ratio [$\%$]",
             out_pdf=out_cbf_act_rate_pdf,
+            unit="%",
             ylim=(0, 20),
         )
 
         save_boxplot_pdf(
             data_by_method=task_num_tries[scenario_type],
             method_order=method_order,
-            ylabel="Num. Task Tries",
+            ylabel="\#Task Attempts",
             out_pdf=out_task_tries_pdf,
-            title=title_speed,
+            unit="",
+            ylim=(0, 50),
+        )
+
+        save_boxplot_pdf(
+            data_by_method=task_success_times[scenario_type],
+            method_order=method_order,
+            ylabel="\#Successful Task Attempts",
+            out_pdf=out_success_task_tries_pdf,
+            unit="",
             ylim=(0, 50),
         )
 
@@ -1057,7 +1143,7 @@ def plot_figures(fig_dir: Path) -> None:
             method_order=method_order,
             ylabel=r"Task Success Rate [$\%$]",
             out_pdf=out_task_success_pdf,
-            title=title_speed,
+            unit="%",
             ylim=(0, 100),
         )
 
@@ -1094,36 +1180,25 @@ if __name__ == "__main__":
 
     print(n_agents_list)
 
-    # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/"
+    policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/"
     # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action/"
-    policy_parent_folder = (
-        "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action_final_model/"
-    )
-    policy_parent_folder = (
-        "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action_final_model/"
-    )
+    # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action_final_model/"
+    # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action_final_model/"
 
     filtered_path_list = []
 
     for root, dirs, files in os.walk(policy_parent_folder):
         if any(f.endswith(".pth") for f in files):
             if "reward_progress10.0" in root:
-                # if "reward_progress" in root and "hNone" in root:
-                # if "reward_progress" in root and "h0.10" in root:
                 filtered_path_list.append(root)
-
-    # Optional: sort for stable order
-    filtered_path_list = sorted(filtered_path_list, key=_path_sort_key)
-
-    print(f"Found {len(filtered_path_list)} folders containing .pth files.")
 
     path_list = filtered_path_list
 
     # path_list must contains one of the method in rew_method_list
-    # rew_method_list = ["cbf/", "distance_sparse/", "ttc_sparse/"]
-    # path_list = [
-    #     path for path in path_list if any(method in path for method in rew_method_list)
-    # ]
+    rew_method_list = ["cbf/", "distance/", "distance_sparse/", "ttc/", "ttc_sparse/"]
+    path_list = [
+        path for path in path_list if any(method in path for method in rew_method_list)
+    ]
 
     random_seed_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
@@ -1138,4 +1213,4 @@ if __name__ == "__main__":
 
     fig_dir = Path(policy_parent_folder) / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
-    # plot_figures(fig_dir)
+    plot_figures(fig_dir)

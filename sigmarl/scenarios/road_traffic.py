@@ -707,8 +707,8 @@ class ScenarioRoadTraffic(BaseScenario):
             self.world_state,
         )
 
-        self.num_task_tries = (
-            torch.zeros(batch_dim, device=device, dtype=torch.int32) + self.n_agents
+        self.num_task_tries = torch.zeros(
+            batch_dim, device=device, dtype=torch.int32
         )  # The total number of tries to complete tasks, initialized to n_agents
         self.task_success_times = torch.zeros(
             batch_dim, device=device, dtype=torch.int32
@@ -832,13 +832,6 @@ class ScenarioRoadTraffic(BaseScenario):
                 initial_state_buffer=self.state_buffer,
             )
 
-            if self.world.agents[0].action.u is not None:
-                # Simulation starts when agents start to generate actions
-                # The reset_world_at is called at very beginning of each episode, even though the simulation has not started yet
-                self.num_task_tries[env_i] += (
-                    self.n_agents if agent_index is None else 1
-                )
-
         reset_indices = (
             range(self.n_agents) if agent_index is None else agent_index.unsqueeze(0)
         )
@@ -947,21 +940,24 @@ class ScenarioRoadTraffic(BaseScenario):
         #################################################
         # [reward] reach goal
         #################################################
-        reward_goal = (
-            self.world_state.collisions.with_exit_segments[:, agent_index]
-            * self.rewards.reach_goal
-        )
+        is_reach_goal = self.world_state.collisions.with_exit_segments[:, agent_index]
+        reward_goal = is_reach_goal * self.rewards.reach_goal
         self.task_success_times[:] += self.world_state.collisions.with_exit_segments[
             :, agent_index
         ].to(
             torch.int32
         )  # Each time an agent reaches the goal (i.e., the exit in this case), increment the task success times by 1
+        print(
+            f"step {self.timer.step[0].item()}: task_success_times: {self.task_success_times[0].item()}, total: {self.num_task_tries[0].item()}"
+        )
         self.reward_info.rew_reach_goal[:, agent_index] = reward_goal
 
         # ##################################################
         # ## [penalty] colliding with other agents
         # ##################################################
-        is_collide_with_agents = self.world_state.collisions.with_agents[:, agent_index]
+        is_collide_with_agents = self.world_state.collisions.with_agents[
+            :, agent_index
+        ]  # [B, N]
         penalty_collide_other_agents = (
             is_collide_with_agents.any(dim=-1) * self.penalties.collide_with_agents
         )
@@ -974,11 +970,19 @@ class ScenarioRoadTraffic(BaseScenario):
         ##################################################
         is_collide_with_lanelets = self.world_state.collisions.with_lanelets[
             :, agent_index
-        ]
+        ]  # [B]
         penalty_collide_lanelet = (
             is_collide_with_lanelets * self.penalties.collide_with_boundaries
         )
         self.reward_info.rew_collide_lane[:, agent_index] = penalty_collide_lanelet
+
+        # Increment the number of task attempts if an collision occurs
+        is_increment_task = (
+            is_collide_with_agents.any(dim=-1)
+            | is_collide_with_lanelets
+            | is_reach_goal
+        )
+        self.num_task_tries[is_increment_task] += 1
 
         ##################################################
         ## [penalty] close to lanelet boundaries
