@@ -1473,9 +1473,6 @@ class ScenarioRoadTraffic(BaseScenario):
         ].any(
             dim=-1
         )  # [batch_dim]
-        is_collision_with_lanelets = self.world_state.collisions.with_lanelets.any(
-            dim=-1
-        )
 
         # Zero-padding as a placeholder for actions of surrounding agents
         base_obs = F.pad(
@@ -1563,7 +1560,9 @@ class ScenarioRoadTraffic(BaseScenario):
             ].min(dim=-1)[0]
             / self.normalizers.distance_lanelet,
             "is_collision_with_agents": is_collision_with_agents,
-            "is_collision_with_lanelets": is_collision_with_lanelets,
+            "is_collision_with_lanelets": self.world_state.collisions.with_lanelets[
+                :, agent_index
+            ],
             "is_reach_goal": self.world_state.collisions.with_exit_segments[
                 :, agent_index
             ],
