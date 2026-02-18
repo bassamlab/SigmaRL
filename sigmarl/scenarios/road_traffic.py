@@ -1099,8 +1099,6 @@ class ScenarioRoadTraffic(BaseScenario):
                         + self.reward_info.rew_near_right_lane[:, agent_index]
                         + self.reward_info.rew_near_other_agents[:, agent_index]
                     ) / 3
-                    if (cbf_rew >= 0).all():
-                        print(f"cbf_rew: {cbf_rew}")
                     self.rew += cbf_rew
 
                     if "sparse" in self.parameters.rew_method:
