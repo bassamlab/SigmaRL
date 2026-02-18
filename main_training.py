@@ -90,23 +90,20 @@ parameters.is_testing_mode = False
 parameters.lane_width = 0.25  # lane width in meter (except cpm_mixed and cpm_entire)
 parameters.reward_progress = reward_progress
 
-if parameters.h_nom is not None and "cbf" not in parameters.rew_method:
+if (parameters.h_nom is not None) and ("cbf" not in rew_method):
     raise ValueError(
         "CBF reward method is not compatible with h_nom specified. Please set rew_method to a non-CBF method or set h_nom to None."
     )
 
 if parameters.h_nom is None:
     parameters.is_using_cbf_training = False
-    if rew_method is not None:
-        parameters.rew_method = rew_method
-    else:
+    parameters.rew_method = "distance" if rew_method is None else rew_method
+    if rew_method is None:
         print("[INFO] No reward method specified. Using default reward method.")
-        parameters.rew_method = (
-            "distance"  # Reward method: {"distance", "cbf", "ttc", "sparse"}
-        )
 else:
     parameters.is_using_cbf_training = True
-    parameters.rew_method = "cbf"
+
+parameters.rew_method = rew_method
 
 
 print(f"[INFO] Using reward method = {parameters.rew_method}")

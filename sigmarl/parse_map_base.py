@@ -52,10 +52,6 @@ class ParseMapBase(ABC):
             "is_visu_intersection_only", False
         )  # Whether to only visualize the intersection area of the map
 
-        self._is_visualize_entry_exit_arrows = kwargs.pop(
-            "is_visualize_entry_exit_arrows", False
-        )  # Draw entry/exit arrows for intersection (CPM scenario)
-
         if self._width is None:
             # Load the lane width from the scenario configuration if not provided
             self._width = SCENARIOS[self._scenario_type][
