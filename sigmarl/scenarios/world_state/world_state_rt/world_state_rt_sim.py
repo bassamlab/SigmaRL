@@ -226,6 +226,8 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
         ref_path, path_id, random_point_id = None, None, None
 
+        start_point_idx = 3
+        end_point_idx = 3
         # Randomly generate initial states for each agent
         while not is_feasible_initial_position_found:
 
@@ -249,15 +251,14 @@ class WorldStateRTSimulation(WorldStateRT, WorldStateSim):
 
             num_points = ref_path["center_line"].shape[0]
 
-            start_point_idx = 3
             if self.params.is_testing_mode:
-                end_point_idx = (
-                    start_point_idx + 1
-                )  # In testing mode, we initialize agents at the entry point of the path to make sure they can be initialized in a consistent way
+                end_point_idx += random_count  # If the initial position is not feasible, we relax the region for initialization
             else:
                 end_point_idx = int(
                     num_points / 2
                 )  # If not testing mode, we initialize agents at a random point in the first half of the path to avoid repeatedly learn the same experimence at the begining of the path
+
+            end_point_idx = min(end_point_idx, int(num_points / 2))  # Set a limitation
 
             random_point_id = torch.randint(
                 start_point_idx, end_point_idx, (1,)
