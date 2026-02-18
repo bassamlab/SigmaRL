@@ -67,6 +67,7 @@ if path_to_json_file is not None and os.path.isfile(path_to_json_file):
         data = json.load(file)
     saved_data = SaveData.from_dict(data)
     parameters: Parameters = saved_data.parameters
+    parameters.where_to_save = path
 else:
     print(
         "[WARNING] No JSON file found in output folder. Initializing default Parameters."
