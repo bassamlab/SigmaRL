@@ -7,7 +7,7 @@ from sigmarl.helper_common import get_name_suffix
 PYTHON_EXEC = "python"
 SCRIPT = "main_eval.py"
 
-OUTPUT_DIR = "outputs/marl_cbf_fixed_group_2_best_rl"
+OUTPUT_DIR = "outputs/marl_cbf_new/cbf_informed_rl/seed1"
 
 print("Launcher started", flush=True)
 
@@ -16,16 +16,22 @@ def build_configs(is_skip_if_exist: bool = True):
     configs = []
     skipped = 0
 
-    seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     grouping_flags = [True, False]
-    nom_controllers = ["clf", "rl"]
-    # ["CPM_entire", "intersection_6", "intersection_4", "intersection_6", "interchange_3"]
-    scenario_types = ["intersection_6", "intersection_4", "interchange_3", "CPM_entire"]
-    # scenario_types = ["CPM_entire", "interchange_3"]
+    nom_controllers = ["rl"]
+    # ["cpm_entire", "intersection_6", "intersection_4", "intersection_6", "interchange_3"]
+    scenario_types = [
+        "intersection_6",
+        "intersection_4",
+        "interchange_3",
+        "cpm_entire",
+        "cpm_mixed",
+    ]
+    # scenario_types = ["cpm_entire", "interchange_3"]
     is_using_cbf_testing_list = [True, False]
 
     for scenario in scenario_types:
-        if scenario == "CPM_entire":
+        if scenario == "cpm_entire":
             n_agents = [10, 12, 14, 16]
             max_group_sizes = [1, 2, 3, 4]
         elif scenario == "intersection_6":
@@ -37,6 +43,9 @@ def build_configs(is_skip_if_exist: bool = True):
         elif scenario == "interchange_3":
             n_agents = [6, 8, 10, 12]
             max_group_sizes = [1, 2, 3, 4]
+        elif scenario == "cpm_mixed":
+            n_agents = [4, 5, 6]
+            max_group_sizes = [2, 2, 3]
         else:
             raise ValueError(
                 f"Please define n_agents and max_group_sizes for scenario type: {scenario}"

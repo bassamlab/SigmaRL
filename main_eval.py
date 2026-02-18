@@ -122,12 +122,12 @@ parameters.observation_range = 0.5
 parameters.n_circles_approximate_vehicle = 3
 parameters.adaptive_lambda = True
 parameters.random_seed = args.random_seed
+parameters.rew_method = "sparse"
 
-# if parameters.random_seed == 0:
-#     parameters.is_save_simulation_video = True
-# else:
-#     parameters.is_save_simulation_video = False
-parameters.is_save_simulation_video = False
+if parameters.random_seed == 1:
+    parameters.is_save_simulation_video = True
+else:
+    parameters.is_save_simulation_video = False
 
 # ===============================
 # Build system
