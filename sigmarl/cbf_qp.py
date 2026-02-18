@@ -1289,7 +1289,9 @@ class CBFQP:
             st = prob.solver_stats
             if hasattr(st, "solve_time"):
                 self.hist.qp_solving_t.append(st.solve_time)
-                # print(f"[INFO] Centralized QP solving time: {st.solve_time * 1000:.2f} ms. Over all time steps: {np.mean(self.hist.qp_solving_t)*1000:.2f} ms.")
+                print(
+                    f"[INFO] Centralized QP solving time: {st.solve_time * 1000:.2f} ms. Over all time steps: {np.mean(self.hist.qp_solving_t)*1000:.2f} ms."
+                )
             if hasattr(st, "num_iters"):
                 self.hist.qp_solving_iter.append(st.num_iters)
 
@@ -2252,7 +2254,9 @@ class CBFQP:
 
         self.hist.qp_solving_t.append(qp_solving_t_groups)
         t_avg = sum(qp_solving_t_groups) / max(1, len(qp_solving_t_groups))
-        # print(f"[INFO] Semi-centralized QP solving time per group: {t_avg*1000:.2f} ms. Over all time steps: {np.mean(np.array(self.hist.qp_solving_t))*1000:.2f} ms")
+        print(
+            f"[INFO] Semi-centralized QP solving time per group: {t_avg*1000:.2f} ms. Over all time steps: {np.mean(np.array(self.hist.qp_solving_t))*1000:.2f} ms"
+        )
         self.hist.qp_solving_iter.append(qp_solving_iter_groups)
 
         # For visualization of nominal actions

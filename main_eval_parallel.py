@@ -3,11 +3,23 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 import os
 from sigmarl.helper_common import get_name_suffix
+from pathlib import Path
+import matplotlib
+
+matplotlib.use("Agg")
+import os
+
+os.environ["PYGLET_HEADLESS"] = "true"
+
 
 PYTHON_EXEC = "python"
 SCRIPT = "main_eval.py"
-
 OUTPUT_DIR = "outputs/marl_cbf_new/cbf_informed_rl/seed1"
+
+LOG_DIR = Path(OUTPUT_DIR) / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+print(f"See logs at {LOG_DIR}")
+
 
 print("Launcher started", flush=True)
 
@@ -32,25 +44,28 @@ def build_configs(is_skip_if_exist: bool = True):
 
     for scenario in scenario_types:
         if scenario == "cpm_entire":
-            n_agents = [10, 12, 14, 16]
-            max_group_sizes = [1, 2, 3, 4]
+            n_agents = [10]
+            max_group_sizes = [1, 2, 5, 10]
         elif scenario == "intersection_6":
-            n_agents = [12, 16, 20, 24]
-            max_group_sizes = [1, 2, 4, 8]
+            n_agents = [10]
+            max_group_sizes = [1, 2, 5, 10]
         elif scenario == "intersection_4":
-            n_agents = [10, 13, 16, 20]
-            max_group_sizes = [1, 2, 4, 6]
+            n_agents = [8]
+            max_group_sizes = [1, 2, 4, 8]
         elif scenario == "interchange_3":
-            n_agents = [6, 8, 10, 12]
-            max_group_sizes = [1, 2, 3, 4]
+            n_agents = [8]
+            max_group_sizes = [1, 2, 4, 8]
         elif scenario == "cpm_mixed":
-            n_agents = [4, 5, 6]
-            max_group_sizes = [2, 2, 3]
+            n_agents = [4]
+            max_group_sizes = [1, 2, 3, 4]
         else:
             raise ValueError(
                 f"Please define n_agents and max_group_sizes for scenario type: {scenario}"
             )
 
+        # n_agents = [SCENARIOS[scenario]["n_agents"]]
+
+        print(scenario, n_agents)
         for n_agent in n_agents:
             for seed in seeds:
 
@@ -111,28 +126,25 @@ def build_configs(is_skip_if_exist: bool = True):
 
 def run_command(cmd):
     start_time = time.time()
-    print("[RUN]", " ".join(cmd), flush=True)
-    try:
-        subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        print("\n[SUBPROCESS FAILED]")
-        print("Command:", " ".join(e.cmd))
-        print("Return code:", e.returncode)
-        print("\n--- STDOUT ---")
-        print(e.stdout)
-        print("\n--- STDERR ---")
-        print(e.stderr)
-        print("----------------\n")
-        raise
-    finally:
-        elapsed = time.time() - start_time
+    print("\r[RUN]", " ".join(cmd), flush=True)
 
-    return elapsed
+    suffix = get_name_suffix(
+        "--is_grouping_agents" in cmd,
+        "--is_using_cbf_testing" in cmd,
+        int(cmd[cmd.index("--n_agents") + 1]),
+        int(cmd[cmd.index("--random_seed") + 1]),
+        int(cmd[cmd.index("--max_group_size") + 1])
+        if "--max_group_size" in cmd
+        else None,
+        cmd[cmd.index("--nom_controller_type") + 1],
+        cmd[cmd.index("--scenario_type") + 1],
+    )
+    log_path = LOG_DIR / f"{suffix}.log"
+
+    with open(log_path, "w") as f:
+        subprocess.run(cmd, check=True, stdout=f, stderr=f, text=True)
+
+    return time.time() - start_time
 
 
 if __name__ == "__main__":

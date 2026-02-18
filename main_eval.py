@@ -20,24 +20,24 @@ parser = argparse.ArgumentParser(description="Run MARL-CBF evaluation")
 parser.add_argument(
     "--output_dir",
     type=str,
-    default="outputs/marl_cbf_test/",
+    default="outputs/marl_cbf_new/cbf_informed_rl/seed1",
 )
-parser.add_argument("--random_seed", type=int, default=1)
+parser.add_argument("--random_seed", type=int, default=2)
 # parser.add_argument("--is_grouping_agents", action="store_true", default=None)  # Default None
 parser.add_argument(
     "--is_grouping_agents",
     action="store_true",
-    default=False,
+    default=True,
 )
-parser.add_argument("--max_group_size", type=int, default=2)
+parser.add_argument("--max_group_size", type=int, default=5)
 parser.add_argument("--nom_controller_type", type=str, default="rl")
-parser.add_argument("--scenario_type", type=str, default="interchange_3")
-parser.add_argument("--n_agents", type=int, default=8)
+parser.add_argument("--scenario_type", type=str, default="intersection_6")
+parser.add_argument("--n_agents", type=int, default=10)
 
 parser.add_argument(
     "--is_using_cbf_testing",
     action="store_true",
-    default=False,
+    default=True,
 )
 
 args = parser.parse_args()
@@ -83,7 +83,7 @@ parameters.is_load_final_model = False
 parameters.is_load_out_td = False
 parameters.is_continue_train = False
 
-parameters.max_steps = 300
+parameters.max_steps = 600
 parameters.num_vmas_envs = 1
 
 parameters.scenario_type = args.scenario_type
@@ -123,6 +123,7 @@ parameters.n_circles_approximate_vehicle = 3
 parameters.adaptive_lambda = True
 parameters.random_seed = args.random_seed
 parameters.rew_method = "sparse"
+parameters.is_solve_qp = True
 
 if parameters.random_seed == 1:
     parameters.is_save_simulation_video = True
