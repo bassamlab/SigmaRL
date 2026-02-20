@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 import sys
 
 import math
@@ -22,19 +23,63 @@ from matplotlib.ticker import FuncFormatter
 import numpy as np
 
 
-# Put near the plotting functions (global constants)
 METHOD_STYLE = {
-    "CBF (our)": {"color": "#206266", "ls": "-", "lw": 1.2},  # blue
-    "Distance+Sparse": {"color": "#00369B98", "ls": "--", "lw": 1.2},  # green
-    "TTC+Sparse": {"color": "#6937849E", "ls": "--", "lw": 1.2},  # vermillion
-    "Distance": {"color": "#00369B", "ls": "-", "lw": 1.2},  # sky blue
-    "TTC": {"color": "#693784", "ls": "-", "lw": 1.2},  # orange
+    "CBF (our)": {
+        "color": "tab:blue",
+        "ls": "-",
+        "lw": 1.2,
+        "marker": None,
+        "ms": 0,
+        "mew": 1.0,
+        "markevery": None,
+    },
+    "Distance": {  # Distance V1
+        "color": "tab:green",
+        "ls": "-",
+        "lw": 1.2,
+        "marker": None,
+        "ms": 4.5,
+        "mew": 1.0,
+        "markevery": 200,
+    },
+    "Distance+Sparse": {  # Distance V2
+        "color": "tab:green",
+        "ls": "--",
+        "lw": 1.2,
+        "marker": None,
+        "ms": 4.5,
+        "mew": 1.0,
+        "markevery": 200,
+    },
+    "TTC": {  # TTC V1
+        "color": "tab:orange",
+        "ls": "-",
+        "lw": 1.2,
+        "marker": None,
+        "ms": 5.0,
+        "mew": 1.0,
+        "markevery": 200,
+    },
+    "TTC+Sparse": {  # TTC V2
+        "color": "tab:orange",
+        "ls": "--",
+        "lw": 1.2,
+        "marker": None,
+        "ms": 5.0,
+        "mew": 1.0,
+        "markevery": 200,
+    },
     "Sparse": {
         "color": "#F0E442",
         "ls": "--",
         "lw": 1.4,
-    },  # yellow (use carefully on white)
+        "marker": None,
+        "ms": 0,
+        "mew": 1.0,
+        "markevery": None,
+    },
 }
+
 
 DEFAULT_STYLE = {"color": "0.25", "ls": "-", "lw": 1.2}  # fallback: dark gray
 
@@ -386,11 +431,11 @@ def run_evaluations():
                 )
                 out_td_path = os.path.join(train_path, out_td_filename)
 
-                # if os.path.exists(out_td_path) and os.path.exists(
-                #     task_performance_path
-                # ):
-                #     print(f"[INFO] Skipping existing output: {train_path}")
-                #     continue
+                if os.path.exists(out_td_path) and os.path.exists(
+                    task_performance_path
+                ):
+                    print(f"[INFO] Skipping existing output: {train_path}")
+                    continue
 
                 (
                     env,
@@ -608,10 +653,6 @@ def _style_axis(ax: plt.Axes) -> None:
     # Start from a clean tick state
     ax.minorticks_off()
 
-    # Minor ticks only on Y axis
-    ax.minorticks_on()
-    ax.xaxis.set_minor_locator(plt.NullLocator())
-
     # Tick direction "in" for both major and minor
     ax.tick_params(axis="both", which="major", direction="in", length=4, width=0.8)
     ax.tick_params(axis="both", which="minor", direction="in", length=2, width=0.6)
@@ -646,28 +687,33 @@ def save_boxplot_pdf(
         capprops=dict(linewidth=1.0),
         boxprops=dict(linewidth=1.0),
     )
+    iqr_eps = 1e-9  # or something like 1e-6 if your values are floats with noise
 
     for i, m in enumerate(method_order):
         style = METHOD_STYLE.get(m, DEFAULT_STYLE)
 
         # boxes
         bp["boxes"][i].set_facecolor(style["color"])
-        bp["boxes"][i].set_edgecolor(style["color"])
-        bp["boxes"][i].set_alpha(0.30)  # lighter fill
+        bp["boxes"][i].set_edgecolor("black")
+        bp["boxes"][i].set_linewidth(1.0)
 
         # whiskers and caps (2 each per box)
-        bp["whiskers"][2 * i].set_color(style["color"])
-        bp["whiskers"][2 * i + 1].set_color(style["color"])
-        bp["caps"][2 * i].set_color(style["color"])
-        bp["caps"][2 * i + 1].set_color(style["color"])
+        bp["whiskers"][2 * i].set_color("black")
+        bp["whiskers"][2 * i + 1].set_color("black")
+        bp["caps"][2 * i].set_color("black")
+        bp["caps"][2 * i + 1].set_color("black")
 
-        # median line: keep strong and readable
-        bp["medians"][i].set_color(style["color"])
-        bp["medians"][i].set_linewidth(1.6)
+        # median color depends on IQR collapse
+        vals = data[i]  # same order as method_order
+        if vals is None or len(vals) == 0:
+            is_collapsed = False
+        else:
+            arr = np.asarray(vals, dtype=float)
+            q1, q3 = np.percentile(arr, [25, 75])
+            is_collapsed = abs(q3 - q1) < iqr_eps
 
-    # Light alpha for boxes
-    for b in bp["boxes"]:
-        b.set_alpha(0.75)
+        bp["medians"][i].set_color(style["color"] if is_collapsed else "white")
+        bp["medians"][i].set_linewidth(0.5)
 
     if ylim is not None:
         ax.set_ylim(ylim)
@@ -750,11 +796,25 @@ def save_boxplot_pdf(
     else:
         ax.set_xlabel("")
 
-    # X ticks on/off + wrapped labels
     if is_show_x_ticks:
         ax.set_xticks(list(range(1, len(method_order) + 1)))
-        ax.set_xticklabels([_wrap_method_label(m) for m in method_order])
-        ax.tick_params(axis="x", rotation=0)  # rotation usually not needed once wrapped
+
+        if plt.rcParams.get("text.usetex", False):
+            # LaTeX path: make labels italic via LaTeX, and replace '\n' with '\\' using \shortstack
+            def _tex_italic_multiline(s: str) -> str:
+                parts = _wrap_method_label(s).split("\n")
+                # italicize each line explicitly
+                parts = [rf"\textit{{{p}}}" for p in parts]
+                return r"\shortstack{" + r"\\".join(parts) + "}"
+
+            ax.set_xticklabels([_tex_italic_multiline(m) for m in method_order])
+        else:
+            # Matplotlib text path: normal newline + fontstyle works
+            ax.set_xticklabels([_wrap_method_label(m) for m in method_order])
+            for t in ax.get_xticklabels():
+                t.set_fontstyle("italic")
+
+        ax.tick_params(axis="x", rotation=0)
     else:
         ax.set_xticks([])
         ax.set_xticklabels([])
@@ -773,7 +833,7 @@ def save_reward_curve_pdf(
     ylabel: str = "Episode Reward",
     frames_per_iteration: int = 1,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(3.35, 2.4), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(3.8, 2.4), constrained_layout=True)
 
     for method in method_order:
         curves = curves_by_method.get(method, [])
@@ -789,12 +849,6 @@ def save_reward_curve_pdf(
 
         x = x_frames
 
-        n_runs = len(curves)
-        if n_runs > 1:
-            sem = [s / (n_runs**0.5) for s in std]
-        else:
-            sem = [0.0 for _ in std]
-
         style = METHOD_STYLE.get(method, DEFAULT_STYLE)
         method_legend = _wrap_method_label(method, is_line_break=False)
         line = ax.plot(
@@ -803,11 +857,17 @@ def save_reward_curve_pdf(
             color=style["color"],
             linestyle=style["ls"],
             linewidth=style["lw"],
-            label=f"{method_legend}",
+            marker=style.get("marker", None),
+            markersize=style.get("ms", 0),
+            markeredgewidth=style.get("mew", 1.0),
+            markevery=style.get("markevery", None),
+            # label=f"{method_legend}",
+            label=rf"$\it{{{method_legend}}}$",
         )[0]
 
-        lo = [m - s for m, s in zip(mean, sem)]
-        hi = [m + s for m, s in zip(mean, sem)]
+        # Use STD (run-to-run spread) for the shaded area
+        lo = [m - s for m, s in zip(mean, std)]
+        hi = [m + s for m, s in zip(mean, std)]
         ax.fill_between(x, lo, hi, color=style["color"], alpha=0.2, linewidth=0.0)
 
     def _nice_step(x: float) -> float:
@@ -843,13 +903,35 @@ def save_reward_curve_pdf(
         ax.set_xlabel(r"Frames ($\times10^6$)")
 
     _style_axis(ax)
-    ax.set_xlabel("Frames")
     ax.set_ylabel(ylabel)
     ax.set_xlim((0.0, 4.0e6))
     ax.set_ylim((-0.5, 1.0))
     ax.set_yticks(np.arange(-0.4, 1.1, 0.2))
 
-    ax.legend(frameon=True, framealpha=0.4, loc="upper left")
+    handles, labels = ax.get_legend_handles_labels()
+
+    order = [0, 3, 1, 4, 2]
+
+    handles = [handles[i] for i in order if i < len(handles)]
+    labels = [labels[i] for i in order if i < len(labels)]
+
+    leg = ax.legend(
+        handles,
+        labels,
+        ncol=3,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.06),
+        frameon=True,
+        framealpha=0.4,
+        columnspacing=1.0,
+        handlelength=1.8,
+        handletextpad=0.6,
+        borderaxespad=0.0,
+    )
+    for t in leg.get_texts():
+        t.set_fontstyle("italic")
+
+    # ax.legend(frameon=True, framealpha=0.4, loc="upper left")
 
     out_pdf.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.01)
@@ -863,12 +945,6 @@ def plot_figures(fig_dir: Path) -> None:
         {_exp_label_from_path(p) for p in path_list}, key=_method_sort_key
     )
     method_order = exp_labels
-
-    # Preferred x-axis order (only keep those that exist)
-    # preferred = ["distance", "cbf", "sparse", "ttc"]
-    # method_order = [m for m in preferred if m in exp_labels] + [
-    #     m for m in exp_labels if m not in preferred
-    # ]
 
     method_order = exp_labels
 
@@ -975,12 +1051,8 @@ def plot_figures(fig_dir: Path) -> None:
 
         log_path = fig_dir / f"{scenario_type}_summary.txt"
 
-        # 1) Use "distance" as reference method
-        ref_method = (
-            "distance"
-            if ("distance" in method_order and "sparse" not in method_order)
-            else None
-        )
+        # Use CBF (our) as reference method
+        ref_method = "CBF (our)" if ("CBF (our)" in method_order) else None
 
         ref_stats = None
         if ref_method is not None:
@@ -989,6 +1061,9 @@ def plot_figures(fig_dir: Path) -> None:
             rew_ref = avg_rews[scenario_type][ref_method]
             deg_ref = cbf_activation_degree[scenario_type][ref_method]
             t_ref = cbf_activation_rates[scenario_type][ref_method]
+            task_num_tries_ref = task_num_tries[scenario_type][ref_method]
+            task_success_times_ref = task_success_times[scenario_type][ref_method]
+            task_success_rate_ref = task_success_rate[scenario_type][ref_method]
 
             if len(cr_ref) > 0:
                 ref_stats = {
@@ -997,6 +1072,11 @@ def plot_figures(fig_dir: Path) -> None:
                     "rew": sum(rew_ref) / len(rew_ref),
                     "deg": sum(deg_ref) / len(deg_ref),
                     "t": sum(t_ref) / len(t_ref),
+                    "task_num_tries": sum(task_num_tries_ref) / len(task_num_tries_ref),
+                    "task_success_times": sum(task_success_times_ref)
+                    / len(task_success_times_ref),
+                    "task_success_rate": sum(task_success_rate_ref)
+                    / len(task_success_rate_ref),
                 }
 
         with open(log_path, "w", encoding="utf-8") as f:
@@ -1015,6 +1095,9 @@ def plot_figures(fig_dir: Path) -> None:
                 rew_list = avg_rews[scenario_type][method]
                 cbf_act_deg_list = cbf_activation_degree[scenario_type][method]
                 cbf_act_time_list = cbf_activation_rates[scenario_type][method]
+                task_num_tries_ref_list = task_num_tries[scenario_type][method]
+                task_success_times_ref_list = task_success_times[scenario_type][method]
+                task_success_rate_ref_list = task_success_rate[scenario_type][method]
 
                 if len(cr_list) == 0:
                     line = f"[INFO] Method: {method}: No data"
@@ -1027,44 +1110,90 @@ def plot_figures(fig_dir: Path) -> None:
                 rew_avg = sum(rew_list) / len(rew_list)
                 cbf_act_deg_avg = sum(cbf_act_deg_list) / len(cbf_act_deg_list)
                 cbf_act_time_avg = sum(cbf_act_time_list) / len(cbf_act_time_list)
+                task_num_tries_ref_avg = sum(task_num_tries_ref_list) / len(
+                    task_num_tries_ref_list
+                )
+                task_success_times_ref_avg = sum(task_success_times_ref_list) / len(
+                    task_success_times_ref_list
+                )
+                task_success_rate_ref_avg = sum(task_success_rate_ref_list) / len(
+                    task_success_rate_ref_list
+                )
 
                 line = (
-                    f"[INFO] Method: {method}: Collision Rate: {cr_avg:.3f} %, "
-                    f"Avg Speed: {vbar_avg:.3f} m/s, Avg Total Reward: {rew_avg:.3f}, "
-                    f"CBF Activation Degree: {cbf_act_deg_avg:.3f} %, CBF Activation Rate: {cbf_act_time_avg:.3f} %"
+                    f"[INFO] Method: {method}: "
+                    # f"Collision Rate: {cr_avg:.3f} %, "
+                    # f"Avg Speed: {vbar_avg:.3f} m/s, "
+                    f"Avg Total Reward: {rew_avg:.3f}, "
+                    f"CBF Activation Degree: {cbf_act_deg_avg:.3f} %, "
+                    # f"CBF Activation Rate: {cbf_act_time_avg:.3f} %, "
+                    # f"Task Num Tries: {task_num_tries_ref_avg:.3f}, "
+                    f"Task Success Times: {task_success_times_ref_avg:.3f}, "
+                    f"Task Success Rate: {task_success_rate_ref_avg:.3f}."
                 )
                 print(line)
                 f.write(line + "\n")
 
-                # 2) Log improvements vs "distance"
+                # Log percentage improvement/degradation of CBF (our) vs each other method
                 if ref_stats is not None and method != ref_method:
-                    d_cr = (
-                        ref_stats["cr"] - cr_avg
-                    )  # positive = fewer collisions than default
-                    d_v = vbar_avg - ref_stats["v"]  # positive = faster than default
-                    d_rew = (
-                        rew_avg - ref_stats["rew"]
-                    )  # positive = higher reward than default
-                    d_deg = (
-                        ref_stats["deg"] - cbf_act_deg_avg
-                    )  # positive = fewer activations than default
-                    d_t = (
-                        ref_stats["t"] - cbf_act_time_avg
-                    )  # positive = fewer activations than default
 
-                    def rel(delta, base):
-                        return (
-                            100.0 * delta / base if abs(base) > 1e-12 else float("nan")
-                        )
+                    def _pct_cbf_better_higher_is_better(
+                        cbf: float, other: float
+                    ) -> float:
+                        # positive if CBF higher than other
+                        if abs(other) < 1e-12:
+                            return float("nan")
+                        return 100.0 * (cbf - other) / abs(other)
+
+                    def _pct_cbf_better_lower_is_better(
+                        cbf: float, other: float
+                    ) -> float:
+                        # positive if CBF lower than other
+                        if abs(other) < 1e-12:
+                            return float("nan")
+                        return 100.0 * (other - cbf) / abs(other)
+
+                    # CBF values (reference)
+                    cbf_cr = ref_stats["cr"]
+                    cbf_v = ref_stats["v"]
+                    cbf_rew = ref_stats["rew"]
+                    cbf_deg = ref_stats["deg"]
+                    cbf_t = ref_stats["t"]
+                    cbf_task_num_tries = ref_stats["task_num_tries"]
+                    cbf_task_success_times = ref_stats["task_success_times"]
+                    cbf_task_success_rate = ref_stats["task_success_rate"]
+
+                    # Percentage "CBF vs method" (positive = CBF better)
+                    p_cr = _pct_cbf_better_lower_is_better(cbf_cr, cr_avg)
+                    p_v = _pct_cbf_better_higher_is_better(cbf_v, vbar_avg)
+                    p_rew = _pct_cbf_better_higher_is_better(cbf_rew, rew_avg)
+                    p_deg = _pct_cbf_better_lower_is_better(cbf_deg, cbf_act_deg_avg)
+                    p_t = _pct_cbf_better_lower_is_better(cbf_t, cbf_act_time_avg)
+                    p_task_num_tries = _pct_cbf_better_lower_is_better(
+                        cbf_task_num_tries, task_num_tries_ref_avg
+                    )
+                    p_task_success_times = _pct_cbf_better_lower_is_better(
+                        cbf_task_success_times, task_success_times_ref_avg
+                    )
+                    p_task_success_rate = _pct_cbf_better_lower_is_better(
+                        cbf_task_success_rate, task_success_rate_ref_avg
+                    )
+
+                    ref_name = _wrap_method_label(ref_method, is_line_break=False)
+                    method_name = _wrap_method_label(method, is_line_break=False)
 
                     line_imp = (
-                        f"    Improvement vs {ref_method}: "
-                        f"ΔCollision Rate={d_cr:+.3f} % (rel {rel(d_cr, ref_stats['cr']):+.2f} %), "
-                        f"ΔAvg Speed={d_v:+.3f} m/s (rel {rel(d_v, ref_stats['v']):+.2f} %), "
-                        f"ΔAvg Total Reward={d_rew:+.3f} (rel {rel(d_rew, ref_stats['rew']):+.2f} %), "
-                        f"ΔCBF Activation Degree={d_deg:+.3f} % (rel {rel(d_deg, ref_stats['deg']):+.2f} %), "
-                        f"ΔCBF Activation Rate={d_t:+.3f} % (rel {rel(d_t, ref_stats['t']):+.2f} %)"
+                        f"    {ref_name} vs {method_name}: "
+                        # f"Collision Rate {p_cr:+.1f} %, "
+                        # f"Avg Speed {p_v:+.1f} %, "
+                        f"Avg Total Reward {p_rew:+.1f} %, "
+                        f"CBF Activation Degree {p_deg:+.1f} %, "
+                        # f"CBF Activation Rate {p_t:+.1f} %, "
+                        # f"Task Attempts {p_task_num_tries:+.1f} %, "
+                        f"Task Success Times {p_task_success_times:+.1f} %, "
+                        f"Task Success Rate {p_task_success_rate:+.1f} %"
                     )
+
                     print(line_imp)
                     f.write(line_imp + "\n")
 
@@ -1145,7 +1274,7 @@ def plot_figures(fig_dir: Path) -> None:
             ylabel=r"Task Success Rate [$\%$]",
             out_pdf=out_task_success_pdf,
             unit="%",
-            ylim=(0, 100),
+            ylim=(0, 110),
         )
 
         print(f"[INFO] Saved: {out_coll_pdf}")
