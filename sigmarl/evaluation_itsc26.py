@@ -87,12 +87,12 @@ FRAME_PER_ITERATION = 128 * 32
 
 plt.rcParams.update(
     {
-        "font.size": 10,  # slightly smaller for IEEE single-column
-        "axes.labelsize": 10,
-        "axes.titlesize": 10,
-        "xtick.labelsize": 9,
-        "ytick.labelsize": 9,
-        "legend.fontsize": 9,
+        "font.size": 12,  # slightly smaller for IEEE single-column
+        "axes.labelsize": 12,
+        "axes.titlesize": 12,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 12,
         "font.family": "serif",
         "text.usetex": is_latex_available(),
         # PDF export quality
@@ -671,8 +671,7 @@ def save_boxplot_pdf(
     is_show_x_ticks: bool = True,
     is_show_x_label: bool = True,
 ) -> None:
-    # ~3.35in width matches IEEE single-column better than 4.8in
-    fig, ax = plt.subplots(figsize=(3.35, 2.30), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(4, 2.8), constrained_layout=True)
 
     data = [data_by_method.get(m, []) for m in method_order]
 
@@ -781,7 +780,6 @@ def save_boxplot_pdf(
             y_text,
             text_str,
             color="tab:red",
-            fontsize=8,
             ha=ha,
             va=va,
             clip_on=True,
@@ -833,7 +831,7 @@ def save_reward_curve_pdf(
     ylabel: str = "Episode Reward",
     frames_per_iteration: int = 1,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(3.8, 2.4), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(4.5, 2.8), constrained_layout=True)
 
     for method in method_order:
         curves = curves_by_method.get(method, [])
@@ -861,8 +859,7 @@ def save_reward_curve_pdf(
             markersize=style.get("ms", 0),
             markeredgewidth=style.get("mew", 1.0),
             markevery=style.get("markevery", None),
-            # label=f"{method_legend}",
-            label=rf"$\it{{{method_legend}}}$",
+            label=rf"\textit{{{method_legend}}}",
         )[0]
 
         # Use STD (run-to-run spread) for the shaded area

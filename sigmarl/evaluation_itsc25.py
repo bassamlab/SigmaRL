@@ -43,7 +43,7 @@ class CBF_MARL_Evaluation:
         n_agents: int = 1,
         is_using_cbf_testing: bool = True,
         is_using_cbf_training: bool = False,
-        scenario_type: str = "CPM_entire",
+        scenario_type: str = "cpm_entire",
         random_seed=0,
         n_circles_approximate_vehicle: int = 3,
         is_load_out_td: bool = False,
@@ -856,11 +856,11 @@ def plot_computation_time(
     plt.show()
 
 
-def plot_actions(scenario_type="CPM_entire", steps=None, path=None, show_legend=True):
+def plot_actions(scenario_type="cpm_entire", steps=None, path=None, show_legend=True):
     """
     Visualize the actions of agents in a scenario.
     Args:
-        scenario_type (str): The type of scenario to visualize, e.g., CPM_entire, interchange_3, intersection_4, intersection_6.
+        scenario_type (str): The type of scenario to visualize, e.g., cpm_entire, interchange_3, intersection_4, intersection_6.
         steps (list): List of steps to visualize. If None, default steps for the scenario type will be used.
     """
     evaluation = CBF_MARL_Evaluation(
@@ -868,7 +868,7 @@ def plot_actions(scenario_type="CPM_entire", steps=None, path=None, show_legend=
         n_agents=1,
         is_using_cbf_testing=True,
         is_using_cbf_training=False,
-        scenario_type=scenario_type if scenario_type else "CPM_entire",
+        scenario_type=scenario_type if scenario_type else "cpm_entire",
         random_seed=1,
         n_circles_approximate_vehicle=3,
         is_load_out_td=True,
@@ -878,7 +878,7 @@ def plot_actions(scenario_type="CPM_entire", steps=None, path=None, show_legend=
 
     if steps is None:
         # Pre-defined steps for each scenario type
-        if scenario_type == "CPM_entire":
+        if scenario_type == "cpm_entire":
             steps = [87, 177, 278, 598]
         elif scenario_type == "interchange_3":
             steps = [113, 303, 322, 358]
@@ -906,7 +906,7 @@ if __name__ == "__main__":
         random_seeds = [1]
         n_circles_approximate_vehicle_list = [1, 2, 3, 4, 5]
         scenario_types = [
-            "CPM_entire",
+            "cpm_entire",
         ]
 
         (
@@ -949,7 +949,7 @@ if __name__ == "__main__":
         ]  # Add more random seeds if needed. In our paper, we use [1, 2, 3, 4, 5].
         n_circles_approximate_vehicle_list = [3]
         scenario_types = [
-            "CPM_entire",
+            "cpm_entire",
             "interchange_3",
             "intersection_4",
             "intersection_6",
@@ -990,7 +990,7 @@ if __name__ == "__main__":
         )
         if user_choice == 1:
             scenario_types = [
-                "CPM_entire",
+                "cpm_entire",
                 "interchange_3",
                 "intersection_4",
                 "intersection_6",

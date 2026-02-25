@@ -45,8 +45,8 @@ render_titles = [path.rsplit("/", 2)[-2] for path in model_paths]
 video_names = [path.rsplit("/", 2)[-2][0:2] for path in model_paths]
 
 scenario_types = [
-    # "CPM_mixed",
-    "CPM_entire",
+    # "cpm_mixed",
+    "cpm_entire",
     # "intersection_2",
     # "on_ramp_1",
     # "roundabout_1",
@@ -62,7 +62,7 @@ for i_scenario in scenario_types:
     n_agents = SCENARIOS[i_scenario]["n_agents"]
 
     evaluator = Evaluation(
-        scenario_type=i_scenario,  # Specify which scenario should be used to do the evaluation. One of {"CPM_entire", "intersection_2", "on_ramp_1", "roundabout_1"}
+        scenario_type=i_scenario,  # Specify which scenario should be used to do the evaluation. One of {"cpm_entire", "intersection_2", "on_ramp_1", "roundabout_1"}
         model_paths=model_paths,
         fitst_model_index=1,  # The index of the first model. If 1, then models are indexed as M1, M2, ...
         idx_our=idx_our,  # Index of our model (0-based index)

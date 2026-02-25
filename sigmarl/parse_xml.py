@@ -213,6 +213,9 @@ class ParseXML(ParseMapBase):
             figsize=(figsize_x, figsize_x * aspect_ratio), constrained_layout=True
         )  # Size in inches, adjusted for 4.0m x 4.5m dimensions
 
+        ax.margins(x=0.0, y=0.0)
+        fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
+
         ax.set_aspect("equal")  # Ensures equal scaling
 
         ax.tick_params(axis="both", direction="in")
