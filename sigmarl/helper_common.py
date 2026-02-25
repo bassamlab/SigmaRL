@@ -133,6 +133,8 @@ class Parameters:
         threshold_near_other_agents_c2c_low: float = 0,
         ttc_low: float = 0,
         ttc_high: float = 3.75,
+        penalty_near_boundary: float = -0.2,
+        penalty_near_other_agents: float = -0.2,
     ):
 
         self.n_agents = n_agents
@@ -246,6 +248,8 @@ class Parameters:
         self.threshold_near_other_agents_c2c_low = threshold_near_other_agents_c2c_low
         self.ttc_high = ttc_high
         self.ttc_low = ttc_low
+        self.penalty_near_boundary = penalty_near_boundary
+        self.penalty_near_other_agents = penalty_near_other_agents
 
         if (model_name is None) and (scenario_name is not None):
             self.model_name = get_model_name(self)

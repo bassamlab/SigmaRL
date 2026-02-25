@@ -141,6 +141,8 @@ class ScenarioRoadTraffic(BaseScenario):
             )
             ttc_low = self.parameters.ttc_low
             ttc_high = self.parameters.ttc_high
+            penalty_near_boundary = self.parameters.penalty_near_boundary
+            penalty_near_other_agents = self.parameters.penalty_near_other_agents
         else:
             reward_progress = (
                 kwargs.pop("reward_progress", 10) / r_p_normalizer
@@ -172,6 +174,12 @@ class ScenarioRoadTraffic(BaseScenario):
                 "ttc_high",
                 3.75,
             )  # Threshold above which agents will be penalized
+            penalty_near_boundary = kwargs.pop(
+                "penalty_near_boundary", -20 / r_p_normalizer
+            )  # Penalty for being too close to lanelet boundaries
+            penalty_near_other_agents = kwargs.pop(
+                "penalty_near_other_agents", -20 / r_p_normalizer
+            )  # Penalty for being too close to other agents
 
         reward_vel = (
             kwargs.pop("reward_vel", 5) / r_p_normalizer
@@ -184,12 +192,6 @@ class ScenarioRoadTraffic(BaseScenario):
         penalty_deviate_from_ref_path = kwargs.pop(
             "penalty_deviate_from_ref_path", -2 / r_p_normalizer
         )  # Penalty for deviating from reference paths
-        penalty_near_boundary = kwargs.pop(
-            "penalty_near_boundary", -20 / r_p_normalizer
-        )  # Penalty for being too close to lanelet boundaries
-        penalty_near_other_agents = kwargs.pop(
-            "penalty_near_other_agents", -20 / r_p_normalizer
-        )  # Penalty for being too close to other agents
         penalty_collide_with_agents = kwargs.pop(
             "penalty_collide_with_agents", -100 / r_p_normalizer
         )  # Penalty for colliding with other agents
