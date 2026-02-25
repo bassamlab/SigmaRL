@@ -139,8 +139,14 @@ class ScenarioRoadTraffic(BaseScenario):
             threshold_near_other_agents_c2c_low = (
                 self.parameters.threshold_near_other_agents_c2c_low
             )
-            ttc_low = self.parameters.ttc_low
-            ttc_high = self.parameters.ttc_high
+            ttc_low = (
+                self.parameters.ttc_low if self.parameters.ttc_low is not None else 0
+            )
+            ttc_high = (
+                self.parameters.ttc_high
+                if self.parameters.ttc_high is not None
+                else 3.75
+            )
             penalty_near_boundary = self.parameters.penalty_near_boundary
             penalty_near_other_agents = self.parameters.penalty_near_other_agents
         else:
