@@ -144,6 +144,8 @@ class Thresholds:
         deviate_from_ref_path=None,
         near_boundary_low=None,
         near_boundary_high=None,
+        ttc_low=None,
+        ttc_high=None,
         near_other_agents_low=None,
         near_other_agents_high=None,
         reach_goal=None,
@@ -156,6 +158,8 @@ class Thresholds:
         self.deviate_from_ref_path = deviate_from_ref_path
         self.near_boundary_low = near_boundary_low
         self.near_boundary_high = near_boundary_high
+        self.ttc_low = ttc_low
+        self.ttc_high = ttc_high
         self.near_other_agents_low = near_other_agents_low
         self.near_other_agents_high = near_other_agents_high
         self.reach_goal = reach_goal  # Threshold less than which agents are considered at their goal positions

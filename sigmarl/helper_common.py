@@ -127,6 +127,12 @@ class Parameters:
         h_nom: float = 0.2,  # Nominizer of the CBF function (use when is_using_cbf_training True)
         rew_method: str = "distance",  # Reward method: {"distance", "cbf", "ttc", "sparse", "distance_sparse", "cbf_sparse", "ttc_sparse"}
         reward_progress: float = 10,  # Reward for progress along the reference path
+        threshold_near_boundary_high: float = 0.02,
+        threshold_near_boundary_low: float = 0,
+        threshold_near_other_agents_c2c_high: float = 0.3,
+        threshold_near_other_agents_c2c_low: float = 0,
+        ttc_low: float = 0,
+        ttc_high: float = 3.75,
     ):
 
         self.n_agents = n_agents
@@ -233,6 +239,13 @@ class Parameters:
         self.h_nom = h_nom
         self.rew_method = rew_method
         self.reward_progress = reward_progress
+
+        self.threshold_near_boundary_high = threshold_near_boundary_high
+        self.threshold_near_boundary_low = threshold_near_boundary_low
+        self.threshold_near_other_agents_c2c_high = threshold_near_other_agents_c2c_high
+        self.threshold_near_other_agents_c2c_low = threshold_near_other_agents_c2c_low
+        self.ttc_high = ttc_high
+        self.ttc_low = ttc_low
 
         if (model_name is None) and (scenario_name is not None):
             self.model_name = get_model_name(self)

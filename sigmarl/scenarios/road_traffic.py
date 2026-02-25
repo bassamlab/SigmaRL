@@ -131,10 +131,47 @@ class ScenarioRoadTraffic(BaseScenario):
 
         if hasattr(self, "parameters"):
             reward_progress = self.parameters.reward_progress / r_p_normalizer
+            threshold_near_boundary_high = self.parameters.threshold_near_boundary_high
+            threshold_near_boundary_low = self.parameters.threshold_near_boundary_low
+            threshold_near_other_agents_c2c_high = (
+                self.parameters.threshold_near_other_agents_c2c_high
+            )
+            threshold_near_other_agents_c2c_low = (
+                self.parameters.threshold_near_other_agents_c2c_low
+            )
+            ttc_low = self.parameters.ttc_low
+            ttc_high = self.parameters.ttc_high
         else:
             reward_progress = (
                 kwargs.pop("reward_progress", 10) / r_p_normalizer
             )  # Reward for moving along reference paths
+
+            threshold_near_boundary_high = kwargs.pop(
+                "threshold_near_boundary_high",
+                (lane_width - self.agent_width) / 2 * 0.9,
+            )  # Threshold beneath which agents will started be
+            # Penalized for being too close to lanelet boundaries
+            threshold_near_boundary_low = kwargs.pop(
+                "threshold_near_boundary_low", 0
+            )  # Threshold above which agents will be penalized for being too close to lanelet boundaries
+
+            threshold_near_other_agents_c2c_high = kwargs.pop(
+                "threshold_near_other_agents_c2c_high",
+                self.agent_length + self.agent_width,
+            )  # Threshold beneath which agents will started be
+            # Penalized for being too close to other agents (for center-to-center distance)
+            threshold_near_other_agents_c2c_low = kwargs.pop(
+                "threshold_near_other_agents_c2c_low",
+                (self.agent_length + self.agent_width) / 2,
+            )  # Threshold above which agents will be penalized (for center-to-center distance,
+            ttc_low = kwargs.pop(
+                "ttc_low",
+                0,
+            )  # Threshold above which agents will be penalized
+            ttc_high = kwargs.pop(
+                "ttc_high",
+                3.75,
+            )  # Threshold above which agents will be penalized
 
         reward_vel = (
             kwargs.pop("reward_vel", 5) / r_p_normalizer
@@ -184,24 +221,6 @@ class ScenarioRoadTraffic(BaseScenario):
         threshold_change_steering = kwargs.pop(
             "threshold_change_steering", 10
         )  # Threshold above which agents will be penalized for changing steering too quick [degree]
-
-        threshold_near_boundary_high = kwargs.pop(
-            "threshold_near_boundary_high", (lane_width - self.agent_width) / 2 * 0.9
-        )  # Threshold beneath which agents will started be
-        # Penalized for being too close to lanelet boundaries
-        threshold_near_boundary_low = kwargs.pop(
-            "threshold_near_boundary_low", 0
-        )  # Threshold above which agents will be penalized for being too close to lanelet boundaries
-
-        threshold_near_other_agents_c2c_high = kwargs.pop(
-            "threshold_near_other_agents_c2c_high", self.agent_length + self.agent_width
-        )  # Threshold beneath which agents will started be
-        # Penalized for being too close to other agents (for center-to-center distance)
-        threshold_near_other_agents_c2c_low = kwargs.pop(
-            "threshold_near_other_agents_c2c_low",
-            (self.agent_length + self.agent_width) / 2,
-        )  # Threshold above which agents will be penalized (for center-to-center distance,
-        # If a c2c distance is less than the half of the agent width, they are colliding, which will be penalized by another penalty)
 
         threshold_no_reward_if_too_close_to_boundaries = kwargs.pop(
             "threshold_no_reward_if_too_close_to_boundaries", self.agent_width / 10
@@ -576,6 +595,8 @@ class ScenarioRoadTraffic(BaseScenario):
             near_boundary_high=torch.tensor(
                 threshold_near_boundary_high, device=device, dtype=torch.float32
             ),
+            ttc_low=torch.tensor(ttc_low, device=device, dtype=torch.float32),
+            ttc_high=torch.tensor(ttc_high, device=device, dtype=torch.float32),
             near_other_agents_low=torch.tensor(
                 (
                     threshold_near_other_agents_c2c_low
@@ -1020,8 +1041,8 @@ class ScenarioRoadTraffic(BaseScenario):
                 penalty_close_to_agents = self._apply_ttc_near_agent_penalty(
                     agent_index=agent_index,
                     decreasing_fcn=decreasing_fcn,
-                    ttc_low=0.75,
-                    ttc_high=3.00,
+                    ttc_low=self.thresholds.ttc_low,
+                    ttc_high=self.thresholds.ttc_high,
                 )
 
                 self.reward_info.rew_near_other_agents[
@@ -1211,8 +1232,8 @@ class ScenarioRoadTraffic(BaseScenario):
         self,
         agent_index: int,
         decreasing_fcn: Callable,
-        ttc_low: float = 0.75,
-        ttc_high: float = 3.00,
+        ttc_low: float,
+        ttc_high: float,
         eps: float = 1e-6,
     ) -> torch.Tensor:
         # Near-agent reward/penalty
@@ -1238,13 +1259,6 @@ class ScenarioRoadTraffic(BaseScenario):
         # Optional distance gating to avoid penalizing far-away agents even if TTC is finite.
         # This is helpful in dense scenes with many agents.
         d_gate = float(self.thresholds.near_other_agents_high)
-
-        # TTC thresholds (seconds). Recommended to add to your config/thresholds.
-        # Fallback values are conservative and should be tuned.
-        ttc_low = 0.75  # danger zone
-        ttc_high = 3.00  # safe zone
-
-        eps = 1e-6
 
         # Quadratic coefficients: ||p + v t||^2 = d_safe^2
         a = (v_rel * v_rel).sum(dim=-1)  # [B, N]
