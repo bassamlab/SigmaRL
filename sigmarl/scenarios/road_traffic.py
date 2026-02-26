@@ -130,14 +130,30 @@ class ScenarioRoadTraffic(BaseScenario):
         # output is limited to [-1, 1] (e.g., due to tanh activation function).
 
         if hasattr(self, "parameters"):
-            reward_progress = self.parameters.reward_progress / r_p_normalizer
-            threshold_near_boundary_high = self.parameters.threshold_near_boundary_high
-            threshold_near_boundary_low = self.parameters.threshold_near_boundary_low
+            reward_progress = (
+                self.parameters.reward_progress
+                if self.parameters.reward_progress is not None
+                else 0.1
+            )
+            threshold_near_boundary_high = (
+                self.parameters.threshold_near_boundary_high
+                if self.parameters.threshold_near_boundary_high is not None
+                else 0.02
+            )
+            threshold_near_boundary_low = (
+                self.parameters.threshold_near_boundary_low
+                if self.parameters.threshold_near_boundary_low is not None
+                else 0
+            )
             threshold_near_other_agents_c2c_high = (
                 self.parameters.threshold_near_other_agents_c2c_high
+                if self.parameters.threshold_near_other_agents_c2c_high is not None
+                else 0.3
             )
             threshold_near_other_agents_c2c_low = (
                 self.parameters.threshold_near_other_agents_c2c_low
+                if self.parameters.threshold_near_other_agents_c2c_low is not None
+                else 0
             )
             ttc_low = (
                 self.parameters.ttc_low if self.parameters.ttc_low is not None else 0
@@ -147,8 +163,16 @@ class ScenarioRoadTraffic(BaseScenario):
                 if self.parameters.ttc_high is not None
                 else 3.75
             )
-            penalty_near_boundary = self.parameters.penalty_near_boundary
-            penalty_near_other_agents = self.parameters.penalty_near_other_agents
+            penalty_near_boundary = (
+                self.parameters.penalty_near_boundary
+                if self.parameters.penalty_near_boundary is not None
+                else -0.2
+            )
+            penalty_near_other_agents = (
+                self.parameters.penalty_near_other_agents
+                if self.parameters.penalty_near_other_agents is not None
+                else -0.2
+            )
         else:
             reward_progress = (
                 kwargs.pop("reward_progress", 10) / r_p_normalizer

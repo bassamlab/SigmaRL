@@ -29,7 +29,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--h-nom", type=_float_or_none, default=None)
-    parser.add_argument("--reward-progress", type=float, default=10.0)
+    parser.add_argument("--reward-progress", type=float, default=0.1)
     parser.add_argument(
         "--rew-method",
         type=str,
