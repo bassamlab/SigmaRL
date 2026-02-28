@@ -1285,6 +1285,9 @@ def plot_figures(fig_dir: Path) -> None:
 
 
 if __name__ == "__main__":
+
+    CASE = 2
+
     scenario_specs = [
         ("cpm_mixed", 4),
         # ("cpm_entire", 10),
@@ -1307,37 +1310,89 @@ if __name__ == "__main__":
 
     print(n_agents_list)
 
-    policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/"
-    # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action/"
-    # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action_final_model/"
-    # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action_final_model/"
+    if CASE == 1:
+        policy_parent_folder = (
+            "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/"
+        )
 
-    filtered_path_list = []
+        # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action/"
+        # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action_final_model/"
+        # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action_final_model/"
 
-    for root, dirs, files in os.walk(policy_parent_folder):
-        if any(f.endswith(".pth") for f in files):
-            if "reward_progress10.0" in root:
-                filtered_path_list.append(root)
+        filtered_path_list = []
 
-    path_list = filtered_path_list
+        for root, dirs, files in os.walk(policy_parent_folder):
+            if any(f.endswith(".pth") for f in files):
+                if "reward_progress10.0" in root:
+                    filtered_path_list.append(root)
 
-    # path_list must contains one of the method in rew_method_list
-    rew_method_list = ["cbf/", "distance/", "distance_sparse/", "ttc/", "ttc_sparse/"]
-    path_list = [
-        path for path in path_list if any(method in path for method in rew_method_list)
-    ]
+        path_list = filtered_path_list
 
-    random_seed_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        # path_list must contains one of the method in rew_method_list
+        rew_method_list = [
+            "cbf/",
+            "distance/",
+            "distance_sparse/",
+            "ttc/",
+            "ttc_sparse/",
+        ]
+        path_list = [
+            path
+            for path in path_list
+            if any(method in path for method in rew_method_list)
+        ]
 
-    # -----------------------------
-    # Metric extraction from out_td
-    # -----------------------------
-    # Two reasonable collision definitions. Default matches your description.
-    # - "per_timestep_any_agent": mean over time of [any collision among agents at that time]
-    # - "per_agent_timestep": mean over all agent-time pairs (and envs)
-    COLLISION_MODE = "per_agent_timestep"  # change if needed, one of {"per_timestep_any_agent", "per_agent_timestep"}
-    run_evaluations()
+        random_seed_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-    fig_dir = Path(policy_parent_folder) / "figures"
-    fig_dir.mkdir(parents=True, exist_ok=True)
-    plot_figures(fig_dir)
+        # -----------------------------
+        # Metric extraction from out_td
+        # -----------------------------
+        # Two reasonable collision definitions. Default matches your description.
+        # - "per_timestep_any_agent": mean over time of [any collision among agents at that time]
+        # - "per_agent_timestep": mean over all agent-time pairs (and envs)
+        COLLISION_MODE = "per_agent_timestep"  # change if needed, one of {"per_timestep_any_agent", "per_agent_timestep"}
+        run_evaluations()
+
+        fig_dir = Path(policy_parent_folder) / "figures"
+        fig_dir.mkdir(parents=True, exist_ok=True)
+        plot_figures(fig_dir)
+    elif CASE == 2:
+        policy_parent_folder = "checkpoints/itsc26_sensitivity/cpm_mixed"
+
+        filtered_path_list = []
+
+        for root, dirs, files in os.walk(policy_parent_folder):
+            if any(f.endswith(".pth") for f in files):
+                if (
+                    ("reward_progress0.1" in root)
+                    and ("p-1.0" in root)
+                    and ("seed1" in root)
+                ):
+                    filtered_path_list.append(root)
+
+        path_list = filtered_path_list
+
+        # path_list must contains one of the method in rew_method_list
+        rew_method_list = [
+            "cbf/",
+            "distance/",
+            "distance_sparse/",
+            "ttc/",
+            "ttc_sparse/",
+        ]
+        path_list = [
+            path
+            for path in path_list
+            if any(method in path for method in rew_method_list)
+        ]
+
+        random_seed_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+        # -----------------------------
+        # Metric extraction from out_td
+        # -----------------------------
+        # Two reasonable collision definitions. Default matches your description.
+        # - "per_timestep_any_agent": mean over time of [any collision among agents at that time]
+        # - "per_agent_timestep": mean over all agent-time pairs (and envs)
+        COLLISION_MODE = "per_agent_timestep"  # change if needed, one of {"per_timestep_any_agent", "per_agent_timestep"}
+        run_evaluations()
