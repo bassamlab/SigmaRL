@@ -935,7 +935,7 @@ def save_reward_curve_pdf(
     plt.close(fig)
 
 
-def plot_figures(fig_dir: Path) -> None:
+def plot_figures_case_1(fig_dir: Path) -> None:
     # Derive unique reward methods
     # exp_labels = sorted({_exp_label_from_path(p) for p in path_list})
     exp_labels = sorted(
@@ -1284,6 +1284,230 @@ def plot_figures(fig_dir: Path) -> None:
         print(f"[INFO] Saved: {out_task_success_pdf}")
 
 
+# -----------------------------
+# Case 2: Sensitivity colormap (Total Reward over tb x ta)
+# -----------------------------
+def _p_from_path(p: str) -> Optional[float]:
+    m = re.search(r"/p(-?[0-9]+(?:\.[0-9]+)?)/", p)
+    return float(m.group(1)) if m else None
+
+
+def _tb_from_path(p: str) -> Optional[float]:
+    m = re.search(r"/tb(-?[0-9]+(?:\.[0-9]+)?)/", p)
+    return float(m.group(1)) if m else None
+
+
+def _ta_from_path(p: str) -> Optional[float]:
+    m = re.search(r"/ta(-?[0-9]+(?:\.[0-9]+)?)/", p)
+    return float(m.group(1)) if m else None
+
+
+def save_sensitivity_colormap_pdf(
+    z: np.ndarray,
+    tb_vals: List[float],
+    ta_vals: List[float],
+    out_pdf: Path,
+    title: str,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    cmap_name: str = "Blues",
+) -> None:
+    """
+    Save a tb (x) vs ta (y) colormap for Total Reward.
+
+    z shape: [len(ta_vals), len(tb_vals)]  (rows=ta, cols=tb)
+    """
+    fig, ax = plt.subplots(figsize=(4.2, 3.0), constrained_layout=True)
+
+    # Use imshow on index grid; map ticks to actual tb/ta values
+    im = ax.imshow(
+        z,
+        origin="lower",
+        aspect="auto",
+        interpolation="nearest",
+        cmap=plt.get_cmap(cmap_name),
+        vmin=vmin,
+        vmax=vmax,
+    )
+
+    # Ticks: show all discrete hyperparameter values
+    ax.set_xticks(list(range(len(tb_vals))))
+    ax.set_yticks(list(range(len(ta_vals))))
+
+    # Keep compact formatting and stable labels
+    ax.set_xticklabels([f"{v:g}" for v in tb_vals])
+    ax.set_yticklabels([f"{v:g}" for v in ta_vals])
+
+    ax.set_xlabel(r"$t_b$")
+    ax.set_ylabel(r"$t_a$")
+    ax.set_title(title)
+
+    # Style consistent with other figures
+    _style_axis(ax)
+    ax.grid(False)  # heatmap already encodes structure
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.05, pad=0.02)
+    cbar.set_label("Total Reward")
+
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.01)
+    plt.close(fig)
+
+
+def plot_case2_sensitivity_colormaps(
+    path_list: List[str],
+    scenario_specs: List[tuple],
+    random_seed_list: List[int],
+    fig_dir: Path,
+    only_p_values: Optional[List[float]] = None,
+    shared_color_scale_within_method: bool = True,
+) -> None:
+    """
+    For each (reward method, p) pair, create a tb (x) vs ta (y) colormap
+    where each cell is the mean Total Reward averaged over:
+      - scenario_specs (usually a single scenario for Case 2)
+      - random_seed_list (evaluation seeds)
+
+    only_p_values: if not None, restrict to these p values (example: [-1.0]).
+    shared_color_scale_within_method: if True, uses a shared (vmin,vmax)
+      across all p for the same method to keep comparisons consistent.
+    """
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect folders grouped by (method_label, p)
+    groups: Dict[tuple, List[Path]] = {}
+    tb_set: Dict[tuple, set] = {}
+    ta_set: Dict[tuple, set] = {}
+
+    for s in path_list:
+        model_dir = Path(s)
+        if not model_dir.is_dir():
+            continue
+
+        method_label = _exp_label_from_path(str(model_dir))
+        p_val = _p_from_path(str(model_dir))
+        tb_val = _tb_from_path(str(model_dir))
+        ta_val = _ta_from_path(str(model_dir))
+
+        if p_val is None or tb_val is None or ta_val is None:
+            continue
+        if only_p_values is not None and (p_val not in set(only_p_values)):
+            continue
+
+        key = (method_label, p_val)
+        groups.setdefault(key, []).append(model_dir)
+        tb_set.setdefault(key, set()).add(tb_val)
+        ta_set.setdefault(key, set()).add(ta_val)
+
+    # Optionally compute shared color scale per method (across p)
+    method_vminmax: Dict[str, tuple] = {}
+    if shared_color_scale_within_method:
+        # Gather all rewards per method across all p/tb/ta
+        rewards_by_method: Dict[str, List[float]] = {}
+
+        for (method_label, p_val), dirs in groups.items():
+            for d in dirs:
+                for scenario_type, n_agents in scenario_specs:
+                    for eval_seed in random_seed_list:
+                        name_suffix = get_name_suffix(
+                            scenario_type, n_agents, eval_seed
+                        )
+                        out_td_path = d / f"out_td_{name_suffix}.td"
+                        if not out_td_path.exists():
+                            continue
+                        try:
+                            out_td = _load_out_td(out_td_path)
+                            rew = compute_total_reward(out_td)
+                            rewards_by_method.setdefault(method_label, []).append(
+                                float(rew)
+                            )
+                        except Exception:
+                            continue
+
+        for m, vals in rewards_by_method.items():
+            if len(vals) == 0:
+                continue
+            method_vminmax[m] = (float(np.nanmin(vals)), float(np.nanmax(vals)))
+
+    # Generate one heatmap per (method, p)
+    for (method_label, p_val), dirs in sorted(
+        groups.items(), key=lambda x: (_method_sort_key(x[0][0]), x[0][1])
+    ):
+        tb_vals = sorted(tb_set[(method_label, p_val)])
+        ta_vals = sorted(ta_set[(method_label, p_val)])
+
+        tb_to_j = {v: j for j, v in enumerate(tb_vals)}
+        ta_to_i = {v: i for i, v in enumerate(ta_vals)}
+
+        # Accumulate rewards per cell
+        cell_values: List[List[List[float]]] = [
+            [[] for _ in range(len(tb_vals))] for _ in range(len(ta_vals))
+        ]
+
+        for d in dirs:
+            tb_val = _tb_from_path(str(d))
+            ta_val = _ta_from_path(str(d))
+            if tb_val is None or ta_val is None:
+                continue
+            i = ta_to_i[ta_val]
+            j = tb_to_j[tb_val]
+
+            # Average over scenario_specs and evaluation seeds
+            for scenario_type, n_agents in scenario_specs:
+                for eval_seed in random_seed_list:
+                    name_suffix = get_name_suffix(scenario_type, n_agents, eval_seed)
+                    out_td_path = d / f"out_td_{name_suffix}.td"
+                    if not out_td_path.exists():
+                        continue
+                    try:
+                        out_td = _load_out_td(out_td_path)
+                        rew = compute_total_reward(out_td)
+                        cell_values[i][j].append(float(rew))
+                    except Exception:
+                        continue
+
+        # Build Z as mean reward per cell (NaN if missing)
+        z = np.full((len(ta_vals), len(tb_vals)), np.nan, dtype=float)
+        for i in range(len(ta_vals)):
+            for j in range(len(tb_vals)):
+                vals = cell_values[i][j]
+                if len(vals) > 0:
+                    z[i, j] = float(np.mean(vals))
+
+        vmin = vmax = None
+        if shared_color_scale_within_method and (method_label in method_vminmax):
+            vmin, vmax = method_vminmax[method_label]
+        else:
+            finite = np.isfinite(z)
+            if np.any(finite):
+                vmin, vmax = float(np.nanmin(z)), float(np.nanmax(z))
+
+        # Output name
+        method_tag = (
+            method_label.replace(" ", "_")
+            .replace("+", "plus")
+            .replace("(", "")
+            .replace(")", "")
+        )
+        out_pdf = (
+            fig_dir / f"fig_case2_colormap_total_reward_{method_tag}_p{p_val:g}.pdf"
+        )
+
+        title = f"{_wrap_method_label(method_label, is_line_break=False)} (p={p_val:g})"
+        save_sensitivity_colormap_pdf(
+            z=z,
+            tb_vals=tb_vals,
+            ta_vals=ta_vals,
+            out_pdf=out_pdf,
+            title=title,
+            vmin=vmin,
+            vmax=vmax,
+            cmap_name="Blues",
+        )
+
+        print(f"[INFO] Saved: {out_pdf}")
+
+
 if __name__ == "__main__":
 
     CASE = 2
@@ -1355,7 +1579,7 @@ if __name__ == "__main__":
 
         fig_dir = Path(policy_parent_folder) / "figures"
         fig_dir.mkdir(parents=True, exist_ok=True)
-        plot_figures(fig_dir)
+        plot_figures_case_1(fig_dir)
     elif CASE == 2:
         policy_parent_folder = "checkpoints/itsc26_sensitivity/cpm_mixed"
 
@@ -1396,3 +1620,14 @@ if __name__ == "__main__":
         # - "per_agent_timestep": mean over all agent-time pairs (and envs)
         COLLISION_MODE = "per_agent_timestep"  # change if needed, one of {"per_timestep_any_agent", "per_agent_timestep"}
         run_evaluations()
+
+        fig_dir = Path(policy_parent_folder) / "figures"
+        fig_dir.mkdir(parents=True, exist_ok=True)
+        plot_case2_sensitivity_colormaps(
+            path_list=path_list,
+            scenario_specs=scenario_specs,
+            random_seed_list=random_seed_list,
+            fig_dir=fig_dir,
+            only_p_values=[-1.0],  # set to None to plot all p values
+            shared_color_scale_within_method=True,
+        )

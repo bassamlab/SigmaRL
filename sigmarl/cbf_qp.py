@@ -1289,9 +1289,9 @@ class CBFQP:
             st = prob.solver_stats
             if hasattr(st, "solve_time"):
                 self.hist.qp_solving_t.append(st.solve_time)
-                print(
-                    f"[INFO] Centralized QP solving time: {st.solve_time * 1000:.2f} ms. Over all time steps: {np.mean(self.hist.qp_solving_t)*1000:.2f} ms."
-                )
+                # print(
+                #     f"[INFO] Centralized QP solving time: {st.solve_time * 1000:.2f} ms. Over all time steps: {np.mean(self.hist.qp_solving_t)*1000:.2f} ms."
+                # )
             if hasattr(st, "num_iters"):
                 self.hist.qp_solving_iter.append(st.num_iters)
 
