@@ -10,23 +10,42 @@ from tensordict import TensorDict
 from sigmarl.helper_common import is_latex_available, save_video
 from sigmarl.mappo_cavs import mappo_cavs
 
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any, Tuple
 import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-import sys
+
 
 import math
 from matplotlib.ticker import FuncFormatter
+from matplotlib.colors import (
+    TwoSlopeNorm,
+    SymLogNorm,
+    Normalize,
+    LinearSegmentedColormap,
+    FuncNorm,
+)
 import numpy as np
+from typing import Callable
+
+MetricFn = Callable[[Path, str, int, int], Optional[float]]
 
 
 METHOD_STYLE = {
     "CBF (our)": {
         "color": "tab:blue",
         "ls": "-",
+        "lw": 1.2,
+        "marker": None,
+        "ms": 0,
+        "mew": 1.0,
+        "markevery": None,
+    },
+    "CBF+Sparse (our)": {
+        "color": "tab:blue",
+        "ls": "--",
         "lw": 1.2,
         "marker": None,
         "ms": 0,
@@ -84,6 +103,8 @@ METHOD_STYLE = {
 DEFAULT_STYLE = {"color": "0.25", "ls": "-", "lw": 1.2}  # fallback: dark gray
 
 FRAME_PER_ITERATION = 128 * 32
+COLORMAP_VALUE_FONTSIZE = 11
+IS_LATEX = is_latex_available()
 
 plt.rcParams.update(
     {
@@ -94,13 +115,554 @@ plt.rcParams.update(
         "ytick.labelsize": 12,
         "legend.fontsize": 12,
         "font.family": "serif",
-        "text.usetex": is_latex_available(),
+        "text.usetex": IS_LATEX,
         # PDF export quality
         "pdf.fonttype": 42,  # embed TrueType fonts (better in paper PDFs)
         "ps.fonttype": 42,
         "savefig.transparent": False,
     }
 )
+
+
+MARKERS = [
+    "o",
+    "s",
+    "^",
+    "D",
+    "v",
+    "P",
+    "X",
+    "*",
+    "<",
+    ">",
+]  # enough for <=10 ta values
+
+
+def _marker_map_for_values(vals: List[float]) -> Dict[float, str]:
+    vals = sorted(set([float(v) for v in vals]))
+    if len(vals) > len(MARKERS):
+        raise ValueError(f"Too many unique ta values ({len(vals)}). Add more markers.")
+    return {v: MARKERS[i] for i, v in enumerate(vals)}
+
+
+def _truncate_colormap(cmap, minval: float = 0.2, maxval: float = 1.0, n: int = 256):
+    if not (0.0 <= minval < maxval <= 1.0):
+        raise ValueError("Require 0 <= minval < maxval <= 1.")
+    return LinearSegmentedColormap.from_list(
+        f"trunc_{cmap.name}_{minval:.2f}_{maxval:.2f}",
+        cmap(np.linspace(minval, maxval, n)),
+    )
+
+
+def save_reward_curves_per_method_hparam_coded_case23(
+    path_list_case2: List[str],
+    path_list_case3: List[str],
+    out_dir: Path,
+    frames_per_iteration: int = 1,
+) -> None:
+    """
+    One figure per method.
+      - CBF / CBF+Sparse: color encodes h (Blues), shown as psi_cbf^th.
+      - Distance / Distance+Sparse / TTC / TTC+Sparse: color encodes tb (Blues), marker encodes ta.
+
+    Curves are truncated to frames <= 2e6 and xlim is set to [0, 2e6].
+    Colormap is truncated to remove the near-white region (lowest 20%).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    max_frames = 2.0e6
+    max_T = int(max_frames / float(frames_per_iteration)) + 1  # inclusive endpoint
+
+    # Colormap: remove near-white (lowest 20%)
+    base_cmap = plt.get_cmap("Blues")
+    cmap = _truncate_colormap(base_cmap, minval=0.2, maxval=1.0)
+
+    # Collect all model dirs and attach parsed params
+    entries = []  # {method, curve, tb, ta, h}
+    all_dirs = [
+        Path(p) for p in (path_list_case2 + path_list_case3) if Path(p).is_dir()
+    ]
+
+    for d in all_dirs:
+        method_label = _exp_label_from_path(str(d))
+        curve = _load_episode_reward_mean_list(d)
+        if curve is None:
+            continue
+        entries.append(
+            {
+                "method": method_label,
+                "curve": curve,
+                "tb": _tb_from_path(str(d)),
+                "ta": _ta_from_path(str(d)),
+                "h": _h_from_path(str(d)),
+            }
+        )
+
+    methods = sorted({e["method"] for e in entries}, key=_method_sort_key)
+
+    for method in methods:
+        method_entries = [e for e in entries if e["method"] == method]
+        if len(method_entries) == 0:
+            continue
+
+        fig, ax = plt.subplots(figsize=(4.2, 3.0), constrained_layout=True)
+        style_base = METHOD_STYLE.get(method, DEFAULT_STYLE)
+
+        def _x_frames(T: int) -> List[float]:
+            # truncate by max_T
+            T = min(T, max_T)
+            return [frames_per_iteration * t for t in range(T)]
+
+        # Axis formatting
+        ax.set_xlim((0.0, max_frames))
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{x/1e6:g}"))
+        ax.set_xlabel(r"Frames ($\times10^6$)")
+        ax.set_ylabel("Episode Reward")
+        # ax.set_title(_wrap_method_label(method, is_line_break=False))
+        _style_axis(ax)
+
+        is_cbf_family = "CBF" in method
+
+        if is_cbf_family:
+            # Color by h, labeled as psi_cbf^th
+            h_vals = [e["h"] for e in method_entries if e["h"] is not None]
+            if len(h_vals) == 0:
+                for e in method_entries:
+                    y = _smooth_curve_ema(e["curve"][:max_T], alpha=0.03)
+                    x = _x_frames(len(y))
+                    ax.plot(
+                        x,
+                        y,
+                        color=style_base["color"],
+                        linestyle=style_base["ls"],
+                        linewidth=style_base["lw"],
+                    )
+            else:
+                h_min, h_max = float(min(h_vals)), float(max(h_vals))
+                norm = Normalize(vmin=h_min, vmax=h_max)
+
+                for e in method_entries:
+                    y = _smooth_curve_ema(e["curve"][:max_T], alpha=0.03)
+                    x = _x_frames(len(y))
+                    h = float(e["h"]) if e["h"] is not None else h_min
+                    ax.plot(
+                        x,
+                        y,
+                        color=cmap(norm(h)),
+                        linestyle=style_base["ls"],
+                        linewidth=style_base["lw"],
+                    )
+
+                sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+                cbar = fig.colorbar(sm, ax=ax, fraction=0.05, pad=0.01)
+                cbar.set_label(
+                    r"CBF Constraint Threshold $\psi_\mathrm{cbf}^\mathrm{th}$"
+                )
+                cbar.set_ticks([round(h_min, 2), round(h_max, 2)])
+
+        else:
+            # Color by tb, marker by ta
+            tb_vals = [e["tb"] for e in method_entries if e["tb"] is not None]
+            ta_vals = [e["ta"] for e in method_entries if e["ta"] is not None]
+
+            if len(tb_vals) == 0 or len(ta_vals) == 0:
+                for e in method_entries:
+                    y = _smooth_curve_ema(e["curve"][:max_T], alpha=0.03)
+                    x = _x_frames(len(y))
+                    ax.plot(
+                        x, y, color=style_base["color"], linestyle="-", linewidth=1.2
+                    )
+            else:
+                tb_min, tb_max = float(min(tb_vals)), float(max(tb_vals))
+                norm = Normalize(vmin=tb_min, vmax=tb_max)
+
+                marker_map = _marker_map_for_values([float(v) for v in ta_vals])
+
+                for e in method_entries:
+                    y = _smooth_curve_ema(e["curve"][:max_T], alpha=0.03)
+                    x = _x_frames(len(y))
+
+                    tb = float(e["tb"]) if e["tb"] is not None else tb_min
+                    ta = (
+                        float(e["ta"])
+                        if e["ta"] is not None
+                        else sorted(marker_map.keys())[0]
+                    )
+
+                    ax.plot(
+                        x,
+                        y,
+                        color=cmap(norm(tb)),
+                        linestyle="-",
+                        linewidth=1.2,
+                        marker=marker_map[ta],
+                        markersize=4.5,
+                        markeredgewidth=0.8,
+                        markevery=200,  # readable density
+                    )
+
+                # Colorbar label: tb as road distance threshold
+                sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+                cbar = fig.colorbar(sm, ax=ax, fraction=0.05, pad=0.01)
+                cbar.set_label(r"Road Distance Threshold $d_\mathrm{road}^\mathrm{th}$")
+                cbar.set_ticks([round(tb_min, 4), round(tb_max, 4)])
+
+                # Marker legend: ta label depends on method type
+                handles, labels = [], []
+                for ta in sorted(marker_map.keys()):
+                    mk = marker_map[ta]
+                    hdl = ax.plot(
+                        [], [], color="0.2", marker=mk, linestyle="None", markersize=6.0
+                    )[
+                        0
+                    ]  # TODO remove
+                    # hdl = ax.plot(
+                    #     [], [], color="0.2", marker=mk, linestyle="None",
+                    #     markersize=6.0, markerfacecolor="none", markeredgewidth=0.9
+                    # )[0]
+                    handles.append(hdl)
+                    labels.append(f"{ta:g}")
+
+                if "distance" in method.lower():
+                    legend_title = r"$d_\mathrm{veh}^\mathrm{th}$"
+                else:
+                    legend_title = r"$t_\mathrm{ttc}^\mathrm{th}$"
+
+                leg = ax.legend(
+                    handles,
+                    labels,
+                    title=legend_title,
+                    loc="lower left",  # avoids covering early curves
+                    frameon=True,
+                    framealpha=0.6,
+                    borderpad=0.6,
+                    labelspacing=0.5,
+                    handletextpad=0.6,
+                )
+                leg.get_title().set_fontstyle("italic")
+                for t in leg.get_texts():
+                    t.set_fontstyle("italic")
+
+        # Save
+        out_pdf = out_dir / (
+            "fig_training_reward_curve_"
+            + method.replace(" ", "_")
+            .replace("+", "plus")
+            .replace("(", "")
+            .replace(")", "")
+            + ".pdf"
+        )
+        fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.01)
+        plt.close(fig)
+        print(f"[INFO] Saved: {out_pdf}")
+
+
+def _robust_stats_from_values(vals: np.ndarray) -> Dict[str, float]:
+    vals = np.asarray(vals, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return {
+            "count": 0,
+            "mean": float("nan"),
+            "std": float("nan"),
+            "q10": float("nan"),
+            "q50": float("nan"),
+            "q90": float("nan"),
+            "min": float("nan"),
+            "max": float("nan"),
+        }
+    return {
+        "count": float(vals.size),
+        "mean": float(np.mean(vals)),
+        "std": float(np.std(vals, ddof=0)),
+        "q10": float(np.quantile(vals, 0.10)),
+        "q50": float(np.quantile(vals, 0.50)),
+        "q90": float(np.quantile(vals, 0.90)),
+        "min": float(np.min(vals)),
+        "max": float(np.max(vals)),
+    }
+
+
+def _sobol_from_grid(z: np.ndarray) -> Dict[str, float]:
+    """
+    Variance-based sensitivity indices computed on a discrete grid z[ta_idx, tb_idx],
+    assuming uniform distribution over the finite grid points.
+
+    Returns first-order S_tb, S_ta, interaction S_int, and total-effect T_tb, T_ta.
+    """
+    z = np.asarray(z, dtype=float)
+
+    # Require at least some finite cells
+    finite = np.isfinite(z)
+    if not np.any(finite):
+        return {
+            "V": float("nan"),
+            "S_tb": float("nan"),
+            "S_ta": float("nan"),
+            "S_int": float("nan"),
+            "T_tb": float("nan"),
+            "T_ta": float("nan"),
+        }
+
+    # Overall variance over all finite cells
+    z_vals = z[finite]
+    V = float(np.var(z_vals, ddof=0))
+    if V <= 1e-12:
+        return {
+            "V": V,
+            "S_tb": 0.0,
+            "S_ta": 0.0,
+            "S_int": 0.0,
+            "T_tb": 0.0,
+            "T_ta": 0.0,
+        }
+
+    # Conditional means: E[Y|tb] and E[Y|ta]
+    m_tb = np.nanmean(z, axis=0)  # over ta, shape [n_tb]
+    m_ta = np.nanmean(z, axis=1)  # over tb, shape [n_ta]
+
+    V_tb = (
+        float(np.var(m_tb[np.isfinite(m_tb)], ddof=0))
+        if np.any(np.isfinite(m_tb))
+        else 0.0
+    )
+    V_ta = (
+        float(np.var(m_ta[np.isfinite(m_ta)], ddof=0))
+        if np.any(np.isfinite(m_ta))
+        else 0.0
+    )
+
+    # Interaction variance (clip to avoid small negative due to missing cells / numerics)
+    V_int = max(0.0, V - V_tb - V_ta)
+
+    S_tb = V_tb / V
+    S_ta = V_ta / V
+    S_int = V_int / V
+
+    # Two-input identity: T_tb = 1 - S_ta, T_ta = 1 - S_tb
+    T_tb = 1.0 - S_ta
+    T_ta = 1.0 - S_tb
+
+    return {
+        "V": V,
+        "S_tb": S_tb,
+        "S_ta": S_ta,
+        "S_int": S_int,
+        "T_tb": T_tb,
+        "T_ta": T_ta,
+    }
+
+
+def _print_robustness_report_2d(method_label: str, p_val: float, z: np.ndarray) -> None:
+    stats = _robust_stats_from_values(z[np.isfinite(z)])
+    sob = _sobol_from_grid(z)
+
+    print("-" * 80)
+    print(f"[ROBUSTNESS] Method={method_label}, p={p_val:g} (grid over t_a x t_b)")
+    print(
+        f"  Count={int(stats['count'])}, Mean={stats['mean']:.3f}, Std={stats['std']:.3f}, "
+        f"Q10={stats['q10']:.3f}, Median={stats['q50']:.3f}, Q90={stats['q90']:.3f}, "
+        f"Min={stats['min']:.3f}, Max={stats['max']:.3f}"
+    )
+    print(
+        f"  Var(V)={sob['V']:.6f}, "
+        f"S_tb={sob['S_tb']:.3f}, S_ta={sob['S_ta']:.3f}, S_int={sob['S_int']:.3f}, "
+        f"T_tb={sob['T_tb']:.3f}, T_ta={sob['T_ta']:.3f}"
+    )
+
+
+def _print_robustness_report_1d(
+    tag: str, x_vals: List[float], y_vals: List[float]
+) -> None:
+    y = np.asarray(y_vals, dtype=float)
+    stats = _robust_stats_from_values(y[np.isfinite(y)])
+    print("-" * 80)
+    print(f"[ROBUSTNESS] {tag} (1D sweep)")
+    print(
+        f"  Count={int(stats['count'])}, Mean={stats['mean']:.3f}, Std={stats['std']:.3f}, "
+        f"Q10={stats['q10']:.3f}, Median={stats['q50']:.3f}, Q90={stats['q90']:.3f}, "
+        f"Min={stats['min']:.3f}, Max={stats['max']:.3f}"
+    )
+
+
+def make_reward_diverging_norm(vmin: float, vmax: float):
+    # vmin should be < 0, vmax > 0 for best effect
+    def _forward(x):
+        result = np.empty_like(x, dtype=float)
+        pos = x >= 0
+        neg = ~pos
+        result[pos] = 0.5 + 0.5 * np.clip(x[pos], 0, 10) / 10.0
+        log_min = np.log1p(abs(vmin))
+        result[neg] = 0.5 - 0.5 * np.log1p(np.abs(np.clip(x[neg], vmin, 0))) / log_min
+        return result
+
+    def _inverse(x):
+        result = np.empty_like(x, dtype=float)
+        pos = x >= 0.5
+        neg = ~pos
+        result[pos] = (x[pos] - 0.5) * 2.0 * 10.0
+        log_min = np.log1p(abs(vmin))
+        result[neg] = -(np.expm1((0.5 - x[neg]) * 2.0 * log_min))
+        return result
+
+    return FuncNorm((_forward, _inverse), vmin=vmin, vmax=vmax)
+
+
+def save_sensitivity_colormap_1d_pdf_metric(
+    z: np.ndarray,
+    x_vals: List[float],
+    out_pdf: Path,
+    title: str,
+    xlabel: str,
+    cbar_label: str,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    cmap_name: str = "Blues",
+    norm=None,
+    fmt: str = "{:.1f}",
+    is_highlight_best_value: bool = True,
+    is_higher_better: bool = True,
+) -> None:
+    """
+    Save a 1D sensitivity colormap as a 1xK heatmap.
+
+    Args:
+        z: shape [1, len(x_vals)].
+        x_vals: x-axis tick values.
+        out_pdf: output pdf path.
+        title: figure title.
+        xlabel: x-axis label.
+        cbar_label: colorbar label.
+        vmin/vmax: used when norm is None.
+        cmap_name: matplotlib colormap name.
+        norm: optional matplotlib norm (overrides vmin/vmax).
+        fmt: annotation format string.
+    """
+    if z.ndim != 2 or z.shape[0] != 1 or z.shape[1] != len(x_vals):
+        raise ValueError(f"Expected z shape [1, {len(x_vals)}], got {z.shape}")
+
+    fig, ax = plt.subplots(figsize=(4.2, 2.2), constrained_layout=True)
+
+    if norm is None:
+        norm = Normalize(vmin=vmin, vmax=vmax)
+
+    cmap = plt.get_cmap(cmap_name).copy()
+    cmap.set_over("white")
+    cmap.set_under("white")
+
+    im = ax.imshow(
+        z,
+        origin="lower",
+        aspect="auto",
+        interpolation="nearest",
+        cmap=cmap,
+        norm=norm,
+    )
+
+    _annotate_heatmap_values(
+        ax=ax,
+        z=z,
+        im=im,
+        fmt=fmt,
+        fontsize=COLORMAP_VALUE_FONTSIZE,
+        is_highlight_best_value=is_highlight_best_value,
+        is_higher_better=is_higher_better,
+    )
+
+    ax.set_xticks(list(range(len(x_vals))))
+    ax.set_xticklabels([f"{v:g}" for v in x_vals])
+
+    # Hide the dummy y axis (single row heatmap)
+    ax.set_yticks([0])
+    ax.set_yticklabels([""])
+
+    ax.set_xlabel(xlabel)
+    # ax.set_title(title)
+
+    _style_axis(ax)
+    ax.grid(False)
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.05, pad=0.01)
+    cbar.set_label(cbar_label)
+    cbar.set_ticks([round(vmin, 1), 0.0, round(vmax, 1)])
+
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.01)
+    plt.close(fig)
+
+
+def save_sensitivity_colormap_pdf(
+    z: np.ndarray,
+    tb_vals: List[float],
+    ta_vals: List[float],
+    out_pdf: Path,
+    title: str,
+    cbar_label: str,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    cmap_name: str = "Blues",
+    method_label: str = "",
+    norm=None,  # NEW
+    fmt: str = "{:.1f}",  # NEW
+    is_highlight_best_value: bool = True,
+    is_higher_better: bool = True,
+) -> None:
+    """
+    Save a tb (x) vs ta (y) colormap.
+
+    z shape: [len(ta_vals), len(tb_vals)]  (rows=ta, cols=tb)
+    """
+    fig, ax = plt.subplots(figsize=(4.2, 2.2), constrained_layout=True)
+
+    if norm is None:
+        norm = Normalize(vmin=vmin, vmax=vmax)
+
+    cmap = plt.get_cmap(cmap_name).copy()
+    cmap.set_over("white")
+    cmap.set_under("white")
+
+    im = ax.imshow(
+        z,
+        origin="lower",
+        aspect="auto",
+        interpolation="nearest",
+        cmap=cmap,
+        norm=norm,
+    )
+
+    _annotate_heatmap_values(
+        ax=ax,
+        z=z,
+        im=im,
+        fmt=fmt,
+        fontsize=COLORMAP_VALUE_FONTSIZE,
+        is_highlight_best_value=is_highlight_best_value,
+        is_higher_better=is_higher_better,
+    )
+
+    ax.set_xticks(list(range(len(tb_vals))))
+    ax.set_yticks(list(range(len(ta_vals))))
+    ax.set_xticklabels([f"{v:g}" for v in tb_vals])
+    ax.set_yticklabels([f"{v:g}" for v in ta_vals])
+
+    ax.set_xlabel(r"Road Distance Threshold $d_\mathrm{road}^\mathrm{th}$")
+    if "distance" in method_label.lower():
+        ax.set_ylabel(r"Vehicle Distance Threshold $d_\mathrm{veh}^\mathrm{th}$")
+    elif "ttc" in method_label.lower():
+        ax.set_ylabel(r"TTC Threshold $t_\mathrm{ttc}^\mathrm{th}$")
+
+    # ax.set_title(title)
+
+    _style_axis(ax)
+    ax.grid(False)
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.05, pad=0.01)
+    cbar.set_label(cbar_label)
+    cbar.set_ticks([round(vmin, 1), 0.0, round(vmax, 1)])
+
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.01)
+    plt.close(fig)
 
 
 def get_name_suffix(scenario_type: str, n_agents: int, random_seed: int) -> str:
@@ -179,6 +741,8 @@ def _wrap_method_label(s: str, is_line_break=True) -> str:
     """
     if s == "CBF (our)":
         return "CBF\n(our)" if is_line_break else "CBF (our)"
+    if s == "CBF+Sparse (our)":
+        return "CBF\nV2 (our)" if is_line_break else "CBF V2 (our)"
     if s == "Distance+Sparse":
         return "Distance\nV2" if is_line_break else "Distance V2"
     if s == "TTC+Sparse":
@@ -202,6 +766,7 @@ def _reward_method_from_path(p: str) -> str:
 def _reward_method_label(m: str) -> str:
     label_map = {
         "cbf": "CBF (our)",
+        "cbf_sparse": "CBF+Sparse (our)",
         "distance_sparse": "Distance+Sparse",
         "ttc_sparse": "TTC+Sparse",
         "distance": "Distance",
@@ -215,11 +780,12 @@ def _reward_method_label(m: str) -> str:
 def _method_sort_key(label: str) -> int:
     priority = {
         "CBF (our)": 0,
-        "Distance": 1,
-        "Distance+Sparse": 2,
-        "TTC": 3,
-        "TTC+Sparse": 4,
-        "Sparse": 5,
+        "CBF+Sparse (our)": 10,
+        "Distance": 20,
+        "Distance+Sparse": 30,
+        "TTC": 40,
+        "TTC+Sparse": 50,
+        "Sparse": 60,
     }
     return priority.get(label, 10**6)
 
@@ -329,8 +895,12 @@ def trim_td(out_td: TensorDict, keys_to_keep=None) -> TensorDict:
             ("agents", "info", "rew_reach_goal"),
             ("agents", "info", "rew_collide_other_agents"),
             ("agents", "info", "rew_collide_lane"),
-            ("agents", "info", "applied_action_vel"),
-            ("agents", "info", "applied_action_steer"),
+            ("agents", "info", "applied_action_vel"),  # speed, torch.Size([B, T, N, 1])
+            (
+                "agents",
+                "info",
+                "applied_action_steer",
+            ),  # steering, torch.Size([B, T, N, 1])
             ("agents", "info", "nominal_action_vel"),
             ("agents", "info", "nominal_action_steer"),
         ]
@@ -577,6 +1147,72 @@ def compute_total_reward(out_td) -> float:
     return r_total.sum().item()
 
 
+def compute_total_reward(out_td, is_consider_driving_comfort: bool = True) -> float:
+    # -----------------------------
+    # Event-based reward (existing)
+    # -----------------------------
+    key_reach = ("agents", "info", "rew_reach_goal")
+    key_coll_agents = ("agents", "info", "rew_collide_other_agents")
+    key_coll_lane = ("agents", "info", "rew_collide_lane")
+
+    r_reach = out_td.get(key_reach).float()
+    r_coll_agents = out_td.get(key_coll_agents).float()
+    r_coll_lane = out_td.get(key_coll_lane).float()
+
+    r_event_sum = (r_reach + r_coll_agents + r_coll_lane).sum()
+
+    if not is_consider_driving_comfort:
+        return float(r_event_sum.item())
+
+    # -----------------------------
+    # Comfort penalty (new)
+    # -----------------------------
+    dt = 0.1  # seconds
+
+    key_speed = ("agents", "info", "applied_action_vel")  # speed [m/s], shape [B,T,N,1]
+    key_steer = (
+        "agents",
+        "info",
+        "applied_action_steer",
+    )  # steering angle [rad], shape [B,T,N,1]
+
+    v = out_td.get(key_speed).float()
+    delta = out_td.get(key_steer).float()
+
+    # First differences (pad t=0 with zeros)
+    dv = v[:, 1:] - v[:, :-1]  # [B,T-1,N,1]
+    ddelta = delta[:, 1:] - delta[:, :-1]  # [B,T-1,N,1]
+
+    a = dv / dt  # [B,T-1,N,1]  [m/s^2]
+    steer_rate = ddelta / dt  # [B,T-1,N,1]  [rad/s]
+
+    zero = torch.zeros_like(v[:, :1])  # [B,1,N,1]
+    a = torch.cat([zero, a], dim=1)  # [B,T,N,1]
+    steer_rate = torch.cat([zero, steer_rate], dim=1)
+
+    # Second differences for jerk / steering-rate jerk
+    da = a[:, 1:] - a[:, :-1]
+    dsteer_rate = steer_rate[:, 1:] - steer_rate[:, :-1]
+
+    jerk = da / dt  # [B,T-1,N,1]  [m/s^3]
+    steer_rate_jerk = dsteer_rate / dt  # [B,T-1,N,1]  [rad/s^2]
+
+    jerk = torch.cat([zero, jerk], dim=1)  # [B,T,N,1]
+    steer_rate_jerk = torch.cat([zero, steer_rate_jerk], dim=1)
+
+    # Normalizing constants (reasonable defaults)
+    a_norm = 3.0  # [m/s^2]
+    jerk_norm = 20.0  # [m/s^3]
+
+    w_comf = 0.2
+    r_a = -w_comf * (a.abs() / a_norm).pow(2).mean()
+    r_jerk = -w_comf * (jerk.abs() / jerk_norm).pow(2).mean()
+    r_comf = r_a + r_jerk
+    # print(f"r_a: {r_a:.2f}, r_jerk: {r_jerk:.2f}, r_comf: {r_comf:.2f}")
+
+    return float((r_event_sum + r_comf).item())
+
+
 def compute_cbf_activation_percentage(out_td) -> float:
     """
     Compute the mean absolute difference between nominal and applied actions,
@@ -671,7 +1307,7 @@ def save_boxplot_pdf(
     is_show_x_ticks: bool = True,
     is_show_x_label: bool = True,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(4, 2.8), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(4.2, 2.2), constrained_layout=True)
 
     data = [data_by_method.get(m, []) for m in method_order]
 
@@ -770,7 +1406,7 @@ def save_boxplot_pdf(
         if unit is None or unit == "":
             text_str = f"{stat_val:.2f}"
         else:
-            if plt.rcParams.get("text.usetex", False) and unit == "%":
+            if IS_LATEX and unit == "%":
                 text_str = f"{stat_val:.2f}\\%"
             else:
                 text_str = f"{stat_val:.2f}{unit}"
@@ -797,7 +1433,7 @@ def save_boxplot_pdf(
     if is_show_x_ticks:
         ax.set_xticks(list(range(1, len(method_order) + 1)))
 
-        if plt.rcParams.get("text.usetex", False):
+        if IS_LATEX:
             # LaTeX path: make labels italic via LaTeX, and replace '\n' with '\\' using \shortstack
             def _tex_italic_multiline(s: str) -> str:
                 parts = _wrap_method_label(s).split("\n")
@@ -831,7 +1467,7 @@ def save_reward_curve_pdf(
     ylabel: str = "Episode Reward",
     frames_per_iteration: int = 1,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(4.5, 2.8), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(4.2, 2.2), constrained_layout=True)
 
     for method in method_order:
         curves = curves_by_method.get(method, [])
@@ -1197,7 +1833,7 @@ def plot_figures_case_1(fig_dir: Path) -> None:
         save_boxplot_pdf(
             data_by_method=coll_rates[scenario_type],
             method_order=method_order,
-            ylabel=r"Collision Rate [$\%$]",
+            ylabel=r"Collision Rate [\%]",
             out_pdf=out_coll_pdf,
             unit="%",
             ylim=(0, 1),
@@ -1232,7 +1868,7 @@ def plot_figures_case_1(fig_dir: Path) -> None:
         save_boxplot_pdf(
             data_by_method=cbf_activation_degree[scenario_type],
             method_order=method_order,
-            ylabel=r"CBF Act. Degree [$\%$]",
+            ylabel=r"CBF Act. Degree [\%]",
             out_pdf=out_cbf_act_degree_pdf,
             unit="%",
             ylim=(0, 20),
@@ -1241,7 +1877,7 @@ def plot_figures_case_1(fig_dir: Path) -> None:
         save_boxplot_pdf(
             data_by_method=cbf_activation_rates[scenario_type],
             method_order=method_order,
-            ylabel=r"CBF Act. Ratio [$\%$]",
+            ylabel=r"CBF Act. Ratio [\%]",
             out_pdf=out_cbf_act_rate_pdf,
             unit="%",
             ylim=(0, 20),
@@ -1250,7 +1886,7 @@ def plot_figures_case_1(fig_dir: Path) -> None:
         save_boxplot_pdf(
             data_by_method=task_num_tries[scenario_type],
             method_order=method_order,
-            ylabel="\#Task Attempts",
+            ylabel=r"\#Task Attempts",
             out_pdf=out_task_tries_pdf,
             unit="",
             ylim=(0, 50),
@@ -1259,7 +1895,7 @@ def plot_figures_case_1(fig_dir: Path) -> None:
         save_boxplot_pdf(
             data_by_method=task_success_times[scenario_type],
             method_order=method_order,
-            ylabel="\#Successful Task Attempts",
+            ylabel=r"\#Successful Task Attempts",
             out_pdf=out_success_task_tries_pdf,
             unit="",
             ylim=(0, 50),
@@ -1268,7 +1904,7 @@ def plot_figures_case_1(fig_dir: Path) -> None:
         save_boxplot_pdf(
             data_by_method=task_success_rate[scenario_type],
             method_order=method_order,
-            ylabel=r"Task Success Rate [$\%$]",
+            ylabel=r"Task Success Rate [\%]",
             out_pdf=out_task_success_pdf,
             unit="%",
             ylim=(0, 110),
@@ -1302,56 +1938,135 @@ def _ta_from_path(p: str) -> Optional[float]:
     return float(m.group(1)) if m else None
 
 
-def save_sensitivity_colormap_pdf(
+def _annotate_heatmap_values(
+    ax: plt.Axes,
     z: np.ndarray,
-    tb_vals: List[float],
-    ta_vals: List[float],
-    out_pdf: Path,
-    title: str,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None,
-    cmap_name: str = "Blues",
+    im,
+    fmt: str = "{:.1f}",
+    fontsize: int = 8,
+    is_highlight_best_value: bool = True,
+    is_higher_better: bool = True,
 ) -> None:
     """
-    Save a tb (x) vs ta (y) colormap for Total Reward.
-
-    z shape: [len(ta_vals), len(tb_vals)]  (rows=ta, cols=tb)
+    Annotate each cell with its numeric value.
+    z: array shown by imshow (same shape).
+    Skips NaNs.
+    Text color adapts using the colormap normalization.
     """
-    fig, ax = plt.subplots(figsize=(4.2, 3.0), constrained_layout=True)
+    if z.size == 0:
+        return
 
-    # Use imshow on index grid; map ticks to actual tb/ta values
-    im = ax.imshow(
-        z,
-        origin="lower",
-        aspect="auto",
-        interpolation="nearest",
-        cmap=plt.get_cmap(cmap_name),
-        vmin=vmin,
-        vmax=vmax,
+    # Use the mid-point of the current color scale to decide text color
+    vmin, vmax = im.get_clim()
+    if vmin is None or vmax is None or not np.isfinite(vmin) or not np.isfinite(vmax):
+        vmin = np.nanmin(z)
+        vmax = np.nanmax(z)
+    thresh = 0.5 * (vmin + vmax)
+
+    best_mask = np.zeros_like(z, dtype=bool)
+    finite = np.isfinite(z)
+    if is_highlight_best_value and np.any(finite):
+        best_value = np.nanmax(z) if is_higher_better else np.nanmin(z)
+        best_mask = finite & np.isclose(z, best_value, rtol=1e-9, atol=1e-12)
+
+    nrows, ncols = z.shape
+    for i in range(nrows):
+        for j in range(ncols):
+            val = z[i, j]
+            if not np.isfinite(val):
+                continue
+
+            color = "white" if (val > 0.5 * vmax or val < 0.5 * vmin) else "black"
+            is_best = bool(best_mask[i, j])
+            if is_best:
+                ax.add_patch(
+                    Rectangle(
+                        (j - 0.5, i - 0.5),
+                        1.0,
+                        1.0,
+                        fill=False,
+                        edgecolor="black",
+                        linewidth=1.8,
+                        zorder=3,
+                    )
+                )
+            ax.text(
+                j,
+                i,
+                fmt.format(val),
+                ha="center",
+                va="center",
+                color=color,
+                fontsize=fontsize,
+                fontweight="bold" if is_best else "normal",
+                clip_on=True,
+                bbox=dict(facecolor="none", edgecolor="none", alpha=0.35, pad=0.15),
+            )
+
+
+def _is_higher_better_metric(metric_tag: str) -> bool:
+    """
+    Decide the optimization direction for metric colormaps.
+
+    Reward, success, and throughput-style metrics are maximized. Cost/risk/
+    intervention metrics are minimized.
+    """
+    tag = metric_tag.lower()
+    lower_is_better_tokens = (
+        "collision",
+        "crash",
+        "failure",
+        "violation",
+        "error",
+        "loss",
+        "cost",
+        "cbf_activation",
     )
+    return not any(token in tag for token in lower_is_better_tokens)
 
-    # Ticks: show all discrete hyperparameter values
-    ax.set_xticks(list(range(len(tb_vals))))
-    ax.set_yticks(list(range(len(ta_vals))))
 
-    # Keep compact formatting and stable labels
-    ax.set_xticklabels([f"{v:g}" for v in tb_vals])
-    ax.set_yticklabels([f"{v:g}" for v in ta_vals])
+def _collect_total_rewards_from_model_dirs(
+    model_dirs: List[Path],
+    scenario_specs: List[tuple],
+    random_seed_list: List[int],
+) -> List[float]:
+    """
+    Collect all Total Reward values across provided training folders,
+    averaged per rollout file (one value per out_td), for global colormap scaling.
+    """
+    vals: List[float] = []
+    for d in model_dirs:
+        if not d.is_dir():
+            continue
+        for scenario_type, n_agents in scenario_specs:
+            for eval_seed in random_seed_list:
+                name_suffix = get_name_suffix(scenario_type, n_agents, eval_seed)
+                out_td_path = d / f"out_td_{name_suffix}.td"
+                if not out_td_path.exists():
+                    continue
+                try:
+                    out_td = _load_out_td(out_td_path)
+                    vals.append(float(compute_total_reward(out_td)))
+                except Exception:
+                    continue
+    return vals
 
-    ax.set_xlabel(r"$t_b$")
-    ax.set_ylabel(r"$t_a$")
-    ax.set_title(title)
 
-    # Style consistent with other figures
-    _style_axis(ax)
-    ax.grid(False)  # heatmap already encodes structure
-
-    cbar = fig.colorbar(im, ax=ax, fraction=0.05, pad=0.02)
-    cbar.set_label("Total Reward")
-
-    out_pdf.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.01)
-    plt.close(fig)
+def _global_vmin_vmax_for_sensitivity(
+    path_list: List[str],
+    scenario_specs: List[tuple],
+    random_seed_list: List[int],
+) -> tuple[Optional[float], Optional[float]]:
+    """
+    One global (vmin, vmax) for ALL sensitivity plots to enable cross-method comparison.
+    """
+    model_dirs = [Path(p) for p in path_list if Path(p).is_dir()]
+    vals = _collect_total_rewards_from_model_dirs(
+        model_dirs, scenario_specs, random_seed_list
+    )
+    if len(vals) == 0:
+        return None, None
+    return float(np.nanmin(vals)), float(np.nanmax(vals))
 
 
 def plot_case2_sensitivity_colormaps(
@@ -1360,8 +2075,11 @@ def plot_case2_sensitivity_colormaps(
     random_seed_list: List[int],
     fig_dir: Path,
     only_p_values: Optional[List[float]] = None,
-    shared_color_scale_within_method: bool = True,
+    global_vmin: Optional[float] = None,
+    global_vmax: Optional[float] = None,
+    is_highlight_best_value: bool = True,
 ) -> None:
+
     """
     For each (reward method, p) pair, create a tb (x) vs ta (y) colormap
     where each cell is the mean Total Reward averaged over:
@@ -1398,36 +2116,6 @@ def plot_case2_sensitivity_colormaps(
         groups.setdefault(key, []).append(model_dir)
         tb_set.setdefault(key, set()).add(tb_val)
         ta_set.setdefault(key, set()).add(ta_val)
-
-    # Optionally compute shared color scale per method (across p)
-    method_vminmax: Dict[str, tuple] = {}
-    if shared_color_scale_within_method:
-        # Gather all rewards per method across all p/tb/ta
-        rewards_by_method: Dict[str, List[float]] = {}
-
-        for (method_label, p_val), dirs in groups.items():
-            for d in dirs:
-                for scenario_type, n_agents in scenario_specs:
-                    for eval_seed in random_seed_list:
-                        name_suffix = get_name_suffix(
-                            scenario_type, n_agents, eval_seed
-                        )
-                        out_td_path = d / f"out_td_{name_suffix}.td"
-                        if not out_td_path.exists():
-                            continue
-                        try:
-                            out_td = _load_out_td(out_td_path)
-                            rew = compute_total_reward(out_td)
-                            rewards_by_method.setdefault(method_label, []).append(
-                                float(rew)
-                            )
-                        except Exception:
-                            continue
-
-        for m, vals in rewards_by_method.items():
-            if len(vals) == 0:
-                continue
-            method_vminmax[m] = (float(np.nanmin(vals)), float(np.nanmax(vals)))
 
     # Generate one heatmap per (method, p)
     for (method_label, p_val), dirs in sorted(
@@ -1474,160 +2162,728 @@ def plot_case2_sensitivity_colormaps(
                 if len(vals) > 0:
                     z[i, j] = float(np.mean(vals))
 
-        vmin = vmax = None
-        if shared_color_scale_within_method and (method_label in method_vminmax):
-            vmin, vmax = method_vminmax[method_label]
-        else:
+        vmin = global_vmin
+        vmax = global_vmax
+        if vmin is None or vmax is None:
             finite = np.isfinite(z)
             if np.any(finite):
                 vmin, vmax = float(np.nanmin(z)), float(np.nanmax(z))
 
-        # Output name
-        method_tag = (
-            method_label.replace(" ", "_")
-            .replace("+", "plus")
-            .replace("(", "")
-            .replace(")", "")
-        )
-        out_pdf = (
-            fig_dir / f"fig_case2_colormap_total_reward_{method_tag}_p{p_val:g}.pdf"
-        )
+        out_pdf = fig_dir / f"fig_colormap_total_reward_{method_label.lower()}.pdf"
 
-        title = f"{_wrap_method_label(method_label, is_line_break=False)} (p={p_val:g})"
+        title = f"{_wrap_method_label(method_label, is_line_break=False)}"
         save_sensitivity_colormap_pdf(
             z=z,
             tb_vals=tb_vals,
             ta_vals=ta_vals,
             out_pdf=out_pdf,
             title=title,
+            cbar_label="Total Reward",
             vmin=vmin,
             vmax=vmax,
             cmap_name="Blues",
+            method_label=method_label,
+            is_highlight_best_value=is_highlight_best_value,
+            is_higher_better=True,
         )
 
         print(f"[INFO] Saved: {out_pdf}")
 
 
+def plot_case2_sensitivity_colormaps_metric(
+    path_list: List[str],
+    scenario_specs: List[tuple],
+    random_seed_list: List[int],
+    fig_dir: Path,
+    metric_fn: MetricFn,
+    metric_tag: str,
+    cbar_label: str,
+    fmt: str = "{:.1f}",
+    only_p_values: Optional[List[float]] = None,
+    global_vmin: Optional[float] = None,
+    global_vmax: Optional[float] = None,
+    cmap_name: str = "Blues",
+    norm=None,
+    is_highlight_best_value: bool = True,
+) -> None:
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    groups: Dict[tuple, List[Path]] = {}
+    tb_set: Dict[tuple, set] = {}
+    ta_set: Dict[tuple, set] = {}
+
+    for s in path_list:
+        d = Path(s)
+        if not d.is_dir():
+            continue
+
+        method_label = _exp_label_from_path(str(d))
+        p_val = _p_from_path(str(d))
+        tb_val = _tb_from_path(str(d))
+        ta_val = _ta_from_path(str(d))
+        if p_val is None or tb_val is None or ta_val is None:
+            continue
+        if only_p_values is not None and (p_val not in set(only_p_values)):
+            continue
+
+        key = (method_label, p_val)
+        groups.setdefault(key, []).append(d)
+        tb_set.setdefault(key, set()).add(tb_val)
+        ta_set.setdefault(key, set()).add(ta_val)
+
+    for (method_label, p_val), dirs in sorted(
+        groups.items(), key=lambda x: (_method_sort_key(x[0][0]), x[0][1])
+    ):
+        tb_vals = sorted(tb_set[(method_label, p_val)])
+        ta_vals = sorted(ta_set[(method_label, p_val)])
+        tb_to_j = {v: j for j, v in enumerate(tb_vals)}
+        ta_to_i = {v: i for i, v in enumerate(ta_vals)}
+
+        cell_values: List[List[List[float]]] = [
+            [[] for _ in range(len(tb_vals))] for _ in range(len(ta_vals))
+        ]
+
+        for d in dirs:
+            tb_val = _tb_from_path(str(d))
+            ta_val = _ta_from_path(str(d))
+            if tb_val is None or ta_val is None:
+                continue
+            i = ta_to_i[ta_val]
+            j = tb_to_j[tb_val]
+
+            for scenario_type, n_agents in scenario_specs:
+                for eval_seed in random_seed_list:
+                    try:
+                        v = metric_fn(d, scenario_type, n_agents, eval_seed)
+                        if v is not None and np.isfinite(v):
+                            cell_values[i][j].append(float(v))
+                    except Exception:
+                        continue
+
+        z = np.full((len(ta_vals), len(tb_vals)), np.nan, dtype=float)
+        for i in range(len(ta_vals)):
+            for j in range(len(tb_vals)):
+                vals = cell_values[i][j]
+                if len(vals) > 0:
+                    z[i, j] = float(np.mean(vals))
+
+        if metric_tag == "total_reward":
+            _print_robustness_report_2d(method_label=method_label, p_val=p_val, z=z)
+
+        vmin = global_vmin
+        vmax = global_vmax
+        if vmin is None or vmax is None:
+            finite = np.isfinite(z)
+            if np.any(finite):
+                vmin, vmax = float(np.nanmin(z)), float(np.nanmax(z))
+
+        out_pdf = (
+            fig_dir / f"fig_colormap_{metric_tag.lower()}_{method_label.lower()}.pdf"
+        )
+        title = f"{_wrap_method_label(method_label, is_line_break=False)} (p={p_val:g})"
+        is_higher_better = _is_higher_better_metric(metric_tag)
+
+        save_sensitivity_colormap_pdf(
+            z=z,
+            tb_vals=tb_vals,
+            ta_vals=ta_vals,
+            out_pdf=out_pdf,
+            title=title,
+            cbar_label=cbar_label,
+            vmin=vmin,
+            vmax=vmax,
+            cmap_name=cmap_name,
+            norm=norm,
+            fmt=fmt,
+            method_label=method_label,
+            is_highlight_best_value=is_highlight_best_value,
+            is_higher_better=is_higher_better,
+        )
+
+        print(f"[INFO] Saved: {out_pdf}")
+
+
+def plot_case3_cbf_h_colormap_metric(
+    path_list: List[str],
+    scenario_specs: List[tuple],
+    random_seed_list: List[int],
+    fig_dir: Path,
+    metric_fn: MetricFn,
+    metric_tag: str,
+    cbar_label: str,
+    fmt: str = "{:.1f}",
+    global_vmin: Optional[float] = None,
+    global_vmax: Optional[float] = None,
+    cmap_name: str = "Blues",
+    norm=None,
+    is_highlight_best_value: bool = True,
+) -> None:
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    dirs_by_h: Dict[float, List[Path]] = {}
+    for s in path_list:
+        d = Path(s)
+        if not d.is_dir():
+            continue
+        if _reward_method_from_path(str(d)) != "cbf":
+            continue
+        h_val = _h_from_path(str(d))
+        if h_val is None:
+            continue
+        dirs_by_h.setdefault(h_val, []).append(d)
+
+    if len(dirs_by_h) == 0:
+        print("[WARNING] No CBF h-folders found for Case 3.")
+        return
+
+    h_vals = sorted(dirs_by_h.keys())
+    means = []
+
+    for h in h_vals:
+        vals = []
+        for d in dirs_by_h[h]:
+            for scenario_type, n_agents in scenario_specs:
+                for eval_seed in random_seed_list:
+                    try:
+                        v = metric_fn(d, scenario_type, n_agents, eval_seed)
+                        if v is not None and np.isfinite(v):
+                            vals.append(float(v))
+                    except Exception:
+                        continue
+        means.append(float(np.mean(vals)) if len(vals) > 0 else float("nan"))
+
+    z = np.asarray(means, dtype=float)[None, :]
+
+    if metric_tag == "total_reward":
+        _print_robustness_report_1d(
+            tag="CBF total_reward vs h", x_vals=h_vals, y_vals=means
+        )
+
+    vmin = global_vmin
+    vmax = global_vmax
+    if vmin is None or vmax is None:
+        finite = np.isfinite(z)
+        if np.any(finite):
+            vmin, vmax = float(np.nanmin(z)), float(np.nanmax(z))
+
+    out_pdf = fig_dir / f"fig_colormap_{metric_tag}_cbf.pdf"
+    title = "CBF (our)"
+    is_higher_better = _is_higher_better_metric(metric_tag)
+
+    # reuse your 1D saver, but update it analogously to accept cbar_label/fmt/norm
+    save_sensitivity_colormap_1d_pdf_metric(
+        z=z,
+        x_vals=h_vals,
+        out_pdf=out_pdf,
+        title=title,
+        xlabel=r"CBF Constraint Threshold $\psi_\mathrm{cbf}^\mathrm{th}$",
+        vmin=vmin,
+        vmax=vmax,
+        cmap_name=cmap_name,
+        cbar_label=cbar_label,
+        fmt=fmt,
+        norm=norm,
+        is_highlight_best_value=is_highlight_best_value,
+        is_higher_better=is_higher_better,
+    )
+
+    print(f"[INFO] Saved: {out_pdf}")
+
+
+# -----------------------------
+# Case 3: CBF sensitivity colormap (Total Reward over h)
+# -----------------------------
+
+
+def _h_from_path(p: str) -> Optional[float]:
+    m = re.search(r"/h(-?[0-9]+(?:\.[0-9]+)?)/", p)
+    return float(m.group(1)) if m else None
+
+
+def save_sensitivity_colormap_1d_pdf(
+    z: np.ndarray,
+    x_vals: List[float],
+    out_pdf: Path,
+    title: str,
+    xlabel: str = r"$h$",
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    cmap_name: str = "Blues",
+    is_highlight_best_value: bool = True,
+) -> None:
+    """
+    Save a 1D sensitivity colormap as a 1xK heatmap.
+    z shape: [1, len(x_vals)]
+    """
+    fig, ax = plt.subplots(figsize=(4.2, 2.2), constrained_layout=True)
+
+    z_clipped = np.clip(z, -10, 10)
+
+    norm = make_reward_diverging_norm(vmin, vmax)
+
+    cmap = plt.get_cmap("RdBu").copy()
+    cmap.set_over("white")
+    cmap.set_under("white")
+    im = ax.imshow(
+        z,
+        origin="lower",
+        aspect="auto",
+        interpolation="nearest",
+        cmap=cmap,
+        norm=norm,
+    )
+
+    _annotate_heatmap_values(
+        ax=ax,
+        z=z,
+        im=im,
+        fmt="{:.1f}",
+        fontsize=COLORMAP_VALUE_FONTSIZE,
+        is_highlight_best_value=is_highlight_best_value,
+        is_higher_better=True,
+    )
+
+    ax.set_xticks(list(range(len(x_vals))))
+    ax.set_xticklabels([f"{v:g}" for v in x_vals])
+    ax.set_yticks([0])
+    ax.set_yticklabels([""])  # hide the dummy y label
+
+    ax.set_xlabel(xlabel)
+    # ax.set_title(title)
+
+    _style_axis(ax)
+    ax.grid(False)
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.05, pad=0.01)
+    cbar.set_label("Total Reward")
+
+    finite_vals = z[np.isfinite(z)]
+    if len(finite_vals) > 0:
+        data_min = float(np.min(finite_vals))
+        data_max = float(np.max(finite_vals))
+        cbar.ax.set_ylim(data_min, data_max)
+        # Generate ~5 clean ticks within the actual data range
+        tick_step = (data_max - data_min) / 4.0
+        magnitude = 10 ** np.floor(np.log10(abs(tick_step))) if tick_step > 0 else 1
+        tick_step_nice = np.round(tick_step / magnitude) * magnitude
+        ticks = np.arange(
+            np.ceil(data_min / tick_step_nice) * tick_step_nice,
+            data_max + tick_step_nice * 0.5,
+            tick_step_nice,
+        )
+        cbar.set_ticks(ticks)
+
+    out_pdf.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_pdf, bbox_inches="tight", pad_inches=0.01)
+    plt.close(fig)
+
+
+def plot_case3_cbf_h_colormap(
+    path_list: List[str],
+    scenario_specs: List[tuple],
+    random_seed_list: List[int],
+    fig_dir: Path,
+    global_vmin: Optional[float] = None,
+    global_vmax: Optional[float] = None,
+    is_highlight_best_value: bool = True,
+) -> None:
+    """
+    Create a 1xK colormap for CBF over h, where each cell is the mean Total Reward
+    averaged over (scenario_specs x random_seed_list).
+
+    Assumes path_list contains only seed1 training folders, but evaluation still uses random_seed_list.
+    """
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect model dirs keyed by h
+    dirs_by_h: Dict[float, List[Path]] = {}
+    for s in path_list:
+        d = Path(s)
+        if not d.is_dir():
+            continue
+        if _reward_method_from_path(str(d)) != "cbf":
+            continue
+        h_val = _h_from_path(str(d))
+        if h_val is None:
+            continue
+        dirs_by_h.setdefault(h_val, []).append(d)
+
+    if len(dirs_by_h) == 0:
+        print("[WARNING] No CBF h-folders found for Case 3.")
+        return
+
+    h_vals = sorted(dirs_by_h.keys())
+
+    # Compute mean reward for each h
+    rewards_mean = []
+    all_rewards = []
+
+    for h in h_vals:
+        vals = []
+        for d in dirs_by_h[h]:
+            for scenario_type, n_agents in scenario_specs:
+                for eval_seed in random_seed_list:
+                    name_suffix = get_name_suffix(scenario_type, n_agents, eval_seed)
+                    out_td_path = d / f"out_td_{name_suffix}.td"
+                    if not out_td_path.exists():
+                        continue
+                    try:
+                        out_td = _load_out_td(out_td_path)
+                        rew = compute_total_reward(out_td)
+                        vals.append(float(rew))
+                    except Exception:
+                        continue
+
+        if len(vals) == 0:
+            rewards_mean.append(float("nan"))
+        else:
+            rewards_mean.append(float(np.mean(vals)))
+            all_rewards.extend(vals)
+
+    # Build Z as 1xK
+    z = np.asarray(rewards_mean, dtype=float)[None, :]  # shape [1, K]
+
+    vmin = global_vmin
+    vmax = global_vmax
+    if vmin is None or vmax is None:
+        finite = np.isfinite(z)
+        if np.any(finite):
+            vmin, vmax = float(np.nanmin(z)), float(np.nanmax(z))
+
+    out_pdf = fig_dir / "fig_colormap_total_reward_cbf_h.pdf"
+    title = "CBF (our)"
+
+    save_sensitivity_colormap_1d_pdf(
+        z=z,
+        x_vals=h_vals,
+        out_pdf=out_pdf,
+        title=title,
+        xlabel=r"$h$",
+        vmin=vmin,
+        vmax=vmax,
+        cmap_name="Blues",
+        is_highlight_best_value=is_highlight_best_value,
+    )
+
+    print(f"[INFO] Saved: {out_pdf}")
+
+
+def metric_total_reward(
+    d: Path, scenario_type: str, n_agents: int, eval_seed: int
+) -> Optional[float]:
+    name_suffix = get_name_suffix(scenario_type, n_agents, eval_seed)
+    out_td_path = d / f"out_td_{name_suffix}.td"
+    if not out_td_path.exists():
+        return None
+    out_td = _load_out_td(out_td_path)
+    return float(compute_total_reward(out_td))
+
+
+def metric_cbf_activation_degree(
+    d: Path, scenario_type: str, n_agents: int, eval_seed: int
+) -> Optional[float]:
+    name_suffix = get_name_suffix(scenario_type, n_agents, eval_seed)
+    out_td_path = d / f"out_td_{name_suffix}.td"
+    if not out_td_path.exists():
+        return None
+    out_td = _load_out_td(out_td_path)
+    deg, _rate = compute_cbf_activation_percentage(out_td)
+    return float(deg)
+
+
+def metric_cbf_activation_rate(
+    d: Path, scenario_type: str, n_agents: int, eval_seed: int
+) -> Optional[float]:
+    name_suffix = get_name_suffix(scenario_type, n_agents, eval_seed)
+    out_td_path = d / f"out_td_{name_suffix}.td"
+    if not out_td_path.exists():
+        return None
+    out_td = _load_out_td(out_td_path)
+    _deg, rate = compute_cbf_activation_percentage(out_td)
+    return float(rate)
+
+
+def metric_task_attempts_total(
+    d: Path, scenario_type: str, n_agents: int, eval_seed: int
+) -> Optional[float]:
+    name_suffix = get_name_suffix(scenario_type, n_agents, eval_seed)
+    tp = _load_task_performance(d / f"task_performance_{name_suffix}.json")
+    if tp is None:
+        return None
+    return float(tp["num_task_tries"])
+
+
+def metric_task_success_rate(
+    d: Path, scenario_type: str, n_agents: int, eval_seed: int
+) -> Optional[float]:
+    name_suffix = get_name_suffix(scenario_type, n_agents, eval_seed)
+    tp = _load_task_performance(d / f"task_performance_{name_suffix}.json")
+    if tp is None or tp["num_task_tries"] <= 0:
+        return None
+    return float(100.0 * tp["task_success_times"] / tp["num_task_tries"])
+
+
+def plot_sensitivity_case2_and_case3(
+    path_list_case2: List[str],
+    path_list_case3: List[str],
+    scenario_specs: List[tuple],
+    random_seed_list: List[int],
+    fig_dir: Path,
+    only_p_values: Optional[List[float]] = None,
+    is_highlight_best_value: bool = True,
+) -> None:
+    """
+    Plot Case 2 (tb x ta) and Case 3 (h) using ONE shared global color scale.
+    """
+    merged = list(
+        dict.fromkeys(path_list_case2 + path_list_case3)
+    )  # unique, stable order
+    global_vmin, global_vmax = _global_vmin_vmax_for_sensitivity(
+        merged, scenario_specs, random_seed_list
+    )
+
+    # TODO
+    # abs_max = max(abs(global_vmin), abs(global_vmax))
+    # global_vmin, global_vmax = -abs_max, abs_max
+
+    print(f"[INFO] Global colormap scale: vmin={global_vmin}, vmax={global_vmax}")
+
+    plot_case2_sensitivity_colormaps(
+        path_list=path_list_case2,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        only_p_values=only_p_values,
+        global_vmin=global_vmin,
+        global_vmax=global_vmax,
+        is_highlight_best_value=is_highlight_best_value,
+    )
+
+    plot_case3_cbf_h_colormap(
+        path_list=path_list_case3,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        global_vmin=global_vmin,
+        global_vmax=global_vmax,
+        is_highlight_best_value=is_highlight_best_value,
+    )
+
+
 if __name__ == "__main__":
+    is_highlight_best_value = True
 
-    CASE = 2
-
-    scenario_specs = [
-        ("cpm_mixed", 4),
-        # ("cpm_entire", 10),
-        # ("interchange_1", 8),
-        # ("interchange_3", 10),
-        # ("intersection_4", 8),
-        # ("intersection_5", 10),
-        # ("intersection_6", 10),
-        # ("on_ramp_1", 6),
-        # ("roundabout_2", 10),
-    ]
-    if len(sys.argv) == 2:
-        scenario_specs = [scenario_specs[int(sys.argv[1])]]
-    elif len(sys.argv) > 2:
-        scenario_specs = scenario_specs[int(sys.argv[1]) : int(sys.argv[2])]
-
+    scenario_specs = [("cpm_mixed", 4)]
     print(f"[INFO] Evaluating scenarios: {scenario_specs}")
 
-    n_agents_list = [n_agents for _, n_agents in scenario_specs]
+    policy_parent_folder = "checkpoints/itsc26_sensitivity_new/cpm_mixed"
 
-    print(n_agents_list)
+    filtered_case2 = []
+    for root, dirs, files in os.walk(policy_parent_folder):
+        if any(f.endswith(".pth") for f in files):
+            is_case2_folder = (
+                ("reward_progress0.1" in root)
+                and ("p-1.0" in root)
+                and ("seed1" in root)
+                and ("tb0.001" not in root)
+                and ("ta1.0" not in root)
+            )
+            is_cbf_folder = ("/rew_method_cbf" in root) or (
+                "/rew_method_cbf_sparse" in root
+            )
+            if is_case2_folder and not is_cbf_folder:
+                filtered_case2.append(root)
 
-    if CASE == 1:
-        policy_parent_folder = (
-            "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/"
-        )
+    filtered_case3 = []
+    for root, dirs, files in os.walk(policy_parent_folder):
+        if any(f.endswith(".pth") for f in files):
+            is_case3_folder = (
+                ("rew_method_cbf" in root)
+                and ("reward_progress0.1" in root)
+                and ("seed1" in root)
+                and ("h0.02" not in root)
+            )
+            if is_case3_folder:
+                filtered_case3.append(root)
 
-        # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action/"
-        # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_apply_cbf_action_final_model/"
-        # policy_parent_folder = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action_final_model/"
+    path_list_case2 = filtered_case2
+    path_list_case3 = filtered_case3
 
-        filtered_path_list = []
+    random_seed_list = [1, 2, 3, 4]
+    COLLISION_MODE = "per_agent_timestep"
 
-        for root, dirs, files in os.walk(policy_parent_folder):
-            if any(f.endswith(".pth") for f in files):
-                if "reward_progress10.0" in root:
-                    filtered_path_list.append(root)
+    path_list = list(dict.fromkeys(path_list_case2 + path_list_case3))
+    run_evaluations()
 
-        path_list = filtered_path_list
+    fig_dir = Path(policy_parent_folder) / "figures"
+    fig_dir.mkdir(parents=True, exist_ok=True)
 
-        # path_list must contains one of the method in rew_method_list
-        rew_method_list = [
-            "cbf/",
-            "distance/",
-            "distance_sparse/",
-            "ttc/",
-            "ttc_sparse/",
-        ]
-        path_list = [
-            path
-            for path in path_list
-            if any(method in path for method in rew_method_list)
-        ]
+    reward_vmin = -10.0
+    reward_vmax = 10.0
+    reward_norm = make_reward_diverging_norm(reward_vmin, reward_vmax)
 
-        random_seed_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    plot_case2_sensitivity_colormaps_metric(
+        path_list=path_list_case2,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        metric_fn=metric_total_reward,
+        metric_tag="total_reward",
+        cbar_label="Total Reward",
+        fmt="{:.1f}",
+        only_p_values=[-1.0],
+        global_vmin=reward_vmin,
+        global_vmax=reward_vmax,
+        cmap_name="RdBu",
+        norm=reward_norm,
+        is_highlight_best_value=is_highlight_best_value,
+    )
 
-        # -----------------------------
-        # Metric extraction from out_td
-        # -----------------------------
-        # Two reasonable collision definitions. Default matches your description.
-        # - "per_timestep_any_agent": mean over time of [any collision among agents at that time]
-        # - "per_agent_timestep": mean over all agent-time pairs (and envs)
-        COLLISION_MODE = "per_agent_timestep"  # change if needed, one of {"per_timestep_any_agent", "per_agent_timestep"}
-        run_evaluations()
+    plot_case3_cbf_h_colormap_metric(
+        path_list=path_list_case3,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        metric_fn=metric_total_reward,
+        metric_tag="total_reward",
+        cbar_label="Total Reward",
+        fmt="{:.1f}",
+        global_vmin=reward_vmin,
+        global_vmax=reward_vmax,
+        cmap_name="RdBu",
+        norm=reward_norm,
+        is_highlight_best_value=is_highlight_best_value,
+    )
 
-        fig_dir = Path(policy_parent_folder) / "figures"
-        fig_dir.mkdir(parents=True, exist_ok=True)
-        plot_figures_case_1(fig_dir)
-    elif CASE == 2:
-        policy_parent_folder = "checkpoints/itsc26_sensitivity/cpm_mixed"
+    plot_case2_sensitivity_colormaps_metric(
+        path_list=path_list_case2,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        metric_fn=metric_cbf_activation_degree,
+        metric_tag="cbf_activation_degree",
+        cbar_label=r"CBF Act. Degree [\%]",
+        fmt="{:.1f}",
+        only_p_values=[-1.0],
+        global_vmin=0.0,
+        global_vmax=100.0,
+        cmap_name="Blues",
+        norm=None,
+        is_highlight_best_value=is_highlight_best_value,
+    )
 
-        filtered_path_list = []
+    plot_case3_cbf_h_colormap_metric(
+        path_list=path_list_case3,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        metric_fn=metric_cbf_activation_degree,
+        metric_tag="cbf_activation_degree",
+        cbar_label=r"CBF Act. Degree [\%]",
+        fmt="{:.1f}",
+        global_vmin=0.0,
+        global_vmax=100.0,
+        cmap_name="Blues",
+        norm=None,
+        is_highlight_best_value=is_highlight_best_value,
+    )
 
-        for root, dirs, files in os.walk(policy_parent_folder):
-            if any(f.endswith(".pth") for f in files):
-                if (
-                    ("reward_progress0.1" in root)
-                    and ("p-1.0" in root)
-                    and ("seed1" in root)
-                ):
-                    filtered_path_list.append(root)
+    plot_case2_sensitivity_colormaps_metric(
+        path_list=path_list_case2,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        metric_fn=metric_cbf_activation_rate,
+        metric_tag="cbf_activation_rate",
+        cbar_label=r"CBF Act. Rate [\%]",
+        fmt="{:.1f}",
+        only_p_values=[-1.0],
+        global_vmin=0.0,
+        global_vmax=100.0,
+        cmap_name="Blues",
+        is_highlight_best_value=is_highlight_best_value,
+    )
 
-        path_list = filtered_path_list
+    plot_case3_cbf_h_colormap_metric(
+        path_list=path_list_case3,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        metric_fn=metric_cbf_activation_rate,
+        metric_tag="cbf_activation_rate",
+        cbar_label=r"CBF Act. Rate [\%]",
+        fmt="{:.1f}",
+        global_vmin=0.0,
+        global_vmax=100.0,
+        cmap_name="Blues",
+        is_highlight_best_value=is_highlight_best_value,
+    )
 
-        # path_list must contains one of the method in rew_method_list
-        rew_method_list = [
-            "cbf/",
-            "distance/",
-            "distance_sparse/",
-            "ttc/",
-            "ttc_sparse/",
-        ]
-        path_list = [
-            path
-            for path in path_list
-            if any(method in path for method in rew_method_list)
-        ]
+    plot_case2_sensitivity_colormaps_metric(
+        path_list=path_list_case2,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        metric_fn=metric_task_success_rate,
+        metric_tag="task_success_rate",
+        cbar_label=r"Task Success Rate [\%]",
+        fmt="{:.1f}",
+        only_p_values=[-1.0],
+        global_vmin=0.0,
+        global_vmax=100.0,
+        cmap_name="Blues",
+        is_highlight_best_value=is_highlight_best_value,
+    )
 
-        random_seed_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    plot_case3_cbf_h_colormap_metric(
+        path_list=path_list_case3,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        metric_fn=metric_task_success_rate,
+        metric_tag="task_success_rate",
+        cbar_label=r"Task Success Rate [\%]",
+        fmt="{:.1f}",
+        global_vmin=0.0,
+        global_vmax=100.0,
+        cmap_name="Blues",
+        is_highlight_best_value=is_highlight_best_value,
+    )
 
-        # -----------------------------
-        # Metric extraction from out_td
-        # -----------------------------
-        # Two reasonable collision definitions. Default matches your description.
-        # - "per_timestep_any_agent": mean over time of [any collision among agents at that time]
-        # - "per_agent_timestep": mean over all agent-time pairs (and envs)
-        COLLISION_MODE = "per_agent_timestep"  # change if needed, one of {"per_timestep_any_agent", "per_agent_timestep"}
-        run_evaluations()
+    plot_case2_sensitivity_colormaps_metric(
+        path_list=path_list_case2,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        metric_fn=metric_task_attempts_total,
+        metric_tag="task_attempts_total",
+        cbar_label=r"\#Task Attempts",
+        fmt="{:.0f}",
+        only_p_values=[-1.0],
+        global_vmin=None,
+        global_vmax=None,
+        cmap_name="Blues",
+        is_highlight_best_value=is_highlight_best_value,
+    )
 
-        fig_dir = Path(policy_parent_folder) / "figures"
-        fig_dir.mkdir(parents=True, exist_ok=True)
-        plot_case2_sensitivity_colormaps(
-            path_list=path_list,
-            scenario_specs=scenario_specs,
-            random_seed_list=random_seed_list,
-            fig_dir=fig_dir,
-            only_p_values=[-1.0],  # set to None to plot all p values
-            shared_color_scale_within_method=True,
-        )
+    plot_case3_cbf_h_colormap_metric(
+        path_list=path_list_case3,
+        scenario_specs=scenario_specs,
+        random_seed_list=random_seed_list,
+        fig_dir=fig_dir,
+        metric_fn=metric_task_attempts_total,
+        metric_tag="task_attempts_total",
+        cbar_label=r"\#Task Attempts",
+        fmt="{:.0f}",
+        global_vmin=None,
+        global_vmax=None,
+        cmap_name="Blues",
+        is_highlight_best_value=is_highlight_best_value,
+    )
+
+    save_reward_curves_per_method_hparam_coded_case23(
+        path_list_case2=path_list_case2,
+        path_list_case3=path_list_case3,
+        out_dir=fig_dir,
+        frames_per_iteration=FRAME_PER_ITERATION,
+    )

@@ -37,7 +37,9 @@ class DecisionMakingModule(Module):
                     -1
                 ],  # n_obs_per_agent
                 n_agent_outputs=(
-                    2 * env.action_spec.shape[-1]
+                    2
+                    * env.unbatched_action_spec[env.action_key].shape[-1]
+                    # 2 * env.action_spec.shape[-1]
                 ),  # 2 * n_actions_per_agent
                 n_agents=env.n_agents,
                 centralised=False,  # the policies are decentralised (ie each agent will act from its observation)

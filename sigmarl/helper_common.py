@@ -560,32 +560,22 @@ def get_n_colors_cmap(n, cmap_name="tab20"):
 def get_name_suffix(
     grouping, is_using_cbf_testing, n_agent, seed, max_group, nom, scenario
 ):
-    if grouping:
-        if is_using_cbf_testing:
-            name_suffix = (
-                f"agents_{n_agent}_seed_{seed}_"
-                f"grouping_on_maxgroup_{max_group}_"
-                f"nom_{nom}_scenario_{scenario.lower()}"
-            )
-        else:
-            name_suffix = (
-                f"agents_{n_agent}_seed_{seed}_"
-                f"nom_{nom}_only_scenario_{scenario.lower()}"
-            )
+    cbf_tag = "cbf_on" if is_using_cbf_testing else "cbf_off"
+    group_tag = "group_on" if grouping else "group_off"
 
-    else:
-        if is_using_cbf_testing:
-            name_suffix = (
-                f"agents_{n_agent}_seed_{seed}_"
-                f"grouping_off_"
-                f"nom_{nom}_scenario_{scenario.lower()}"
-            )
-        else:
-            name_suffix = (
-                f"agents_{n_agent}_seed_{seed}_"
-                f"nom_{nom}_only_scenario_{scenario.lower()}"
-            )
-    return name_suffix
+    parts = [
+        f"agents_{n_agent}",
+        f"seed_{seed}",
+        cbf_tag,
+        group_tag,
+        f"nom_{nom}",
+        f"scenario_{scenario.lower()}",
+    ]
+
+    if grouping:
+        parts.insert(4, f"maxgroup_{max_group}")  # right after group tag (optional)
+
+    return "_".join(parts)
 
 
 def trim_td(out_td: TensorDict, keys_to_keep=None) -> TensorDict:

@@ -494,9 +494,6 @@ class CBFQP:
 
         u = torch.stack((u_acc, u_steering_rate), dim=1)
 
-        if not is_batch:
-            u.squeeze(0)
-
         return rl_actions, u
 
     def u_to_rl_action(self, u, state_v, state_steering):
@@ -925,9 +922,7 @@ class CBFQP:
             cost += self.pair_slack_weight * cp.sum_squares(s_pair)
 
         if self.parameters.adaptive_lambda:
-            cost += self.lambda_weight * cp.sum_squares(
-                lambda_bound - self.lambda_ttcbf
-            )
+            cost += self.lambda_weight * cp.sum_squares(lambda_bound)
             if lambda_pair is not None:
                 cost += self.lambda_weight * cp.sum_squares(lambda_pair)
 
@@ -1010,6 +1005,16 @@ class CBFQP:
         self._qp_cache["e_speed"].value = np.zeros((n,))
         self._qp_cache["v_head_const"].value = np.zeros((n,))
         self._qp_cache["v_speed_const"].value = np.zeros((n,))
+        if self.adaptive_lambda:
+            self._qp_cache["lambda_bound"].value = np.zeros(
+                self._qp_cache["lambda_bound"].shape,
+                dtype=np.float64,
+            )
+            if self._qp_cache.get("lambda_pair", None) is not None:
+                self._qp_cache["lambda_pair"].value = np.zeros(
+                    self._qp_cache["lambda_pair"].shape,
+                    dtype=np.float64,
+                )
 
     def update_centralized_cbf_qp(self, tensordict):
         # print(f"[INFO] Updating centralized CBF-QP for env {self.env_idx}...")
@@ -1209,7 +1214,6 @@ class CBFQP:
         if C["u_var"].value.shape != C["u_var"].shape:
             C["u_var"].value = np.zeros(C["u_var"].shape)
 
-        # TODO Remove: instead of solving CBF, we check if the RL actions violate the QP constraints
         if self.parameters.is_solve_qp:
             # Solve
             prob: cp.Problem = C["prob"]
@@ -1555,13 +1559,10 @@ class CBFQP:
 
         return r_left, r_right, r_pair
 
-    # =========================
-    # Grouped multi-QP path
-    # =========================
     def build_grouped_cbf_qps(self):
         """
         Prebuild G group QPs. Each group has capacity m = max_group_size.
-        Cross-group constraints are preallocated against up to (N-1) external agents per local agent.
+        Cross-group constraints are preallocated against up to E external agents per local agent.
         Includes CLF relaxations per local slot.
         """
         print("[INFO] Building grouped CBF-QPs...")
@@ -1571,42 +1572,68 @@ class CBFQP:
         N = int(self.parameters.n_agents)
         C = int(self.parameters.n_circles_approximate_vehicle)
         m = int(self.parameters.max_group_size)
-        assert m >= 1
+        if m < 1:
+            raise ValueError("max_group_size must be >= 1")
         G = int(ceil(N / m))
 
         self._group_qp_caches: List[dict] = []
         self._group_capacity = m
         self._group_count = G
         self._group_circle_count = C
-        self._group_cross_cap = max(0, N - 1)
+
+        # -----------------------------
+        # Cross-group preallocation size E
+        # -----------------------------
+        # If there is only one group, there are no cross-group constraints.
+        # Optional cap for conditioning/speed: set parameters.max_cross_neighbors (int).
+        if G == 1:
+            self._group_cross_cap = 0
+        else:
+            E_cap_user = getattr(self.parameters, "max_cross_neighbors", None)
+            if E_cap_user is None:
+                self._group_cross_cap = max(0, N - 1)
+            else:
+                E_cap_user = int(E_cap_user)
+                if E_cap_user < 0:
+                    E_cap_user = 0
+                self._group_cross_cap = min(max(0, N - 1), E_cap_user)
 
         def idx_lane(i_slot, i_c, side):
             return 2 * (i_slot * C + i_c) + side
 
-        def pair_slot_base(mcap, C):
+        def pair_slot_base(mcap, Cc):
             base = {}
             k = 0
             for i in range(mcap - 1):
                 for j in range(i + 1, mcap):
                     base[(i, j)] = k
-                    k += C * C
+                    k += Cc * Cc
             return base, k
 
         pair_base, pair_count = pair_slot_base(m, C)
-        E = self._group_cross_cap
-        cross_base = {}
-        kx = 0
-        for i in range(m):
-            for e in range(E):
-                cross_base[(i, e)] = kx
-                kx += C * C
-        cross_count = kx
+
+        # Cross indexing only if E > 0
+        E = int(self._group_cross_cap)
+        if E > 0:
+            cross_base = {}
+            kx = 0
+            for i in range(m):
+                for e in range(E):
+                    cross_base[(i, e)] = kx
+                    kx += C * C
+            cross_count = kx
+        else:
+            cross_base = {}
+            cross_count = 0
 
         for g in range(G):
             u_var = cp.Variable((m, 2))
             s_lane = cp.Variable(2 * m * C, nonneg=True)
             s_pair = cp.Variable(pair_count, nonneg=True) if pair_count > 0 else None
+
+            # Cross slacks only if cross_count > 0
             s_cross = cp.Variable(cross_count, nonneg=True) if cross_count > 0 else None
+
             # CLF relaxations per slot
             s_clf_head = cp.Variable(m, nonneg=True)
             s_clf_speed = cp.Variable(m, nonneg=True)
@@ -1619,11 +1646,13 @@ class CBFQP:
             ]
 
             U_nom = cp.Parameter((m, 2))
+
             # CLF params per slot
             e_head = cp.Parameter(m)
             e_speed = cp.Parameter(m)
             v_head_const = cp.Parameter(m)
             v_speed_const = cp.Parameter(m)
+
             # CLF inequalities
             cons += [
                 -e_head[i] * u_var[i, 1] + v_head_const[i] - s_clf_head[i] <= 0
@@ -1641,8 +1670,10 @@ class CBFQP:
             A_R = [[cp.Parameter((1, 2)) for _ in range(C)] for _ in range(m)]
             b0_R = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
             h_R = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
+
             lambda_lane = cp.Variable(2 * m * C)
             cons += [lambda_lane >= 0, lambda_lane <= 1]
+
             for i in range(m):
                 for c in range(C):
                     cons += [
@@ -1666,6 +1697,7 @@ class CBFQP:
             lambda_pair = cp.Variable(pair_count) if pair_count > 0 else None
             if lambda_pair is not None:
                 cons += [lambda_pair >= 0, lambda_pair <= 1]
+
             for i in range(m - 1):
                 for j in range(i + 1, m):
                     for ci in range(C):
@@ -1692,38 +1724,44 @@ class CBFQP:
                                     >= -s_pair[pair_base[(i, j)] + ci * C + cj]
                                 ]
 
-            # Cross-group reciprocal (only i's control)
+            # -----------------------------
+            # Cross-group (only i's control), only if E > 0
+            # -----------------------------
             Axc_i = {}
             b0xc = {}
             hxc = {}
+
             lambdax_i = cp.Variable(cross_count) if cross_count > 0 else None
             if lambdax_i is not None:
                 cons += [lambdax_i >= 0, lambdax_i <= 1]
-            for i in range(m):
-                for e in range(E):
-                    for ci in range(C):
-                        for cj in range(C):
-                            Axc_i[(i, e, ci, cj)] = cp.Parameter((1, 2))
-                            b0xc[(i, e, ci, cj)] = cp.Parameter((1,))
-                            hxc[(i, e, ci, cj)] = cp.Parameter((1,))
-                            if s_cross is not None and lambdax_i is not None:
-                                cons += [
-                                    Axc_i[(i, e, ci, cj)] @ u_var[i, :]
-                                    + b0xc[(i, e, ci, cj)]
-                                    + self.parameters.rs
-                                    * hxc[(i, e, ci, cj)]
-                                    * lambdax_i[
-                                        cross_base[(i, e)] + ci * C + cj
-                                    ]  # TODO: Now receiprocal_sigma is fixed as 0.5 (defined by self.parameters.rs). Code adaptation is required if using other values because it is no longer symmetric.
-                                    >= -s_cross[cross_base[(i, e)] + ci * C + cj]
-                                ]
-                            else:
-                                cons += [
-                                    Axc_i[(i, e, ci, cj)] @ u_var[i, :]
-                                    + b0xc[(i, e, ci, cj)]
-                                    + hxc[(i, e, ci, cj)] * 1.0
-                                    >= 0
-                                ]
+
+                for i in range(m):
+                    for e in range(E):
+                        for ci in range(C):
+                            for cj in range(C):
+                                Axc_i[(i, e, ci, cj)] = cp.Parameter((1, 2))
+                                b0xc[(i, e, ci, cj)] = cp.Parameter((1,))
+                                hxc[(i, e, ci, cj)] = cp.Parameter((1,))
+                                # Active form (with slack and lambda)
+                                if s_cross is not None:
+                                    cons += [
+                                        Axc_i[(i, e, ci, cj)] @ u_var[i, :]
+                                        + 0.5
+                                        * b0xc[
+                                            (i, e, ci, cj)
+                                        ]  # TODO: this 0.5 factor is split the drift dynamics term
+                                        + self.parameters.rs
+                                        * hxc[(i, e, ci, cj)]
+                                        * lambdax_i[cross_base[(i, e)] + ci * C + cj]
+                                        >= -s_cross[cross_base[(i, e)] + ci * C + cj]
+                                    ]
+                                else:
+                                    cons += [
+                                        Axc_i[(i, e, ci, cj)] @ u_var[i, :]
+                                        + b0xc[(i, e, ci, cj)]
+                                        + hxc[(i, e, ci, cj)] * 1.0
+                                        >= 0
+                                    ]
 
             # Objective
             cost = cp.sum_squares((u_var - U_nom) @ self.nom_weight)
@@ -1732,16 +1770,20 @@ class CBFQP:
                 cost += self.pair_slack_weight * cp.sum_squares(s_pair)
             if s_cross is not None:
                 cost += self.cross_slack_weight * cp.sum_squares(s_cross)
+
             # CLF penalties
             cost += self.w_clf_relax * (
                 cp.sum_squares(s_clf_head) + cp.sum_squares(s_clf_speed)
             )
+
             if self.parameters.adaptive_lambda:
-                cost += self.lambda_weight * cp.sum_squares(
-                    lambda_lane - self.lambda_ttcbf
-                )
+                cost += self.lambda_weight * cp.sum_squares(lambda_lane)
                 if lambda_pair is not None:
                     cost += self.lambda_weight * cp.sum_squares(lambda_pair)
+
+            # Always regularize cross lambdas if they exist
+            if lambdax_i is not None:
+                cost += self.lambda_weight * cp.sum_squares(lambdax_i)
 
             prob = cp.Problem(cp.Minimize(cost), cons)
 
@@ -1784,7 +1826,7 @@ class CBFQP:
                 prob=prob,
             )
 
-            # Warm start
+            # Warm start (nominals, slacks, decision vars)
             U_nom.value = np.zeros((m, 2))
             s_lane.value = np.zeros((2 * m * C,))
             s_clf_head.value = np.zeros((m,))
@@ -1793,22 +1835,25 @@ class CBFQP:
             e_speed.value = np.zeros((m,))
             v_head_const.value = np.zeros((m,))
             v_speed_const.value = np.zeros((m,))
-            lambda_lane.value = np.zeros((2 * m * C,))
-            if pair_count is not None and lambda_pair is not None:
-                lambda_pair.value = np.zeros((pair_count,))
-            if cross_count is not None and lambdax_i is not None:
-                lambdax_i.value = np.zeros((cross_count,))
             if s_pair is not None:
                 s_pair.value = np.zeros((pair_count,))
             if s_cross is not None:
                 s_cross.value = np.zeros((cross_count,))
             u_var.value = np.zeros((m, 2))
+
+            # Warm start lambdas at zero to match the adaptive-lambda regularizer
+            lambda_lane.value = np.zeros(lambda_lane.shape, dtype=np.float64)
+            if lambda_pair is not None:
+                lambda_pair.value = np.zeros(lambda_pair.shape, dtype=np.float64)
+            if lambdax_i is not None:
+                lambdax_i.value = np.zeros(lambdax_i.shape, dtype=np.float64)
+
             self._group_qp_caches.append(cache)
 
         self._group_assignment: List[List[int]] = [[] for _ in range(G)]
         # Baseline: fixed groups throughout the simulation
-        self.use_fixed_groups = True  # baseline switch
-        self.fixed_groups = None  # will be computed once on first update
+        self.use_fixed_groups = True
+        self.fixed_groups = None
 
     def update_grouped_cbf_qps(self, tensordict):
         """
@@ -1821,7 +1866,6 @@ class CBFQP:
         C = self._group_circle_count
         m = self._group_capacity
         G = self._group_count
-        E = self._group_cross_cap
         obs_range = float(self.parameters.observation_range)
         sigma = self.parameters.rs
 
@@ -1834,13 +1878,13 @@ class CBFQP:
         for i in range(N):
             s = torch.cat(
                 [
-                    agents[i].state.pos,
-                    agents[i].state.rot,
-                    agents[i].state.speed,
-                    agents[i].state.steering,
+                    agents[i].state.pos[self.env_idx],
+                    agents[i].state.rot[self.env_idx],
+                    agents[i].state.speed[self.env_idx],
+                    agents[i].state.steering[self.env_idx],
                 ],
-                dim=1,
-            ).squeeze(0)
+                dim=-1,
+            )
             states.append(s)
             centers.append(self.get_circle_centers(s))
             centers_flat.append(
@@ -1856,39 +1900,17 @@ class CBFQP:
         if self.use_fixed_groups:
             if self.fixed_groups is None:
                 groups0 = group_agents_k_nearest(asl, m)
-
-                # Sort agents inside each group so that:
-                #   slot index k -> global agent id mapping is deterministic.
-                # This avoids random permutations of decision-variable rows inside a QP.
                 groups0 = [sorted(list(g)) for g in groups0]
-
-                # Optional: also sort group list itself for reproducibility across runs.
-                # Not strictly required because groups are frozen after this point.
                 groups0.sort(key=lambda g: g[0] if len(g) > 0 else 10**9)
-
                 if len(groups0) != G:
                     raise RuntimeError(
                         f"Fixed grouping produced {len(groups0)} groups, expected {G}."
                     )
-
                 self.fixed_groups = groups0
-
             groups = self.fixed_groups
         else:
-            # Recompute groups every step (dynamic grouping)
             groups = group_agents_k_nearest(asl, m)
-
-            # ---- Deterministic ordering for warm-start and reproducibility ----
-
-            # (1) Sort agents inside each group:
-            #     ensures that slot k in the group QP always refers to the same
-            #     global agent id, given the same group membership.
             groups = [sorted(list(g)) for g in groups]
-
-            # (2) Sort the list of groups:
-            #     ensures that group index g maps to the same QP cache across time,
-            #     as long as group memberships do not change.
-            #     We use the smallest agent id as a stable group label.
             groups.sort(key=lambda g: g[0] if len(g) > 0 else 10**9)
 
         # Precompute nominal actions or CLF errors for all agents
@@ -1896,6 +1918,7 @@ class CBFQP:
         rl_actions_all = torch.zeros((N, 2), device=self.device, dtype=torch.float32)
         e_h_all = np.zeros((N,), dtype=np.float64)
         e_v_all = np.zeros((N,), dtype=np.float64)
+
         for i in range(N):
             if self.nom_controller_type == "rl":
                 rl_i = tensordict[("agents", "action")][self.env_idx, i].clone()
@@ -1913,12 +1936,12 @@ class CBFQP:
                 e_v_all[i] = e_v
                 U_nom_all[i, 0] = np.clip(
                     self.k_clf_speed * e_v, self.a_min, self.a_max
-                )  # u1
+                )
                 U_nom_all[i, 1] = np.clip(
                     self.k_clf_heading * e_h,
                     self.steering_rate_min,
                     self.steering_rate_max,
-                )  # u2
+                )
 
         # Safety radius
         d_safe = float(2.0 * self.circle_radius + self.safety_buffer)
@@ -1926,13 +1949,13 @@ class CBFQP:
 
         qp_solving_t_groups = []
         qp_solving_iter_groups = []
-        cross_groups = {}
+        cross_groups: Dict[int, List[int]] = {}
 
         for g in range(G):
             cache = self._group_qp_caches[g]
             mcap = cache["m"]
             Cc = cache["C"]
-            Ecap = cache["E"]
+            Ecap = int(cache["E"])  # may be 0
             idx_lane = cache["idx_lane"]
 
             members = groups[g][:mcap]
@@ -1947,6 +1970,7 @@ class CBFQP:
             e_speed_loc = np.zeros((mcap,), dtype=np.float64)
             v_head_const = np.zeros((mcap,), dtype=np.float64)
             v_speed_const = np.zeros((mcap,), dtype=np.float64)
+
             for k in range(mcap):
                 if k < n_local:
                     gid = slot2id[k]
@@ -1956,12 +1980,6 @@ class CBFQP:
                         e_speed_loc[k] = e_v_all[gid]
                         v_head_const[k] = self.lam_clf * 0.5 * (e_h_all[gid] ** 2)
                         v_speed_const[k] = self.lam_clf * 0.5 * (e_v_all[gid] ** 2)
-                else:
-                    U_loc[k, :] = 0.0
-                    e_head_loc[k] = 0.0
-                    e_speed_loc[k] = 0.0
-                    v_head_const[k] = 0.0
-                    v_speed_const[k] = 0.0
 
             cache["U_nom"].value = U_loc
             cache["e_head"].value = e_head_loc
@@ -2014,11 +2032,21 @@ class CBFQP:
             cache["s_clf_head"].value = np.zeros(cache["s_clf_head"].shape)
             cache["s_clf_speed"].value = np.zeros(cache["s_clf_speed"].shape)
             cache["u_var"].value = cache["U_nom"].value.copy()
-            cache["lambda_lane"].value = np.zeros(cache["lambda_lane"].shape)
+
+            # Warm start lambdas every step (keeps behavior stable when constraints are deactivated)
+            cache["lambda_lane"].value = np.full(
+                cache["lambda_lane"].shape, float(self.lambda_ttcbf), dtype=np.float64
+            )
             if cache["lambda_pair"] is not None:
-                cache["lambda_pair"].value = np.zeros(cache["lambda_pair"].shape)
+                cache["lambda_pair"].value = np.full(
+                    cache["lambda_pair"].shape,
+                    float(self.lambda_ttcbf),
+                    dtype=np.float64,
+                )
             if cache["lambdax_i"] is not None:
-                cache["lambdax_i"].value = np.zeros(cache["lambdax_i"].shape)
+                cache["lambdax_i"].value = np.full(
+                    cache["lambdax_i"].shape, float(self.lambda_ttcbf), dtype=np.float64
+                )
 
             # Intra-group pairs
             for i_loc in range(mcap - 1):
@@ -2060,49 +2088,79 @@ class CBFQP:
                                 cache["b0ij"][key].value = np.array([1.0])
                                 cache["hij"][key].value = np.array([0.0])
 
-            # Cross-group reciprocal
-            for i_loc in range(mcap):
-                if i_loc < n_local:
-                    i = slot2id[i_loc]
-                    nbrs: List[int] = []
-                    for j in range(N):
-                        if j in members:
-                            continue
-                        if (
-                            _euclid(centers_flat[i], centers_flat[j])
-                            <= obs_range + 1e-9
-                        ):
-                            nbrs.append(j)
-                    nbrs = nbrs[:Ecap]
+            # -----------------------------
+            # Cross-group reciprocal (only if Ecap > 0)
+            # -----------------------------
+            if (
+                Ecap > 0
+                and cache["lambdax_i"] is not None
+                and cache["s_cross"] is not None
+            ):
+                for i_loc in range(mcap):
+                    if i_loc < n_local:
+                        i = slot2id[i_loc]
+                        nbrs: List[int] = []
+                        for j in range(N):
+                            if j in members:
+                                continue
+                            if (
+                                _euclid(centers_flat[i], centers_flat[j])
+                                <= obs_range + 1e-9
+                            ):
+                                nbrs.append(j)
+                        nbrs = nbrs[:Ecap]
+                        cross_groups[i] = nbrs
 
-                    cross_groups[i] = nbrs
-                    for e_idx in range(Ecap):
-                        if e_idx < len(nbrs):
-                            j = nbrs[e_idx]
-                            kins_i = self.linearized_center_kinematics_coeffs(states[i])
-                            kins_j = self.linearized_center_kinematics_coeffs(states[j])
-                            for ci in range(Cc):
-                                for cj in range(Cc):
-                                    pi = centers[i][ci][0:2]
-                                    pj = centers[j][cj][0:2]
-                                    dx = float((pi - pj)[0].item())
-                                    dy = float((pi - pj)[1].item())
-                                    A_i, b0, h = self.ttcbf_pair_affine_coeffs_cross(
-                                        kins_i,
-                                        kins_j,
-                                        ci,
-                                        cj,
-                                        dx,
-                                        dy,
-                                        d_safe_sq,
-                                        self.dt_taylor,
-                                        None,
-                                        sigma_i=sigma,
-                                    )
-                                    cache["Axc_i"][(i_loc, e_idx, ci, cj)].value = A_i
-                                    cache["b0xc"][(i_loc, e_idx, ci, cj)].value = b0
-                                    cache["hxc"][(i_loc, e_idx, ci, cj)].value = h
-                        else:
+                        for e_idx in range(Ecap):
+                            if e_idx < len(nbrs):
+                                j = nbrs[e_idx]
+                                kins_i = self.linearized_center_kinematics_coeffs(
+                                    states[i]
+                                )
+                                kins_j = self.linearized_center_kinematics_coeffs(
+                                    states[j]
+                                )
+                                for ci in range(Cc):
+                                    for cj in range(Cc):
+                                        pi = centers[i][ci][0:2]
+                                        pj = centers[j][cj][0:2]
+                                        dx = float((pi - pj)[0].item())
+                                        dy = float((pi - pj)[1].item())
+                                        (
+                                            A_i,
+                                            b0,
+                                            h,
+                                        ) = self.ttcbf_pair_affine_coeffs_cross(
+                                            kins_i,
+                                            kins_j,
+                                            ci,
+                                            cj,
+                                            dx,
+                                            dy,
+                                            d_safe_sq,
+                                            self.dt_taylor,
+                                            None,
+                                            sigma_i=sigma,
+                                        )
+                                        cache["Axc_i"][
+                                            (i_loc, e_idx, ci, cj)
+                                        ].value = A_i
+                                        cache["b0xc"][(i_loc, e_idx, ci, cj)].value = b0
+                                        cache["hxc"][(i_loc, e_idx, ci, cj)].value = h
+                            else:
+                                for ci in range(Cc):
+                                    for cj in range(Cc):
+                                        cache["Axc_i"][
+                                            (i_loc, e_idx, ci, cj)
+                                        ].value = np.zeros((1, 2))
+                                        cache["b0xc"][
+                                            (i_loc, e_idx, ci, cj)
+                                        ].value = np.array([1.0])
+                                        cache["hxc"][
+                                            (i_loc, e_idx, ci, cj)
+                                        ].value = np.array([0.0])
+                    else:
+                        for e_idx in range(Ecap):
                             for ci in range(Cc):
                                 for cj in range(Cc):
                                     cache["Axc_i"][
@@ -2114,67 +2172,13 @@ class CBFQP:
                                     cache["hxc"][
                                         (i_loc, e_idx, ci, cj)
                                     ].value = np.array([0.0])
-                else:
-                    for e_idx in range(Ecap):
-                        for ci in range(Cc):
-                            for cj in range(Cc):
-                                cache["Axc_i"][(i_loc, e_idx, ci, cj)].value = np.zeros(
-                                    (1, 2)
-                                )
-                                cache["b0xc"][(i_loc, e_idx, ci, cj)].value = np.array(
-                                    [1.0]
-                                )
-                                cache["hxc"][(i_loc, e_idx, ci, cj)].value = np.array(
-                                    [0.0]
-                                )
-
-            # Solve group QP
-            # prob: cp.Problem = cache["prob"]
-            # try:
-            #     prob.solve(
-            #         solver=cp.OSQP,
-            #         warm_start=True,
-            #         verbose=False,
-            #         max_iter=40000,
-            #         eps_abs=1e-5,
-            #         eps_rel=1e-5,
-            #         polish=True,
-            #         adaptive_rho=True,
-            #     )
-            # except cp.SolverError:
-            #     try:
-            #         prob.solve(
-            #             solver=cp.ECOS,
-            #             warm_start=True,
-            #             verbose=False,
-            #             max_iters=20000,
-            #             abstol=1e-8,
-            #             reltol=1e-8,
-            #         )
-            #     except cp.SolverError:
-            #         prob.solve(
-            #             solver=cp.SCS,
-            #             warm_start=True,
-            #             verbose=False,
-            #             max_iters=100000,
-            #             eps=1e-4,
-            #         )
-
-            # # Write back
-            # u_opt = cache["u_var"].value
-            # for k in range(n_local):
-            #     gid = slot2id[k]
-            #     s_i = states[gid]
-            #     actions_v_steer_safe = self.u_to_rl_action(
-            #         u_opt[k, :], s_i[3], s_i[4]
-            #     ).detach()
-            #     tensordict[("agents", "action")][
-            #         self.env_idx, gid
-            #     ] = actions_v_steer_safe
+            else:
+                # No cross constraints prebuilt: record empty neighbor lists for visualization
+                for k in range(n_local):
+                    cross_groups[slot2id[k]] = []
 
             # Solve group QP
             prob: cp.Problem = cache["prob"]
-            solved = False
             try:
                 prob.solve(
                     solver=cp.OSQP,
@@ -2185,7 +2189,6 @@ class CBFQP:
                     polish=True,
                     adaptive_rho=True,
                 )
-
             except cp.SolverError:
                 print("[WARN] OSQP solver failed, trying CLARABEL...")
                 try:
@@ -2228,7 +2231,6 @@ class CBFQP:
                         self.env_idx, gid
                     ] = actions_v_steer_safe
             else:
-                # Fallback: nominal actions for this group
                 for k in range(n_local):
                     gid = slot2id[k]
                     s_i = states[gid]
@@ -2246,8 +2248,6 @@ class CBFQP:
             if hasattr(st, "num_iters"):
                 qp_solving_iter_groups.append(st.num_iters)
 
-        # Example: inter-groups = [[8, 10], [0, 12], [1, 2], [3, 4], [5, 6], [7, 9], [11, 13], [14]], cross-groups = {8: [0], 10: [0, 12], 0: [8, 10], 12: [10], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [], 9: [], 11: [], 13: [], 14: []}
-        # print(f"inter-groups = {groups}, cross-groups = {cross_groups}")
         # For later visualization
         self.scenario.inter_groups = groups
         self.scenario.cross_groups = cross_groups
@@ -2255,7 +2255,8 @@ class CBFQP:
         self.hist.qp_solving_t.append(qp_solving_t_groups)
         t_avg = sum(qp_solving_t_groups) / max(1, len(qp_solving_t_groups))
         print(
-            f"[INFO] Semi-centralized QP solving time per group: {t_avg*1000:.2f} ms. Over all time steps: {np.mean(np.array(self.hist.qp_solving_t))*1000:.2f} ms"
+            f"[INFO] Semi-centralized QP solving time per group: {t_avg*1000:.2f} ms. "
+            f"Over all time steps: {np.mean(np.array(self.hist.qp_solving_t))*1000:.2f} ms"
         )
         self.hist.qp_solving_iter.append(qp_solving_iter_groups)
 
