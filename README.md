@@ -1,6 +1,6 @@
 # SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning
 <!-- icons from https://simpleicons.org/ -->
-![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue.svg)
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/bassamlab/SigmaRL/blob/main/LICENSE.txt)
 [![arXiv](https://img.shields.io/badge/arXiv-2408.07644-b31b1b.svg)](https://doi.org/10.48550/arXiv.2408.07644)
 [![arXiv](https://img.shields.io/badge/arXiv-2409.11852-b31b1b.svg)](https://doi.org/10.48550/arXiv.2409.11852)
@@ -11,9 +11,12 @@
 - [SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning](#sigmarl-a-sample-efficient-and-generalizable-multi-agent-reinforcement-learning-framework-for-motion-planning)
   - [Welcome to SigmaRL!](#welcome-to-sigmarl)
   - [Install](#install)
+      - [Install From Source](#install-from-source)
+      - [Optional: Install Development Dependencies](#optional-install-development-dependencies)
+      - [Verify the Installation](#verify-the-installation)
   - [How to Use](#how-to-use)
-    - [Training](#training)
-    - [Testing](#testing)
+      - [Training](#training)
+      - [Testing](#testing)
   - [Customize Your Own Maps](#customize-your-own-maps)
   - [Papers](#papers)
     - [1. SigmaRL](#1-sigmarl)
@@ -26,8 +29,8 @@
   - [Acknowledgments](#acknowledgments)
 
 > [!NOTE]
-> - Check out our recent work [CBF-Based Safety Filter](#5-cbf-based-safety-filter)! It proposes a real-time CBF-based safety filter for safety verification of learning-based motion planning with road boundary constraints (see also [Fig. 5](#fig-safety-filter)).
-> - Check out our recent work [Truncated Taylor CBF](#4-truncated-taylor-cbf-ttcbf)! It proposes a new notion of high-order CBFs termed Truncated Taylor CBF (TTCBF). TTCBF can handle constraints with arbitrary relative degrees while using only one design parameter to facilitate control design (see also [Fig. 4](#fig-ttcbf)).
+> - Check out our recent work [CBF-Based Safety Filter](#5-cbf-based-safety-filter), which has been nominated for best paper award at IEEE ITSC 2025! It proposes a real-time CBF-based safety filter for safety verification of learning-based motion planning with road boundary constraints (see also [Fig. 5](#fig-safety-filter)).
+<!-- > - Check out our recent work [Truncated Taylor CBF](#4-truncated-taylor-cbf-ttcbf)! It proposes a new notion of high-order CBFs termed Truncated Taylor CBF (TTCBF). TTCBF can handle constraints with arbitrary relative degrees while using only one design parameter to facilitate control design (see also [Fig. 4](#fig-ttcbf)). -->
 <!-- > - Check out our recent work [MTV-Based CBF](#3-mtv-based-cbf)! It uses a learning-based, *less conservative* distance metric to categorize safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL. -->
 <!-- > - Check out our recent work [XP-MARL](#2-xp-marl)! It augments MARL with learning-based au<ins>x</ins>iliary <ins>p</ins>rioritization to address *non-stationarity*. -->
 
@@ -188,34 +191,58 @@ Figure 4: Our TTCBF approach reduces the number of parameters to tune when handl
 Figure 5: Demonstration of our safety filter for safety verification of an undertrained RL policy. See our [CBF-Based Safety Filter Paper](#5-cbf-based-safety-filter) for more details.
 
 ## Install
-SigmaRL supports Python versions from 3.9 to 3.12 and is also OS independent (Windows/macOS/Linux). It's recommended to use a virtual environment. For example, if you are using [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html):
-  ```bash
-  conda create -n sigmarl python=3.12
-  conda activate sigmarl
-  ```
-We recommend installing `sigmarl` from source:
-- Clone the repository
-  ```bash
-  git clone https://github.com/bassamlab/SigmaRL.git
-  cd SigmaRL
-  pip install -e .
-  ```
-- (Optional) Verifying the Installation by first launching your Python interpreter in terminal:
-  ```bash
-  python
-  ```
-  Then run the following lines, which should show the version of the installed `sigmarl`:
-  ```bash
-  import sigmarl
-  print(sigmarl.__version__)
-  ```
+
+SigmaRL supports **Python 3.10 to 3.12** and is OS independent. We recommend using a virtual environment.
+For example, with [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html):
+
+```bash
+conda create -n env_sigmarl python=3.12
+conda activate env_sigmarl
+```
+
+#### Install From Source
+
+Clone the repository and install SigmaRL in editable mode:
+
+```bash
+git clone https://github.com/bassamlab/SigmaRL.git
+cd SigmaRL
+pip install -r requirements.txt
+pip install -e .
+```
+
+#### Optional: Install Development Dependencies
+
+If you plan to contribute to the repository, install the development dependencies as well:
+
+```bash
+pip install -e ".[dev]"
+pre-commit install
+```
+
+#### Verify the Installation
+
+Launch Python from the terminal:
+
+```bash
+python
+```
+
+Then run:
+
+```python
+import sigmarl
+print(sigmarl.__version__)
+```
+
+If the installation succeeds, Python will print the installed `sigmarl` version.
 
 ## How to Use
-### Training
+#### Training
 Run `main_training.py`. During training, all the intermediate models that have higher performance than the saved one will be automatically saved. You are also allowed to retrain or refine a trained model by setting the parameter `is_continue_train` in the file `sigmarl/config.json` to `true`. The saved model will be loaded for a new training process.
 
 `sigmarl/scenarios/road_traffic.py` defines the RL environment, such as the observation function and reward function. Besides, it provides an interactive interface, which also visualizes the environment. To open the interface, simply run this file. You can use `arrow keys` to control agents and use the `tab key` to switch between agents. Adjust the parameter `scenario_type` to choose a scenario. All available scenarios are listed in the variable `SCENARIOS` in `sigmarl/constants.py`. Before training, it is recommended to use the interactive interface to check if the environment is as expected.
-### Testing
+#### Testing
 After training, run `main_testing.py` to test your model. You may need to adjust the parameter `path` therein to tell which folder the target model was saved.
 *Note*: If the path to a saved model changes, you need to update the value of `where_to_save` in the corresponding JSON file as well.
 
@@ -297,19 +324,20 @@ Jianye Xu, Omar Sobhy, and Bassam Alrifaee, "XP-MARL: Auxiliary Prioritization i
 
 ### 3. MTV-Based CBF
 <div>
-Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin," <i>In European Control Conference (ECC), in press</i>, 2024.
+Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin," <i>In European Control Conference (ECC)</i>, 2024.
 
 <a href="https://doi.org/10.48550/arXiv.2411.08999" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"> </a>[![Jump to Fig. 3](https://img.shields.io/badge/Jump%20to-Fig.%203-blue)](#fig-mtv-based-cbf)
 </div>
 
 - **BibTeX**
   ```bibtex
-  @inproceedings{xu2024learningbased,
-    title = {Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin},
-    shorttitle = {Learning-Based Control Barrier Function with Provably Safe Guarantees},
-    booktitle = {European Control Conference (ECC), in Press},
+  @inproceedings{xu2025learningbased,
+    title = {A Learning-Based Control Barrier Function for Car-Like Robots: Toward Less Conservative Collision Avoidance},
+    booktitle = {2025 European Control Conference (ECC)},
     author = {Xu, Jianye and Alrifaee, Bassam},
-    year = {2025},
+    year = 2025,
+    pages = {988--995},
+    doi = {10.23919/ECC65951.2025.11187043}
   }
   ```
 
@@ -342,18 +370,20 @@ Jianye Xu and Bassam Alrifaee, "High-Order Control Barrier Functions: Insights a
 
 ### 5. CBF-Based Safety Filter
 <div>
-Jianye Xu, Chang Che, and Bassam Alrifaee, "A Real-Time Control Barrier Function-Based Safety Filter for Motion Planning with Arbitrary Road Boundary Constraints," <i>arXiv preprint arXiv:2505.02395</i>, 2025.
+Jianye Xu, Chang Che, and Bassam Alrifaee, "A Real-Time Control Barrier Function-Based Safety Filter for Motion Planning with Arbitrary Road Boundary Constraints," <i>2025 IEEE 28th International Conference on Intelligent Transportation Systems (ITSC), Gold Coast, Australia, 2025, pp. 2818-2825, doi: 10.1109/ITSC60802.2025.11423203.</i>
 
 <a href="https://arxiv.org/abs/2505.02395" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> [![Jump to Fig. 5](https://img.shields.io/badge/Jump%20to-Fig.%205-blue)](#fig-safety-filter) <a href="https://github.com/bassamlab/SigmaRL/tree/1.4.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
 
 - **BibTeX**
   ```bibtex
-  @article{xu2025realtime,
+  @inproceedings{xu2025realtime,
     title = {A Real-Time Control Barrier Function-Based Safety Filter for Motion Planning with Arbitrary Road Boundary Constraints},
+    booktitle = {2025 IEEE 28th International Conference on Intelligent Transportation Systems (ITSC)},
     author = {Xu, Jianye and Che, Chang and Alrifaee, Bassam},
-    journal = {arXiv preprint arXiv:2505.02395},
-    year = {2025},
+    year = 2025,
+    pages = {2818--2825},
+    doi = {10.1109/ITSC60802.2025.11423203}
   }
   ```
 
