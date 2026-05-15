@@ -371,7 +371,7 @@ def plot_vehicle_footprints_from_td(
       Face color stays the vehicle color.
     """
     td_path = Path(td_path)
-    td = torch.load(td_path)
+    td = torch.load(td_path, weights_only=False)
 
     # Required
     key_pos = ("agents", "info", "pos")
@@ -610,49 +610,27 @@ def plot_vehicle_footprints_from_td(
 if __name__ == "__main__":
     from constants import AGENTS
 
-    case_list = [1, 2, 3, 4, 5]
-    # case_list = [
-    #     5
-    # ]
-    for case in case_list:
-        if case == 1:
-            td_path = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/rew_method_cbf/reward_progress10.0/seed1/out_td_cpm_mixed_nagents4_seed1.td"
-            # k0_list = [69, 130, 206, 332, 400, 539]
-            k0_list = [69, 206, 332, 539]
+    td_path = "/Users/xu/Documents/my_repo/marl_for_cavs/checkpoints/itsc26_sensitivity_new_public/rew_method_cbf/reward_progress0.1/h0.1/seed1/out_td_cpm_mixed_nagents4_seed1.td"
+    # k0_list = [69, 130, 206, 332, 400, 539]
+    k0_list = [69, 206, 332, 539]
 
-        if case == 2:
-            td_path = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/rew_method_distance/reward_progress10.0/seed1/out_td_cpm_mixed_nagents4_seed1.td"
-            k0_list = [32]
+    for k0 in k0_list:
+        ax = plot_vehicle_footprints_from_td(
+            td_path=td_path,
+            k0=k0,
+            step_interval=5,
+            veh_length=float(AGENTS["length"]),
+            veh_width=float(AGENTS["width"]),
+        )
 
-        if case == 3:
-            td_path = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/rew_method_ttc/reward_progress10.0/seed1/out_td_cpm_mixed_nagents4_seed1.td"
-            k0_list = [38]
+        _ = animate_vehicle_footprints_from_td(
+            td_path=td_path,
+            k0=k0,
+            step_interval=1,
+            veh_length=float(AGENTS["length"]),
+            veh_width=float(AGENTS["width"]),
+            fps=30,
+            is_show_after_reset=False,  # include resets
+        )
 
-        if case == 4:
-            td_path = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/rew_method_distance_sparse/reward_progress10.0/seed1/out_td_cpm_mixed_nagents4_seed1.td"
-            k0_list = [340]
-
-        if case == 5:
-            td_path = "checkpoints/itsc26_new/cpm_mixed_do_not_apply_cbf_action/rew_method_ttc_sparse/reward_progress10.0/seed1/out_td_cpm_mixed_nagents4_seed1.td"
-            k0_list = [256]
-
-        for k0 in k0_list:
-            ax = plot_vehicle_footprints_from_td(
-                td_path=td_path,
-                k0=k0,
-                step_interval=5,
-                veh_length=float(AGENTS["length"]),
-                veh_width=float(AGENTS["width"]),
-            )
-
-            _ = animate_vehicle_footprints_from_td(
-                td_path=td_path,
-                k0=k0,
-                step_interval=1,
-                veh_length=float(AGENTS["length"]),
-                veh_width=float(AGENTS["width"]),
-                fps=30,
-                is_show_after_reset=False,  # include resets
-            )
-
-        # plt.show()
+    # plt.show()
