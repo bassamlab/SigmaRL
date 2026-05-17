@@ -2,11 +2,13 @@
 <!-- icons from https://simpleicons.org/ -->
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/bassamlab/SigmaRL/blob/main/LICENSE.txt)
-[![arXiv](https://img.shields.io/badge/arXiv-2408.07644-b31b1b.svg)](https://doi.org/10.48550/arXiv.2408.07644)
-[![arXiv](https://img.shields.io/badge/arXiv-2409.11852-b31b1b.svg)](https://doi.org/10.48550/arXiv.2409.11852)
-[![arXiv](https://img.shields.io/badge/arXiv-2411.08999-b31b1b.svg)](https://doi.org/10.48550/arXiv.2411.08999)
-[![arXiv](https://img.shields.io/badge/arXiv-2503.15014-b31b1b.svg)](https://doi.org/10.48550/arXiv.2503.15014)
-[![arXiv](https://img.shields.io/badge/arXiv-2503.15014-b31b1b.svg)](https://doi.org/10.48550/arXiv.2505.02395)
+[![arXiv](https://img.shields.io/badge/arXiv-2408.07644-b31b1b.svg)](https://arxiv.org/abs/2408.07644)
+[![arXiv](https://img.shields.io/badge/arXiv-2409.11852-b31b1b.svg)](https://arxiv.org/abs/2409.11852)
+[![arXiv](https://img.shields.io/badge/arXiv-2411.08999-b31b1b.svg)](https://arxiv.org/abs/2411.08999)
+[![arXiv](https://img.shields.io/badge/arXiv-2503.15014-b31b1b.svg)](https://arxiv.org/abs/2503.15014)
+[![arXiv](https://img.shields.io/badge/arXiv-2505.02395-b31b1b.svg)](https://arxiv.org/abs/2505.02395)
+[![arXiv](https://img.shields.io/badge/arXiv-2601.16578-b31b1b.svg)](https://arxiv.org/abs/2601.16578)
+[![arXiv](https://img.shields.io/badge/arXiv-TODO-b31b1b.svg)](https://arxiv.org/abs/TODO)
 
 - [SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning](#sigmarl-a-sample-efficient-and-generalizable-multi-agent-reinforcement-learning-framework-for-motion-planning)
   - [Welcome to SigmaRL!](#welcome-to-sigmarl)
@@ -25,6 +27,7 @@
     - [4. Truncated Taylor CBF (TTCBF)](#4-truncated-taylor-cbf-ttcbf)
     - [5. CBF-Based Safety Filter](#5-cbf-based-safety-filter)
     - [6. CPM Lab Benchmark](#6-cpm-lab-benchmark)
+    - [7. CBF-Informed MARL](#7-cbf-informed-marl)
   - [TODOs](#todos)
   - [Acknowledgments](#acknowledgments)
 
@@ -190,6 +193,53 @@ Figure 4: Our TTCBF approach reduces the number of parameters to tune when handl
 
 Figure 5: Demonstration of our safety filter for safety verification of an undertrained RL policy. See our [CBF-Based Safety Filter Paper](#5-cbf-based-safety-filter) for more details.
 
+
+<a id="fig-cbf-informed-marl"></a>
+<figure>
+  <table>
+    <tr>
+      <td>
+        <a id="fig-cbf-informed-marl-demo-1"></a>
+        <figure>
+          <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/cbf_informed_marl_demo_1.gif?raw=true" width="360" />
+          <br>
+          <figcaption>(a) Demo 1.</figcaption>
+        </figure>
+      </td>
+      <td>
+        <a id="fig-cbf-informed-marl-demo-2"></a>
+        <figure>
+          <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/cbf_informed_marl_demo_2.gif?raw=true" width="200"/>
+          <br>
+          <figcaption>(b) Demo 2.</figcaption>
+        </figure>
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <a id="fig-cbf-informed-marl-demo-3"></a>
+        <figure>
+          <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/cbf_informed_marl_demo_3.gif?raw=true" width="360"/>
+          <br>
+          <figcaption>(c) Demo 3.</figcaption>
+        </figure>
+      </td>
+      <td>
+        <a id="fig-cbf-informed-marl-demo-4"></a>
+        <figure>
+          <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/cbf_informed_marl_demo_4.gif?raw=true" width="300"/>
+          <br>
+          <figcaption>(d) Demo 4.</figcaption>
+        </figure>
+      </td>
+    </tr>
+  </table>
+  <!-- <figcaption>Figure 1.</figcaption> -->
+</figure>
+
+Figure 6: Demonstrating some representative interaction scenarios using the policy learned with our proposed CBF-informed method. See our [TODO](#TODO) for more details.
+
+
 ## Install
 
 SigmaRL supports **Python 3.10 to 3.12** and is OS independent. We recommend using a virtual environment.
@@ -271,7 +321,7 @@ If you use this repository, please consider to cite our papers.
 <div>
 Jianye Xu, Pan Hu, and Bassam Alrifaee, "SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning," <i>2024 IEEE 27th International Conference on Intelligent Transportation Systems (ITSC), Edmonton, AB, Canada, 2024, pp. 768-775, doi: 10.1109/ITSC58415.2024.10919918</i>.
 
-<a href="https://doi.org/10.48550/arXiv.2408.07644" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/tzaVjol4nhA" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> [![Jump to Fig. 1](https://img.shields.io/badge/Jump%20to-Fig.%201-blue)](#fig-generalization) <a href="https://github.com/bassamlab/SigmaRL/tree/1.2.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+<a href="https://arxiv.org/abs/2408.07644" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/tzaVjol4nhA" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> [![Jump to Fig. 1](https://img.shields.io/badge/Jump%20to-Fig.%201-blue)](#fig-generalization) <a href="https://github.com/bassamlab/SigmaRL/tree/1.2.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
 
 - **BibTeX**
@@ -301,7 +351,7 @@ Jianye Xu, Pan Hu, and Bassam Alrifaee, "SigmaRL: A Sample-Efficient and General
 <div>
 Jianye Xu, Omar Sobhy, and Bassam Alrifaee, "XP-MARL: Auxiliary Prioritization in Multi-Agent Reinforcement Learning to Address Non-Stationarity," <i>arXiv preprint arXiv:2409.11852</i>, 2024.
 
-<a href="https://doi.org/10.48550/arXiv.2409.11852" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/GEhjRKY2fTU" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> [![Jump to Fig. 2](https://img.shields.io/badge/Jump%20to-Fig.%202-blue)](#fig-xp-marl) <a href="https://github.com/bassamlab/SigmaRL/tree/1.2.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+<a href="https://arxiv.org/abs/2409.11852" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/GEhjRKY2fTU" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> [![Jump to Fig. 2](https://img.shields.io/badge/Jump%20to-Fig.%202-blue)](#fig-xp-marl) <a href="https://github.com/bassamlab/SigmaRL/tree/1.2.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
 
 - **BibTeX**
@@ -326,7 +376,7 @@ Jianye Xu, Omar Sobhy, and Bassam Alrifaee, "XP-MARL: Auxiliary Prioritization i
 <div>
 Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin," <i>In European Control Conference (ECC)</i>, 2024.
 
-<a href="https://doi.org/10.48550/arXiv.2411.08999" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"> </a>[![Jump to Fig. 3](https://img.shields.io/badge/Jump%20to-Fig.%203-blue)](#fig-mtv-based-cbf)
+<a href="https://arxiv.org/abs/2411.08999" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"> </a>[![Jump to Fig. 3](https://img.shields.io/badge/Jump%20to-Fig.%203-blue)](#fig-mtv-based-cbf)
 </div>
 
 - **BibTeX**
@@ -351,7 +401,7 @@ Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Pro
 <div>
 Jianye Xu and Bassam Alrifaee, "High-Order Control Barrier Functions: Insights and a Truncated Taylor-Based Formulation," <i>arXiv preprint arXiv:2503.15014</i>, 2025.
 
-<a href="https://doi.org/10.48550/arXiv.2503.15014" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> [![Jump to Fig. 4](https://img.shields.io/badge/Jump%20to-Fig.%204-blue)](#fig-ttcbf) <a href="https://github.com/bassamlab/SigmaRL/tree/1.3.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+<a href="https://arxiv.org/abs/2503.15014" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> [![Jump to Fig. 4](https://img.shields.io/badge/Jump%20to-Fig.%204-blue)](#fig-ttcbf) <a href="https://github.com/bassamlab/SigmaRL/tree/1.3.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
 
 - **BibTeX**
@@ -395,8 +445,26 @@ Jianye Xu, Chang Che, and Bassam Alrifaee, "A Real-Time Control Barrier Function
 
 ### 6. CPM Lab Benchmark
 <div>
-Julius Beerwerth, Jianye Xu, Simon Schäfer, Fynn Belderink, and Bassam Alrifaee, "From Simulation to Reality: A Benchmark for MARL in the Cyber-Physical Mobility Lab," <i>arXiv preprint arXiv:TBD</i>, 2025.
+Julius Beerwerth, Jianye Xu, Simon Schäfer, Fynn Belderink, and Bassam Alrifaee, “Zero-shot MARL benchmark in the Cyber-Physical Mobility Lab,” <i>at - Automatisierungstechnik, vol. 74, no. 5, pp. 376–385, May 2026, doi: 10.1515/auto-2025-0057</i>.
+
+<a href="https://arxiv.org/abs/2601.16578" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://github.com/bassamlab/SigmaRL/tree/1.5.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
+
+- **BibTeX**
+  ```bibtex
+  @article{beerwerth2026zeroshot,
+    title = {Zero-Shot MARL Benchmark in the Cyber-Physical Mobility Lab},
+    author = {Beerwerth, Julius and Xu, Jianye and Sch{\"a}fer, Simon and Belderink, Fynn and Alrifaee, Bassam},
+    year = 2026,
+    journal = {at - Automatisierungstechnik},
+    volume = {74},
+    number = {5},
+    pages = {376--385},
+    publisher = {De Gruyter},
+    doi = {10.1515/auto-2025-0057},
+    copyright = {De Gruyter expressly reserves the right to use all content for commercial text and data mining within the meaning of Section 44b of the German Copyright Act.}
+  }
+  ```
 
 - **Reproduce Experimental Results of the SigmaRL Simulation in the Paper:**
 
@@ -406,6 +474,30 @@ Julius Beerwerth, Jianye Xu, Simon Schäfer, Fynn Belderink, and Bassam Alrifaee
     - This script requires Python parallel workers.
     - Alternatively, you can run `sigmarl/eva_at25/run_models.py` if you do not want to use parallel workers.
   - After the evaluation, run `sigmarl/eva_at25/marl_aggregated_evaluation.py` to analyze the evaluation results and obtain the performance metrics.
+
+
+### 7. CBF-Informed MARL
+<div>
+Jianye Xu, and Bassam Alrifaee, "Beyond Safety Filtering: Control Barrier Function-Informed Reinforcement Learning for Connected and Automated Vehicles," <i>2026 IEEE 29th International Conference on Intelligent Transportation Systems (ITSC), in press</i>.
+
+<a href="https://arxiv.org/abs/TODO" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/tzaVjol4nhA" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> [![Jump to Fig. 6](https://img.shields.io/badge/Jump%20to-Fig.%206-blue)](#fig-cbf-informed-marl) <a href="https://github.com/bassamlab/SigmaRL/tree/1.6.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+</div>
+
+- **BibTeX**
+  ```bibtex
+  @inproceedings{xu2024sigmarl,
+    title = {Beyond Safety Filtering: Control Barrier Function-Informed Reinforcement Learning for Connected and Automated Vehicles},
+    booktitle = {2026 IEEE 29th International Conference on Intelligent Transportation Systems (ITSC), in press},
+    author = {Xu, Jianye and Alrifaee, Bassam},
+    year = {2026},
+  }
+  ```
+
+- **Reproduce Experimental Results in the Paper:**
+
+  - Git checkout to the corresponding tag using `git checkout 1.6.0`
+  - Go to [this page](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/itsc26.zip) and download the zip file `itsc26.zip`. Unzip it, copy and paste the whole folder to the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/itsc26/`.
+  - Run `sigmarl/evaluation_itsc26.py`.
 
 ## TODOs
 - Improve safety
@@ -417,7 +509,6 @@ Julius Beerwerth, Jianye Xu, Simon Schäfer, Fynn Belderink, and Bassam Alrifaee
 - Address non-stationarity
   - [x] Integrating prioritization (see the XP-MARL paper [here](#2-xp-marl))
 - Effective observation design
-  - [ ] Image-based representation of observations
   - [ ] Historic observations
   - [ ] Attention mechanism
 - Misc
