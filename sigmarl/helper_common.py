@@ -45,7 +45,7 @@ class Parameters:
         clip_epsilon: float = 0.2,  # Clip value for PPO loss
         gamma: float = 0.99,  # Discount factor from 0 to 1. A greater value corresponds to a better farsight
         lmbda: float = 0.9,  # lambda for generalised advantage estimation
-        entropy_eps: float = 1e-4,  # Controls the trade-off between trying new actions (exploration) and optimizing known good actions (exploitation). Higher entropy_coef encourages more exploration by favoring stochastic (less certain) policies.
+        entropy_eps: float = 1e-4,  # Controls the trade-off between trying new actions (exploration) and optimizing known good actions (exploitation). Higher entropy_coeff encourages more exploration by favoring stochastic (less certain) policies.
         max_steps: int = 128,  # Episode steps before done
         num_vmas_envs: int = 32,  # Number of vectorized environments
         scenario_type: str = "intersection_1",  # One of {"cpm_entire", "cpm_mixed", "intersection_1", ...}. See SCENARIOS in utilities/constants.py for more scenarios.

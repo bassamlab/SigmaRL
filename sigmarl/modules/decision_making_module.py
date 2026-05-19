@@ -37,9 +37,7 @@ class DecisionMakingModule(Module):
                     -1
                 ],  # n_obs_per_agent
                 n_agent_outputs=(
-                    2
-                    * env.unbatched_action_spec[env.action_key].shape[-1]
-                    # 2 * env.action_spec.shape[-1]
+                    2 * env.full_action_spec_unbatched[env.action_key].shape[-1]
                 ),  # 2 * n_actions_per_agent
                 n_agents=env.n_agents,
                 centralised=False,  # the policies are decentralised (ie each agent will act from its observation)
@@ -66,13 +64,13 @@ class DecisionMakingModule(Module):
         # Use a probabilistic actor allows for exploration
         policy = ProbabilisticActor(
             module=policy_module,
-            spec=env.unbatched_action_spec,
+            spec=env.full_action_spec_unbatched,
             in_keys=[("agents", "loc"), ("agents", "scale")],
             out_keys=[env.action_key],
             distribution_class=TanhNormal,
             distribution_kwargs={
-                "low": env.unbatched_action_spec[env.action_key].space.low,
-                "high": env.unbatched_action_spec[env.action_key].space.high,
+                "low": env.full_action_spec_unbatched[env.action_key].space.low,
+                "high": env.full_action_spec_unbatched[env.action_key].space.high,
             },
             return_log_prob=True,
             log_prob_key=(

@@ -95,7 +95,7 @@ class CBFModule(Module):
             actor=policy,
             critic=critic,
             clip_epsilon=self.parameters.clip_epsilon,
-            entropy_coef=self.parameters.entropy_eps,
+            entropy_coeff=self.parameters.entropy_eps,
             normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
         )
 

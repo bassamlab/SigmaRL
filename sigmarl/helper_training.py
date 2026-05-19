@@ -476,7 +476,6 @@ class SyncDataCollectorCustom(SyncDataCollector):
 
         (self.policy, self.get_weights_fn,) = self._get_policy_and_device(
             policy=policy,
-            observation_spec=self.env.observation_spec,
         )
 
         if isinstance(self.policy, nn.Module):

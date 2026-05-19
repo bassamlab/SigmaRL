@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import datetime
 from sigmarl.mappo_cavs import mappo_cavs
 from sigmarl.helper_training import Parameters
 from sigmarl.constants import SCENARIOS, AGENTS
@@ -28,10 +29,10 @@ def _float_or_none(s: str):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--h-nom", type=_float_or_none, default=None)
-    parser.add_argument("--reward-progress", type=float, default=0.1)
+    parser.add_argument("--h_nom", type=_float_or_none, default=0.1)
+    parser.add_argument("--reward_progress", type=float, default=0.1)
     parser.add_argument(
-        "--rew-method",
+        "--rew_method",
         type=str,
         choices=[
             "cbf",
@@ -42,7 +43,7 @@ def parse_args():
             "cbf_sparse",
             "ttc_sparse",
         ],
-        default=None,
+        default="ttc_sparse",
     )
 
     # If you sometimes pass extra flags and do not want errors:
@@ -105,9 +106,7 @@ else:
 
 parameters.rew_method = rew_method
 
-
-print(f"[INFO] Using reward method = {parameters.rew_method}")
-parameters.where_to_save = f"checkpoints/itsc26/{scenario_type}/rew_method_{parameters.rew_method}/reward_progress{reward_progress}/seed{random_seed}/"
+parameters.where_to_save = f"outputs/{datetime.now():%Y%m%d}_test/"
 
 # ===============================
 # Save parameters and AGENTS
