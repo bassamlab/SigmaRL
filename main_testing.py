@@ -18,7 +18,7 @@ from sigmarl.mappo_cavs import mappo_cavs
 from sigmarl.constants import SCENARIOS
 
 # path = "outputs/marl_cbf_fixed_group_2_episode_100_rl/"
-path = "outputs/cbf_informed_marl_with_cbf_4_only_cbf_reward/"
+path = "outputs/20260519_test/"
 # path = "outputs/cbf_informed_marl_with_cbf_2/"
 
 # ===============================
@@ -77,7 +77,7 @@ with open(path_to_json_file, "r") as file:
     else:
         parameters.num_vmas_envs = 1
 
-    parameters.scenario_type = "CPM_mixed"  # One of "CPM_mixed", "CPM_entire", "intersection_1", "on_ramp_1", "roundabout_1", etc. See sigmarl/constants.py for more scenario types
+    parameters.scenario_type = "cpm_mixed"  # One of "cpm_mixed", "cpm_entire", "intersection_1", "on_ramp_1", "roundabout_1", etc. See sigmarl/constants.py for more scenario types
     # parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
     parameters.n_agents = 4
     parameters.dt = 0.1

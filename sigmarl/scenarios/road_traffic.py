@@ -1048,14 +1048,6 @@ class ScenarioRoadTraffic(BaseScenario):
         )
 
         if self.parameters.is_testing_mode:
-            if self.parameters.rew_method != "sparse":
-                print(
-                    colored(
-                        f"[WARNING] In testing mode, only sparse reward method is allowed. The given reward method {self.parameters.rew_method} will be ignored and the reward will be computed in a sparse way.",
-                        "red",
-                    )
-                )
-
             # In testing mode, we care more about the actual performance of the learned policy, so we directly use the sparse reward without reward shaping.
             # In this way, the reward can better reflect the actual performance of the learned policy, although it may be more difficult to learn due to the lack of guidance from reward shaping.
             self.rew += reward_goal
