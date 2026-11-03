@@ -26,7 +26,7 @@
   <node id='-49767' action='modify' visible='true' lat='50.77807866349' lon='6.08104400006' />
   <node id='-49768' action='modify' visible='true' lat='50.77806426738' lon='6.08104661416' />
   <node id='-49769' action='modify' visible='true' lat='50.77806434623' lon='6.08104778711' />
-  <node id='-49770' action='modify' visible='true' lat='50.77806446557' lon='6.08104893736' />
+  <node id='-49770' action='modify' visible='true' lat='50.77806449361' lon='6.08104899649' />
   <node id='-49771' action='modify' visible='true' lat='50.77806477867' lon='6.08105026342' />
   <node id='-49772' action='modify' visible='true' lat='50.77806515582' lon='6.08105152278' />
   <node id='-49773' action='modify' visible='true' lat='50.77806618434' lon='6.08105377948' />
@@ -66,7 +66,7 @@
   <node id='-49807' action='modify' visible='true' lat='50.77807565796' lon='6.08103656365' />
   <node id='-49808' action='modify' visible='true' lat='50.77806743304' lon='6.08103649716' />
   <node id='-49809' action='modify' visible='true' lat='50.77806670996' lon='6.08103718816' />
-  <node id='-49810' action='modify' visible='true' lat='50.77806439104' lon='6.08104770242' />
+  <node id='-49810' action='modify' visible='true' lat='50.77806417604' lon='6.0810477172' />
   <node id='-49811' action='modify' visible='true' lat='50.77806553173' lon='6.08105751442' />
   <node id='-49812' action='modify' visible='true' lat='50.77806638507' lon='6.08105749907' />
   <node id='-49813' action='modify' visible='true' lat='50.77806729238' lon='6.08105748275' />
@@ -78,11 +78,10 @@
   <node id='-49819' action='modify' visible='true' lat='50.77806375331' lon='6.0810575464' />
   <node id='-49820' action='modify' visible='true' lat='50.77806466061' lon='6.08105753008' />
   <node id='-49821' action='modify' visible='true' lat='50.77807559427' lon='6.08105570174' />
-  <node id='-49822' action='modify' visible='true' lat='50.77806405687' lon='6.08104653256' />
-  <node id='-49823' action='modify' visible='true' lat='50.77806350738' lon='6.08104561233' />
-  <node id='-49824' action='modify' visible='true' lat='50.77806284822' lon='6.0810450501' />
-  <node id='-49825' action='modify' visible='true' lat='50.77806222656' lon='6.08104484114' />
-  <node id='-49826' action='modify' visible='true' lat='50.77806121431' lon='6.08104490315' />
+  <node id='-49822' action='modify' visible='true' lat='50.77806380448' lon='6.08104650299' />
+  <node id='-49823' action='modify' visible='true' lat='50.77806316151' lon='6.08104552363' />
+  <node id='-49825' action='modify' visible='true' lat='50.77806226395' lon='6.0810450481' />
+  <node id='-49826' action='modify' visible='true' lat='50.77806122366' lon='6.08104496228' />
   <node id='-49827' action='modify' visible='true' lat='50.77806017198' lon='6.081044967' />
   <node id='-49828' action='modify' visible='true' lat='50.77805928469' lon='6.08104502135' />
   <node id='-49829' action='modify' visible='true' lat='50.778058415' lon='6.08104507463' />
@@ -185,6 +184,11 @@
   <node id='-49926' action='modify' visible='true' lat='50.77808269913' lon='6.08104627925' />
   <node id='-49927' action='modify' visible='true' lat='50.77805375631' lon='6.08105204961' />
   <node id='-49928' action='modify' visible='true' lat='50.77805302535' lon='6.08105211761' />
+  <node id='-49931' action='modify' visible='true' lat='50.77805311886' lon='6.08104539824' />
+  <node id='-49932' action='modify' visible='true' lat='50.77805227757' lon='6.08104542781' />
+  <node id='-49970' action='modify' visible='true' lat='50.77805123062' lon='6.08104545737' />
+  <node id='-49971' action='modify' visible='true' lat='50.77805007151' lon='6.08104551651' />
+  <node id='-49972' action='modify' visible='true' lat='50.7780488563' lon='6.08104554607' />
   <way id='-15333' action='modify' visible='true'>
     <nd ref='-49786' />
     <nd ref='-49787' />
@@ -254,6 +258,11 @@
     <tag k='lanes' v='2' />
   </way>
   <way id='-15338' action='modify' visible='true'>
+    <nd ref='-49972' />
+    <nd ref='-49971' />
+    <nd ref='-49970' />
+    <nd ref='-49932' />
+    <nd ref='-49931' />
     <nd ref='-49907' />
     <nd ref='-49908' />
     <nd ref='-49909' />
@@ -264,7 +273,6 @@
     <nd ref='-49827' />
     <nd ref='-49826' />
     <nd ref='-49825' />
-    <nd ref='-49824' />
     <nd ref='-49823' />
     <nd ref='-49822' />
     <nd ref='-49810' />

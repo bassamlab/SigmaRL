@@ -11,6 +11,9 @@ import argparse
 from sigmarl.mappo_cavs import mappo_cavs
 from sigmarl.constants import SCENARIOS
 
+# Example usage
+# python main_eval.py --output_dir outputs/marl_cbf_new/cbf_informed_rl/seed1 --random_seed 1 --is_using_cbf_testing --is_grouping_agents --max_group_size 2 --nom_controller_type rl --scenario_type cpm_mixed --n_agents 6
+
 
 # ===============================
 # Argument parsing
@@ -22,12 +25,12 @@ parser.add_argument(
     type=str,
     default="outputs/marl_cbf_new/cbf_informed_rl/seed1",
 )
-parser.add_argument("--random_seed", type=int, default=2)
+parser.add_argument("--random_seed", type=int, default=1)
 # parser.add_argument("--is_grouping_agents", action="store_true", default=None)  # Default None
 parser.add_argument(
     "--is_grouping_agents",
     action="store_true",
-    default=True,
+    default=False,
 )
 parser.add_argument("--max_group_size", type=int, default=5)
 parser.add_argument("--nom_controller_type", type=str, default="rl")
@@ -37,7 +40,7 @@ parser.add_argument("--n_agents", type=int, default=10)
 parser.add_argument(
     "--is_using_cbf_testing",
     action="store_true",
-    default=True,
+    default=False,
 )
 
 args = parser.parse_args()
@@ -104,6 +107,7 @@ parameters.is_using_cbf_testing = args.is_using_cbf_testing
 parameters.is_using_cbf_training = False
 parameters.is_using_prioritized_marl = False
 parameters.is_using_centralized_cbf = True
+parameters.is_apply_cbf_action = parameters.is_using_cbf_testing
 
 parameters.is_grouping_agents = args.is_grouping_agents
 
@@ -181,7 +185,7 @@ t_filename = f"computation_t_{name_suffix}.json"
 
 is_trim_td = True
 if is_trim_td:
-    out_td = trim_td(out_td)
+    out_td = trim_td(out_td, parameters=parameters)
 torch.save(out_td, os.path.join(path, out_td_filename))
 print(f"Saved: {out_td_filename}")
 

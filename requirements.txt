@@ -12,3 +12,5 @@ termcolor==3.3.0
 cvxpy==1.7.2
 scikit-learn==1.6.0
 opencv-python==4.11.0.86
+PyYAML==6.0.3
+proxsuite == 0.7.2

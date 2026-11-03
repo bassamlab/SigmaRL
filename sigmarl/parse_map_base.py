@@ -39,12 +39,24 @@ class ParseMapBase(ABC):
             "is_visualize_random_agents", False
         )
         self._n_agents_visu = kwargs.pop("n_agents_visu", None)
+        self._seed = kwargs.pop("seed", kwargs.pop("random_seed", 0))
         self._is_visualize_intersection_area = kwargs.pop(
             "is_visualize_intersection_area", False
         )  # For the CPM Scenario only
+        self._is_visu_arrows = kwargs.pop(
+            "is_visu_arrows",
+            kwargs.pop(
+                "is_visualize_direction",
+                kwargs.pop("is_visualize_entry_direction", True),
+            ),
+        )
         self._is_visualize_entry_direction = kwargs.pop(
-            "is_visualize_entry_direction", False
+            "is_visualize_entry_direction", self._is_visu_arrows
         )  # Use an arrow to indicate the direction of entries
+        self._is_visualize_exit_direction = kwargs.pop(
+            "is_visualize_exit_direction", self._is_visu_arrows
+        )  # Use an arrow to indicate the direction of exits
+        self._is_visualize_direction = self._is_visu_arrows
 
         self._width = kwargs.pop("lane_width", None)
 
@@ -83,11 +95,12 @@ class ParseMapBase(ABC):
         self.neighboring_lanelets_idx = []  # Neighboring lanelets of each lanelet
 
         self.reference_paths = []
+        # These collections are part of the parser interface used by the
+        # scenario and world-state code; OSM parsers leave them empty.
         self.reference_paths_intersection = []
+        self.reference_paths_intersection_extended = []
         self.reference_paths_merge_in = []
         self.reference_paths_merge_out = []
-
-        self._intersection_info = []  # For the CPM Scenario only
 
         self._linewidth = 0.5
         self._fontsize = 9
@@ -99,8 +112,23 @@ class ParseMapBase(ABC):
         # Get the path to the corresponding map for the given scenario type
         self._map_path = SCENARIOS[self._scenario_type]["map_path"]
 
+    def _get_reference_path_collections(self):
+        """Return reference-path collections processed by shared helpers."""
+        return (self.reference_paths,)
+
+    def _iter_unique_reference_paths(self):
+        """Yield each reference-path dictionary once across all collections."""
+        seen = set()
+        for reference_paths in self._get_reference_path_collections():
+            for reference_path in reference_paths:
+                reference_path_id = id(reference_path)
+                if reference_path_id in seen:
+                    continue
+                seen.add(reference_path_id)
+                yield reference_path
+
     def _compute_pseudo_tangent_vectors(self):
-        for ref_path in self.reference_paths:
+        for ref_path in self._iter_unique_reference_paths():
             ref_path["left_boundary_pseudo_vector"] = compute_pseudo_tangent_vector(
                 ref_path["left_boundary"]
             )
@@ -113,46 +141,6 @@ class ParseMapBase(ABC):
             ref_path[
                 "right_boundary_shared_pseudo_vector"
             ] = compute_pseudo_tangent_vector(ref_path["right_boundary_shared"])
-        if self._scenario_type == "cpm_mixed":
-            for ref_path in self.reference_paths_intersection:
-                ref_path["left_boundary_pseudo_vector"] = compute_pseudo_tangent_vector(
-                    ref_path["left_boundary"]
-                )
-                ref_path[
-                    "right_boundary_pseudo_vector"
-                ] = compute_pseudo_tangent_vector(ref_path["right_boundary"])
-                ref_path[
-                    "left_boundary_shared_pseudo_vector"
-                ] = compute_pseudo_tangent_vector(ref_path["left_boundary_shared"])
-                ref_path[
-                    "right_boundary_shared_pseudo_vector"
-                ] = compute_pseudo_tangent_vector(ref_path["right_boundary_shared"])
-            for ref_path in self.reference_paths_merge_in:
-                ref_path["left_boundary_pseudo_vector"] = compute_pseudo_tangent_vector(
-                    ref_path["left_boundary"]
-                )
-                ref_path[
-                    "right_boundary_pseudo_vector"
-                ] = compute_pseudo_tangent_vector(ref_path["right_boundary"])
-                ref_path[
-                    "left_boundary_shared_pseudo_vector"
-                ] = compute_pseudo_tangent_vector(ref_path["left_boundary_shared"])
-                ref_path[
-                    "right_boundary_shared_pseudo_vector"
-                ] = compute_pseudo_tangent_vector(ref_path["right_boundary_shared"])
-            for ref_path in self.reference_paths_merge_out:
-                ref_path["left_boundary_pseudo_vector"] = compute_pseudo_tangent_vector(
-                    ref_path["left_boundary"]
-                )
-                ref_path[
-                    "right_boundary_pseudo_vector"
-                ] = compute_pseudo_tangent_vector(ref_path["right_boundary"])
-                ref_path[
-                    "left_boundary_shared_pseudo_vector"
-                ] = compute_pseudo_tangent_vector(ref_path["left_boundary_shared"])
-                ref_path[
-                    "right_boundary_shared_pseudo_vector"
-                ] = compute_pseudo_tangent_vector(ref_path["right_boundary_shared"])
 
     def _visualize_random_agents(self, ax, reference_paths):
         # Get the number of agents to be visualized
@@ -166,6 +154,7 @@ class ParseMapBase(ABC):
             self._device,
             self._n_agents_visu,
             initial_distance_threshold,
+            seed=self._seed,
         )
 
         vertices = get_rectangle_vertices(
@@ -204,8 +193,16 @@ class ParseMapBase(ABC):
 
     @staticmethod
     def generate_random_states(
-        reference_paths, device, n_agents, initial_distance_threshold
+        reference_paths,
+        device,
+        n_agents,
+        initial_distance_threshold,
+        seed: int | None = 0,
     ):
+        generator = None
+        if seed is not None:
+            generator = torch.Generator().manual_seed(seed)
+
         positions = torch.zeros((n_agents, 2), device=device, dtype=torch.float32)
         rotations = torch.zeros((n_agents, 1), device=device, dtype=torch.float32)
 
@@ -219,7 +216,7 @@ class ParseMapBase(ABC):
                 random_count += 1
 
                 path_id = torch.randint(
-                    0, len(reference_paths), (1,)
+                    0, len(reference_paths), (1,), generator=generator
                 ).item()  # Select randomly a path
                 ref_path = reference_paths[path_id]
 
@@ -229,7 +226,7 @@ class ParseMapBase(ABC):
                 end_point_idx = num_points - 3
 
                 random_point_id = torch.randint(
-                    start_point_idx, end_point_idx, (1,)
+                    start_point_idx, end_point_idx, (1,), generator=generator
                 ).item()
 
                 positions[i_agent, :] = ref_path["center_line"][random_point_id]

@@ -21,12 +21,27 @@ torch.serialization.add_safe_globals(
 # ---------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------
-FOLDER = "outputs/marl_cbf_fixed_group_2_best_rl/"
+# FOLDER = "outputs/marl_cbf_new/cbf_informed_rl/seed1"
+FOLDER = "outputs/marl_cbf_fixed_group_agile_100_rl_new add 0.5 new"
+
 OUTPUT_DIR = os.path.join(FOLDER, "figures")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 COLLISION_TYPES = ["agents", "lanelets", "total"]
 COLLISION_XLABELS = ["Agent-Agent", "Agent-Lanelet", "Total"]
+
+
+def format_nominal_only_label(nom: str) -> str:
+    nom_map = {
+        "rl": "RL Only",
+        "clf": "CLF Only",
+    }
+    return f"{nom_map.get(nom.lower(), f'{nom.upper()} Only')} (No CBF)"
+
+
+def format_no_grouping_label() -> str:
+    return "No Grouping (Centralized CBF)"
+
 
 # ---------------------------------------------------------------------
 # Filename parsing
@@ -35,21 +50,22 @@ TD_PATTERN = re.compile(
     r"out_td_"
     r"agents_(?P<agents>\d+)_"
     r"seed_(?P<seed>\d+)_"
-    r"(?:(?P<grouping>grouping_on)_maxgroup_(?P<maxgroup>\d+)_|"
-    r"(?P<grouping_off>grouping_off_)|)"
+    r"cbf_(?P<cbf>on|off)_"
+    r"group_(?P<group>on|off)_"
+    r"(?:(?:maxgroup_(?P<maxgroup>\d+)_))?"
     r"nom_(?P<nom>[^_]+)_"
-    r"(?:(?P<only>only)_)?"
     r"scenario_(?P<scenario>[^.]+)"
     r"\.td$"
 )
+
 TIME_PATTERN = re.compile(
     r"computation_t_"
     r"agents_(?P<agents>\d+)_"
     r"seed_(?P<seed>\d+)_"
-    r"(?:(?P<grouping>grouping_on)_maxgroup_(?P<maxgroup>\d+)_|"
-    r"(?P<grouping_off>grouping_off_)|)"
+    r"cbf_(?P<cbf>on|off)_"
+    r"group_(?P<group>on|off)_"
+    r"(?:(?:maxgroup_(?P<maxgroup>\d+)_))?"
     r"nom_(?P<nom>[^_]+)_"
-    r"(?:(?P<only>only)_)?"
     r"scenario_(?P<scenario>[^.]+)"
     r"\.json$"
 )
@@ -111,10 +127,9 @@ collision_data = defaultdict(
     lambda: {
         "off": defaultdict(lambda: defaultdict(list)),
         "on": defaultdict(lambda: defaultdict(list)),
-        "only": defaultdict(list),  # NEW
+        "only": defaultdict(list),
     }
 )
-
 
 time_data = defaultdict(
     lambda: {
@@ -150,15 +165,22 @@ for path in td_paths:
     agents = m.group("agents")
     scenario = m.group("scenario")
     nom = m.group("nom")
-    if m.group("only") == "only":
+
+    cbf = m.group("cbf")  # "on" or "off"
+    group = m.group("group")  # "on" or "off"
+    maxgroup_str = m.group("maxgroup")
+
+    if cbf == "off":
+        # This corresponds to your previous "only" bucket (no CBF testing)
         grouping = "only"
         maxgroup = None
-    elif m.group("grouping") == "grouping_on":
-        grouping = "on"
-        maxgroup = int(m.group("maxgroup"))
     else:
-        grouping = "off"
-        maxgroup = float("inf")
+        if group == "on":
+            grouping = "on"
+            maxgroup = int(maxgroup_str) if maxgroup_str is not None else None
+        else:
+            grouping = "off"
+            maxgroup = float("inf")
 
     aa, al, tot, avg_speed = load_collision_and_speed(path)
 
@@ -174,7 +196,6 @@ for path in td_paths:
         collision_data[key][grouping][maxgroup]["total"].append(tot)
         collision_data[key][grouping][maxgroup]["avg_speed"].append(avg_speed)
 
-
 # ---------------------------------------------------------------------
 # Load computation time files
 # ---------------------------------------------------------------------
@@ -187,9 +208,15 @@ for path in time_paths:
     scenario = m.group("scenario")
     nom = m.group("nom")
 
-    if m.group("grouping") == "grouping_on":
+    cbf = m.group("cbf")
+    group = m.group("group")
+    maxgroup_str = m.group("maxgroup")
+
+    # computation_t_*.json exists only for cbf_on runs in your main_eval.py,
+    # but handle both cases safely.
+    if group == "on":
         grouping = "on"
-        maxgroup = int(m.group("maxgroup"))
+        maxgroup = int(maxgroup_str) if maxgroup_str is not None else None
     else:
         grouping = "off"
         maxgroup = float("inf")
@@ -211,7 +238,6 @@ for (agents, scenario, nom), d in collision_data.items():
 
     legend_handles = []
 
-    # Grouping ON (finite maxgroup)
     cmap = plt.get_cmap("tab10")
     n_on = len(on_groups)
 
@@ -219,15 +245,13 @@ for (agents, scenario, nom), d in collision_data.items():
     n_boxes = n_on + 1 + (1 if has_only else 0)
     offsets = (np.arange(n_boxes) - (n_boxes - 1) / 2.0) * width
 
-    idx_on_start = 0
     idx_off = n_on
     idx_only = n_on + 1
 
+    # Grouping ON (finite maxgroup)
     for i, g in enumerate(on_groups):
         color = cmap(i % 10)
         data_g = [d["on"][g][ct] for ct in COLLISION_TYPES]
-        pos_off = x_base + offsets[-1]
-
         pos = x_base + offsets[i]
 
         bp = ax.boxplot(data_g, positions=pos, widths=width, patch_artist=True)
@@ -249,6 +273,7 @@ for (agents, scenario, nom), d in collision_data.items():
     for box in bp_off["boxes"]:
         box.set_facecolor("black")
 
+    # ONLY (no CBF testing) if present
     if has_only:
         only_data = [d["only"][ct] for ct in COLLISION_TYPES]
         pos_only = x_base + offsets[idx_only]
@@ -262,6 +287,7 @@ for (agents, scenario, nom), d in collision_data.items():
         for box in bp_only["boxes"]:
             box.set_facecolor("gray")
 
+        # IMPORTANT: keep handles and labels consistent order
         legend_handles.append(bp_only["boxes"][0])
 
     legend_handles.append(bp_off["boxes"][0])
@@ -269,15 +295,16 @@ for (agents, scenario, nom), d in collision_data.items():
     ax.set_xticks(x_base)
     ax.set_xticklabels(COLLISION_XLABELS)
     ax.set_ylabel("Collision Rate")
-    ax.set_ylim((0, 0.3))
+    ax.set_ylim((0, 0.30))
     ax.set_title(f"Agents={agents}, Scenario={scenario}, Nominal={nom}")
     ax.grid(True, axis="y")
 
-    legend_labels = (
-        [f"Grouping On (maxgroup={g})" for g in on_groups]
-        + ["Grouping Off (maxgroup = inf)"]
-        + (["CLF Only (No CBF)"] if has_only else [])
-    )
+    # IMPORTANT: label order matches legend_handles order:
+    # on_groups, then only (if present), then off
+    legend_labels = [f"Grouping On (maxgroup={g})" for g in on_groups]
+    if has_only:
+        legend_labels.append(format_nominal_only_label(nom))
+    legend_labels.append(format_no_grouping_label())
 
     ax.legend(legend_handles, legend_labels, loc="best")
 
@@ -314,7 +341,7 @@ for (agents, scenario, nom), d in time_data.items():
 
     if len(off_vals) > 0:
         series.append(off_vals)
-        labels.append("Grouping Off (maxgroup = inf)")
+        labels.append(format_no_grouping_label())
         colors.append("black")
 
     if len(series) == 0:
@@ -354,7 +381,6 @@ for (agents, scenario, nom), d in collision_data.items():
     has_only = len(d["only"]["avg_speed"]) > 0
     n_boxes = n_on + 1 + (1 if has_only else 0)
     offsets = (np.arange(n_boxes) - (n_boxes - 1) / 2.0) * width
-    idx_on_start = 0
     idx_off = n_on
     idx_only = n_on + 1
 
@@ -376,7 +402,6 @@ for (agents, scenario, nom), d in collision_data.items():
         off_vals.extend(mg_dict["avg_speed"])
 
     pos_off = x_base + offsets[idx_off]
-
     bp_off = ax.boxplot([off_vals], positions=pos_off, widths=width, patch_artist=True)
     for box in bp_off["boxes"]:
         box.set_facecolor("black")
@@ -392,6 +417,7 @@ for (agents, scenario, nom), d in collision_data.items():
         for box in bp_only["boxes"]:
             box.set_facecolor("gray")
 
+        # IMPORTANT: keep handles and labels consistent order
         legend_handles.append(bp_only["boxes"][0])
 
     legend_handles.append(bp_off["boxes"][0])
@@ -403,11 +429,12 @@ for (agents, scenario, nom), d in collision_data.items():
     ax.set_title(f"Agents={agents}, Scenario={scenario}, Nominal={nom}")
     ax.grid(True, axis="y")
 
-    legend_labels = (
-        [f"Grouping On (maxgroup={g})" for g in on_groups]
-        + ["Grouping Off (maxgroup = inf)"]
-        + (["CLF Only (No CBF)"] if has_only else [])
-    )
+    # IMPORTANT: label order matches legend_handles order:
+    # on_groups, then only (if present), then off
+    legend_labels = [f"Grouping On (maxgroup={g})" for g in on_groups]
+    if has_only:
+        legend_labels.append(format_nominal_only_label(nom))
+    legend_labels.append(format_no_grouping_label())
 
     ax.legend(legend_handles, legend_labels, loc="best")
 

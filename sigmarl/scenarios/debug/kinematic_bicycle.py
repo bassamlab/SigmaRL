@@ -11,7 +11,7 @@ import torch
 from vmas import render_interactively
 from vmas.simulator.core import Agent, Box
 
-from vmas.simulator.scenario import BaseScenario
+from sigmarl.scenarios._time_step_overlay import TimeStepOverlayScenario
 from vmas.simulator.utils import Color, ScenarioUtils
 
 from sigmarl.constants import AGENTS
@@ -24,7 +24,7 @@ from sigmarl.helper_training import WorldCustom
 from sigmarl.helper_common import Vehicle
 
 
-class Scenario(BaseScenario):
+class Scenario(TimeStepOverlayScenario):
     def make_world(self, batch_dim: int, device: torch.device, **kwargs):
         """
         Kinematic bicycle model example scenario
@@ -113,6 +113,8 @@ class Scenario(BaseScenario):
             line.add_attr(xform)
             line.set_color(*color)
             geoms.append(line)
+
+        geoms.extend(self.time_step_overlay(env_index))
 
         return geoms
 

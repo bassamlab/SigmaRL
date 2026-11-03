@@ -28,6 +28,7 @@
     - [5. CBF-Based Safety Filter](#5-cbf-based-safety-filter)
     - [6. CPM Lab Benchmark](#6-cpm-lab-benchmark)
     - [7. CBF-Informed MARL](#7-cbf-informed-marl)
+    - [8. BH-CBF Safeguard for MARL](#8-bh-cbf-safeguard-for-marl)
   - [TODOs](#todos)
   - [Acknowledgments](#acknowledgments)
 
@@ -499,6 +500,19 @@ Jianye Xu and Bassam Alrifaee, "Beyond Safety Filtering: Control Barrier Functio
   - Check out the corresponding tag using `git checkout 1.6.0`
   - Go to [this page](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/itsc26.zip) and download the zip file `itsc26.zip`. Unzip it, copy and paste the whole folder to the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/itsc26/`.
   - Run `sigmarl/evaluation_itsc26.py`.
+
+### 8. BH-CBF Safeguard for MARL
+<div>
+Jianye Xu, Yousef Sayed, and Bassam Alrifaee, "Safeguarding Multi-Agent Reinforcement Learning for Connected and Automated Vehicles with Recursively Feasible Control Barrier Functions," <i>submitted to IEEE Transactions on Intelligent Transportation Systems</i>.
+</div>
+
+- **Reproduce Experimental Results in the Paper:**
+
+  - Check out the corresponding tag using `git checkout 1.7.0`
+  - Download [`tits26_stage1_pretrain.zip`](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/tits26_stage1_pretrain.zip) and [`tits26_stage3_finetune.zip`](https://github.com/bassamlab/assets/blob/main/sigmarl/checkpoints/tits26_stage3_finetune.zip). Unzip both into the `checkpoints` folder at the **root** of this repository. The structure should be like this: `root/checkpoints/tits26/stage1_pretrain/` and `root/checkpoints/tits26/stage3_finetune/`.
+  - Optional: [`tits26_full.zip`](https://rwth-aachen.sciebo.de/s/Jo6g4qdWbPQsFqr) (about 920 MB) holds the same models with the policies of every saved training iteration. It unzips to the same folders.
+  - The rounD and inD datasets, including their maps, may not be redistributed. Request them from levelXdata ([rounD](https://levelxdata.com/round-dataset/), [inD](https://levelxdata.com/ind-dataset/)) and generate the two maps of the paper with `python scripts/lanelet2_maps/fix_lanelet_map.py --maps round_location0 ind_location4 --round_dir <path>/rounD_v1.0 --ind_dir <path>/inD_v1.1` (see [`docs/lanelet2_maps.md`](docs/lanelet2_maps.md)). The comparison with human drivers (Stage 4) also needs the rounD recordings.
+  - See [`sigmarl/evaluation_tits26/README.md`](sigmarl/evaluation_tits26/README.md) for the scripts of each evaluation stage, the names of the filters in the code, and example commands.
 
 ## TODOs
 - Improve safety

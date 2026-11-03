@@ -50,11 +50,6 @@ from sigmarl.constants import AGENTS
 import random
 import time
 
-# Set seeds for reproducibility
-random.seed(0)
-np.random.seed(0)
-torch.manual_seed(0)
-
 
 class ConstantController:
     """
@@ -3011,6 +3006,12 @@ def main(
 
 
 if __name__ == "__main__":
+    # Seed here, not at import: importing this module must not reset the
+    # global RNGs that the importing run has already seeded
+    random.seed(0)
+    np.random.seed(0)
+    torch.manual_seed(0)
+
     main(
         scenario_type="overtaking",  # One of "overtaking" and "bypassing"
         sm_type="grid",  # One of "c2c", "mtv", and "grid"。 In case of "grid", we use point-to-polyline as the distance function

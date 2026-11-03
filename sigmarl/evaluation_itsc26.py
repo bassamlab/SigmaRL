@@ -814,6 +814,8 @@ def run_evaluations():
 
                 parameters.is_using_cbf_training = False
                 parameters.is_using_cbf_testing = True
+                # Reproduce the ITSC 2026 results: two-step condition only
+                parameters.is_backup_horizon_cbf = False
                 parameters.is_solve_qp = True
                 parameters.is_apply_cbf_action = "do_not_apply" not in train_path
 

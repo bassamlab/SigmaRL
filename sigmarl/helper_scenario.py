@@ -56,6 +56,7 @@ class Penalties:
         near_boundary=None,
         near_other_agents=None,
         collide_with_agents=None,
+        near_collision_reset=None,
         collide_with_boundaries=None,
         collide_with_obstacles=None,
         leave_world=None,
@@ -63,6 +64,11 @@ class Penalties:
         change_steering=None,
         deviate_from_cbf_vel=None,
         deviate_from_cbf_steer=None,
+        deadlock=None,
+        jerk_acceleration=None,
+        jerk_steering_rate=None,
+        high_acceleration=None,
+        high_steering_rate=None,
     ):
         self.deviate_from_ref_path = (
             deviate_from_ref_path  # Penalty for deviating from reference path
@@ -78,6 +84,10 @@ class Penalties:
         )
         self.collide_with_agents = (
             collide_with_agents  # Penalty for colliding with other agents
+        )
+        self.near_collision_reset = (
+            near_collision_reset
+            # One-time penalty for nearby agents reset after a collision.
         )
         self.collide_with_boundaries = (
             collide_with_boundaries  # Penalty for colliding with lanelet boundaries
@@ -96,6 +106,11 @@ class Penalties:
         self.deviate_from_cbf_steer = (
             deviate_from_cbf_steer  # Penalty for deviating from CBF suggested steering
         )
+        self.deadlock = deadlock  # Penalty for deadlock
+        self.jerk_acceleration = jerk_acceleration
+        self.jerk_steering_rate = jerk_steering_rate
+        self.high_acceleration = high_acceleration
+        self.high_steering_rate = high_steering_rate
 
 
 @dataclass
@@ -103,15 +118,23 @@ class RewardInfo:
     rew_progress: torch.Tensor
     rew_reach_goal: torch.Tensor
     rew_speed: torch.Tensor
+    rew_time: torch.Tensor
     rew_centerline: torch.Tensor
-    rew_near_other_agents: torch.Tensor
-    rew_near_left_lane: torch.Tensor
-    rew_near_right_lane: torch.Tensor
     rew_collide_other_agents: torch.Tensor
     rew_collide_lane: torch.Tensor
     rew_energy_acceleration: torch.Tensor
     rew_energy_steering: torch.Tensor
+    rew_jerk_acceleration: torch.Tensor
+    rew_jerk_steering: torch.Tensor
+    rew_deadlock: torch.Tensor
+    rew_near_collision_reset: torch.Tensor
+    rew_parameter_independent: torch.Tensor
     rew_total: torch.Tensor
+    # The fields below are possibly computed ourside the reward function and will not be reset by the reset() function
+    rew_near_other_agents: torch.Tensor
+    rew_near_left_lane: torch.Tensor
+    rew_near_right_lane: torch.Tensor
+    rew_cbf_lambda: torch.Tensor
 
     @classmethod
     def zeros(cls, batch_size: int, n_agents: int, device=None, dtype=torch.float32):
@@ -130,10 +153,22 @@ class RewardInfo:
         Reset all tensors to zero in place.
         """
         for f in fields(self):
-            if f.name not in [
-                "rew_near_other_agents",
-                "rew_near_left_lane",
-                "rew_near_right_lane",
+            if f.name in [
+                "rew_progress",
+                "rew_reach_goal",
+                "rew_speed",
+                "rew_time",
+                "rew_centerline",
+                "rew_collide_other_agents",
+                "rew_collide_lane",
+                "rew_energy_acceleration",
+                "rew_energy_steering",
+                "rew_jerk_acceleration",
+                "rew_jerk_steering",
+                "rew_deadlock",
+                "rew_near_collision_reset",
+                "rew_parameter_independent",
+                "rew_total",
             ]:
                 getattr(self, f.name).zero_()
 
@@ -153,6 +188,7 @@ class Thresholds:
         change_steering=None,
         no_reward_if_too_close_to_boundaries=None,
         no_reward_if_too_close_to_other_agents=None,
+        rl_obs_range=None,
         distance_mask_agents=None,
     ):
         self.deviate_from_ref_path = deviate_from_ref_path
@@ -167,9 +203,10 @@ class Thresholds:
         self.change_steering = change_steering
         self.no_reward_if_too_close_to_boundaries = no_reward_if_too_close_to_boundaries  # Agents get no reward if they are too close to lanelet boundaries
         self.no_reward_if_too_close_to_other_agents = no_reward_if_too_close_to_other_agents  # Agents get no reward if they are too close to other agents
-        self.distance_mask_agents = (
-            distance_mask_agents  # Threshold above which nearing agents will be masked
+        self.rl_obs_range = (
+            rl_obs_range  # RL observation range above which nearing agents are masked
         )
+        self.distance_mask_agents = distance_mask_agents
 
 
 class ReferencePathsMapRelated:
@@ -186,9 +223,12 @@ class ReferencePathsMapRelated:
         long_term_vecs_normalized=None,
         point_extended=None,
         sample_interval=None,
+        long_term_intersection_extended=None,
+        point_extended_intersection_extended=None,
     ):
         self.long_term_all = long_term_all  # All long-term reference paths
         self.long_term_intersection = long_term_intersection  # Long-term reference paths for the intersection scenario
+        self.long_term_intersection_extended = long_term_intersection_extended
         self.long_term_merge_in = (
             long_term_merge_in  # Long-term reference paths for the mergin in scenario
         )
@@ -197,6 +237,7 @@ class ReferencePathsMapRelated:
         )
         self.point_extended_all = point_extended_all  # Extend the long-term reference paths by one point at the end
         self.point_extended_intersection = point_extended_intersection  # Extend the long-term reference paths by one point at the end
+        self.point_extended_intersection_extended = point_extended_intersection_extended
         self.point_extended_merge_in = point_extended_merge_in  # Extend the long-term reference paths by one point at the end
         self.point_extended_merge_out = point_extended_merge_out  # Extend the long-term reference paths by one point at the end
 
@@ -514,6 +555,7 @@ class Observations:
         n_nearing_agents=None,
         nearing_agents_indices=None,
         obs_noise_level=None,
+        noise_level=None,
         n_stored_steps=None,
         n_observed_steps=None,
         past_pos: CircularBuffer = None,
@@ -537,7 +579,10 @@ class Observations:
     ):
         self.n_nearing_agents = n_nearing_agents
         self.nearing_agents_indices = nearing_agents_indices
-        self.obs_noise_level = obs_noise_level  # Whether to add noise to observations
+        if obs_noise_level is None:
+            obs_noise_level = noise_level
+        self.obs_noise_level = obs_noise_level  # Observation-noise magnitude
+        self.noise_level = obs_noise_level  # Backward-compatible scenario alias
         self.n_stored_steps = n_stored_steps  # Number of past steps to store
         self.n_observed_steps = n_observed_steps  # Number of past steps to observe
 
@@ -829,13 +874,19 @@ def get_rectangle_vertices(
 def get_perpendicular_distances(
     point: torch.Tensor, polyline: torch.Tensor, n_points_long_term: torch.Tensor = None
 ):
-    """Calculate the minimum perpendicular distance from the given point(s) to the given polyline.
+    """Calculate minimum perpendicular distances from points to polylines.
 
     Args:
-        point: torch.Size([batch_size, 2]) or torch.Size([2]), position of the point. In the case of the latter, the batch_size is deemed to be 1.
-        polyline: torch.Size([num_points, 2]) or torch.Size([batch_size, num_points, 2]) x- and y-coordinates of the points on the polyline.
-    """
+        point: Point positions with shape ``[2]`` or ``[B, 2]``.
+        polyline: Polyline points with shape ``[P, 2]`` or ``[B, P, 2]``.
+        n_points_long_term: Number of valid points per polyline, with shape
+            ``[]``, ``[1]``, or ``[B]``. Padded points after this count are ignored.
 
+    Returns:
+        Tuple of ``(perpendicular_distances, indices_closest_points)`` with both
+        tensors shaped ``[B]``. The closest indices keep the historical behavior of
+        pointing to the next polyline point after the closest segment.
+    """
     if point.ndim == 1:
         point = point.unsqueeze(0)
 
@@ -860,7 +911,12 @@ def get_perpendicular_distances(
 
     # Project point_vecs onto line_vecs
     line_lens_squared = torch.sum(line_vecs**2, dim=2)
-    projected_lengths = torch.sum(point_vecs * line_vecs, dim=2) / line_lens_squared
+    line_lens_squared_safe = torch.clamp(
+        line_lens_squared, min=torch.finfo(polyline.dtype).eps
+    )
+    projected_lengths = (
+        torch.sum(point_vecs * line_vecs, dim=2) / line_lens_squared_safe
+    )
 
     # Clamp the projections to lie within the line segments
     clamped_lengths = torch.clamp(projected_lengths, 0, 1)
@@ -874,9 +930,24 @@ def get_perpendicular_distances(
     if n_points_long_term is not None:
         if n_points_long_term.ndim == 0:
             n_points_long_term = n_points_long_term.unsqueeze(0)
-        for env_idx, n_long_term_point in enumerate(n_points_long_term):
-            distance_to_end_point = distances[env_idx, n_long_term_point - 2]
-            distances[env_idx, n_long_term_point - 1 :] = distance_to_end_point
+        if n_points_long_term.numel() == 1 and batch_size > 1:
+            n_points_long_term = n_points_long_term.expand(batch_size)
+        n_points_long_term = n_points_long_term.to(
+            device=polyline.device, dtype=torch.long
+        )
+        segment_indices = torch.arange(distances.shape[1], device=polyline.device)
+        valid_segments = segment_indices.unsqueeze(0) < (
+            n_points_long_term - 1
+        ).unsqueeze(1)
+        last_valid_segment = torch.clamp(n_points_long_term - 2, min=0)
+        distance_to_end_point = distances[
+            torch.arange(batch_size, device=polyline.device), last_valid_segment
+        ]
+        distances = torch.where(
+            valid_segments,
+            distances,
+            distance_to_end_point.unsqueeze(1),
+        )
 
     assert not distances.isnan().any()
 
@@ -889,6 +960,521 @@ def get_perpendicular_distances(
     return perpendicular_distances, indices_closest_points
 
 
+def get_progress_on_polyline(
+    point: torch.Tensor, polyline: torch.Tensor, n_points_long_term: torch.Tensor = None
+):
+    """Compute closest distance and arc-length progress of points along a polyline."""
+    if point.ndim == 1:
+        point = point.unsqueeze(0)
+
+    batch_size = point.shape[0]
+
+    if polyline.ndim == 2:
+        polyline_expanded = polyline.unsqueeze(0).expand(batch_size, -1, -1)
+    else:
+        polyline_expanded = polyline
+
+    if n_points_long_term is None:
+        n_points_long_term = torch.full(
+            (batch_size,),
+            polyline_expanded.shape[-2],
+            device=polyline_expanded.device,
+            dtype=torch.int32,
+        )
+    elif n_points_long_term.ndim == 0:
+        n_points_long_term = n_points_long_term.unsqueeze(0)
+    if n_points_long_term.numel() == 1 and batch_size > 1:
+        n_points_long_term = n_points_long_term.expand(batch_size)
+
+    line_starts = polyline_expanded[:, :-1, :]
+    line_ends = polyline_expanded[:, 1:, :]
+    line_vecs = line_ends - line_starts
+    segment_lengths = torch.norm(line_vecs, dim=-1)
+    line_lens_squared = torch.sum(line_vecs**2, dim=-1)
+    line_lens_safe = torch.clamp(line_lens_squared, min=torch.finfo(polyline.dtype).eps)
+
+    point_vecs = point.unsqueeze(1) - line_starts
+    projected_lengths = torch.sum(point_vecs * line_vecs, dim=-1) / line_lens_safe
+    clamped_lengths = torch.clamp(projected_lengths, 0, 1)
+    closest_points = line_starts + line_vecs * clamped_lengths.unsqueeze(-1)
+    distances = torch.norm(closest_points - point.unsqueeze(1), dim=-1)
+
+    cumulative_lengths = torch.cat(
+        (
+            torch.zeros((batch_size, 1), device=polyline.device, dtype=polyline.dtype),
+            torch.cumsum(segment_lengths, dim=-1),
+        ),
+        dim=-1,
+    )
+
+    segment_indices = torch.arange(
+        line_starts.shape[1], device=polyline.device
+    ).unsqueeze(0)
+    valid_segments = segment_indices < (n_points_long_term - 1).unsqueeze(-1)
+    valid_segments = valid_segments & (
+        segment_lengths > torch.finfo(polyline.dtype).eps
+    )
+    distances = torch.where(
+        valid_segments,
+        distances,
+        torch.full_like(distances, torch.finfo(polyline.dtype).max),
+    )
+
+    perpendicular_distances, closest_segment_idx = torch.min(distances, dim=-1)
+    progress = (
+        cumulative_lengths[
+            torch.arange(batch_size, device=polyline.device), closest_segment_idx
+        ]
+        + clamped_lengths[
+            torch.arange(batch_size, device=polyline.device), closest_segment_idx
+        ]
+        * segment_lengths[
+            torch.arange(batch_size, device=polyline.device), closest_segment_idx
+        ]
+    )
+    total_lengths = cumulative_lengths[
+        torch.arange(batch_size, device=polyline.device), n_points_long_term - 1
+    ]
+
+    return perpendicular_distances, progress, total_lengths
+
+
+def sample_polyline_by_progress(
+    polyline: torch.Tensor,
+    progress_values: torch.Tensor,
+    n_points_long_term: torch.Tensor = None,
+    is_polyline_a_loop: torch.Tensor = False,
+    is_extend_non_loop: bool = False,
+):
+    """
+    Sample points from batched polylines at requested arc-length progress values.
+
+    Args:
+        polyline: Polyline points with shape ``[P, 2]`` or ``[B, P, 2]``.
+        progress_values: Arc-length positions to sample with shape ``[K]`` or ``[B, K]``.
+        n_points_long_term: Number of valid points in each polyline, with shape
+            ``[]``, ``[1]``, or ``[B]``. Padded points after this count are ignored.
+        is_polyline_a_loop: Loop flags with shape ``[]``, ``[1]``, or ``[B]``.
+            Loop progress values are wrapped by the valid polyline length.
+        is_extend_non_loop: If ``True``, samples outside non-loop polyline bounds are
+            linearly extrapolated from the first or last valid segment.
+
+    Returns:
+        Sampled points with shape ``[B, K, 2]``.
+    """
+    if polyline.ndim == 2:
+        polyline = polyline.unsqueeze(0)
+    if progress_values.ndim == 1:
+        progress_values = progress_values.unsqueeze(0)
+    if polyline.shape[0] == 1 and progress_values.shape[0] > 1:
+        polyline = polyline.expand(progress_values.shape[0], -1, -1)
+    if not isinstance(is_polyline_a_loop, torch.Tensor):
+        is_polyline_a_loop = torch.tensor(
+            is_polyline_a_loop, device=polyline.device, dtype=torch.bool
+        )
+    if is_polyline_a_loop.ndim == 0:
+        is_polyline_a_loop = is_polyline_a_loop.unsqueeze(0)
+    if is_polyline_a_loop.numel() == 1 and progress_values.shape[0] > 1:
+        is_polyline_a_loop = is_polyline_a_loop.expand(progress_values.shape[0])
+    if n_points_long_term is None:
+        n_points_long_term = torch.full(
+            (polyline.shape[0],),
+            polyline.shape[-2],
+            device=polyline.device,
+            dtype=torch.int32,
+        )
+    elif n_points_long_term.ndim == 0:
+        n_points_long_term = n_points_long_term.unsqueeze(0)
+    if n_points_long_term.numel() == 1 and progress_values.shape[0] > 1:
+        n_points_long_term = n_points_long_term.expand(progress_values.shape[0])
+
+    batch_size, n_samples = progress_values.shape
+    n_points_total = polyline.shape[-2]
+    n_segments_total = n_points_total - 1
+    n_points_long_term = n_points_long_term.to(device=polyline.device, dtype=torch.long)
+
+    if n_segments_total <= 0:
+        return polyline[:, :1, :].expand(batch_size, n_samples, polyline.shape[-1])
+
+    segment_vecs = polyline[:, 1:, :] - polyline[:, :-1, :]
+    segment_lengths = torch.linalg.vector_norm(segment_vecs, dim=-1)
+    segment_indices_all = torch.arange(n_segments_total, device=polyline.device)
+    valid_segments = segment_indices_all.unsqueeze(0) < (
+        n_points_long_term - 1
+    ).unsqueeze(1)
+    segment_lengths = torch.where(
+        valid_segments,
+        segment_lengths,
+        torch.zeros((), device=polyline.device, dtype=polyline.dtype),
+    )
+
+    cumulative_lengths = torch.cat(
+        (
+            torch.zeros((batch_size, 1), device=polyline.device, dtype=polyline.dtype),
+            torch.cumsum(segment_lengths, dim=-1),
+        ),
+        dim=-1,
+    )
+    batch_indices = torch.arange(batch_size, device=polyline.device)
+    last_point_indices = torch.clamp(n_points_long_term - 1, min=0)
+    total_lengths = cumulative_lengths[batch_indices, last_point_indices]
+    eps = torch.finfo(polyline.dtype).eps
+
+    progress_values = progress_values.to(polyline.dtype)
+    total_lengths_safe = torch.clamp(total_lengths, min=eps)
+    progress_wrapped = torch.where(
+        is_polyline_a_loop.unsqueeze(-1),
+        progress_values % total_lengths_safe.unsqueeze(-1),
+        progress_values,
+    )
+    before_start = progress_wrapped < 0
+    after_end = progress_wrapped > total_lengths.unsqueeze(-1)
+    progress_clamped = torch.minimum(
+        torch.clamp(progress_wrapped, min=0),
+        total_lengths.unsqueeze(-1),
+    )
+
+    segment_indices = torch.searchsorted(cumulative_lengths, progress_clamped)
+    upper_segment_indices = torch.clamp(n_points_long_term - 1, min=1).unsqueeze(-1)
+    segment_indices = torch.minimum(
+        torch.clamp(segment_indices, min=1), upper_segment_indices
+    )
+
+    segment_starts = torch.gather(cumulative_lengths, 1, segment_indices - 1)
+    segment_ends = torch.gather(cumulative_lengths, 1, segment_indices)
+    segment_denoms = torch.clamp(segment_ends - segment_starts, min=eps)
+    segment_ratios = (progress_clamped - segment_starts) / segment_denoms
+
+    gather_start_idx = (
+        (segment_indices - 1).unsqueeze(-1).expand(-1, -1, polyline.shape[-1])
+    )
+    gather_end_idx = segment_indices.unsqueeze(-1).expand(-1, -1, polyline.shape[-1])
+    start_points = torch.gather(polyline, 1, gather_start_idx)
+    end_points = torch.gather(polyline, 1, gather_end_idx)
+    sampled_points = start_points + segment_ratios.unsqueeze(-1) * (
+        end_points - start_points
+    )
+
+    degenerate_polylines = total_lengths <= eps
+    if torch.any(degenerate_polylines):
+        sampled_points = torch.where(
+            degenerate_polylines.view(batch_size, 1, 1),
+            polyline[:, :1, :].expand(-1, n_samples, -1),
+            sampled_points,
+        )
+
+    if is_extend_non_loop:
+        non_loop = ~is_polyline_a_loop
+        needs_before = before_start & non_loop.unsqueeze(-1)
+        needs_after = after_end & non_loop.unsqueeze(-1)
+        if torch.any(needs_before):
+            first_lengths = torch.clamp(segment_lengths[:, 0], min=eps)
+            before_points = (
+                polyline[:, :1, :]
+                + (progress_wrapped / first_lengths.unsqueeze(-1)).unsqueeze(-1)
+                * segment_vecs[:, :1, :]
+            )
+            sampled_points = torch.where(
+                needs_before.unsqueeze(-1), before_points, sampled_points
+            )
+        if torch.any(needs_after):
+            last_segment_indices = torch.clamp(n_points_long_term - 2, min=0)
+            last_lengths = torch.clamp(
+                segment_lengths[batch_indices, last_segment_indices], min=eps
+            )
+            last_points = polyline[batch_indices, last_point_indices, :]
+            last_vecs = segment_vecs[batch_indices, last_segment_indices, :]
+            after_points = last_points.unsqueeze(1) + (
+                (progress_wrapped - total_lengths.unsqueeze(-1))
+                / last_lengths.unsqueeze(-1)
+            ).unsqueeze(-1) * last_vecs.unsqueeze(1)
+            sampled_points = torch.where(
+                needs_after.unsqueeze(-1), after_points, sampled_points
+            )
+
+    return sampled_points
+
+
+def get_route_progress_aligned_sampled_points(
+    polyline: torch.Tensor,
+    route_progress: torch.Tensor,
+    route_total_length: torch.Tensor,
+    n_points_to_return: int,
+    n_points_long_term: torch.Tensor,
+    is_polyline_a_loop: torch.Tensor,
+    sample_interval: int = 1,
+    n_points_shift: int = 0,
+    sample_spacing=None,
+    is_extend_non_loop: bool = False,
+):
+    """Sample local polyline points by normalized progress along the reference route."""
+    n_points_to_return = int(n_points_to_return)
+    if route_progress.ndim == 0:
+        route_progress = route_progress.unsqueeze(0)
+    if route_total_length.ndim == 0:
+        route_total_length = route_total_length.unsqueeze(0)
+
+    _, _, polyline_total_length = get_progress_on_polyline(
+        point=polyline[..., 0, :],
+        polyline=polyline,
+        n_points_long_term=n_points_long_term,
+    )
+    route_total_safe = torch.clamp(
+        route_total_length, min=torch.finfo(polyline.dtype).eps
+    )
+    progress_ratio = torch.clamp(route_progress / route_total_safe, 0, 1)
+    base_progress = progress_ratio * polyline_total_length
+    offsets = (
+        torch.arange(n_points_to_return, device=polyline.device, dtype=polyline.dtype)
+        * sample_interval
+        + n_points_shift
+    )
+    if sample_spacing is None:
+        spacing = polyline_total_length / torch.clamp(
+            n_points_long_term.to(polyline.dtype) - 1,
+            min=torch.ones((), device=polyline.device, dtype=polyline.dtype),
+        )
+    else:
+        spacing = torch.as_tensor(
+            sample_spacing, device=polyline.device, dtype=polyline.dtype
+        )
+        if spacing.ndim == 0:
+            spacing = spacing.unsqueeze(0)
+        if spacing.numel() == 1 and base_progress.shape[0] > 1:
+            spacing = spacing.expand(base_progress.shape[0])
+    progress_values = base_progress.unsqueeze(-1) + spacing.unsqueeze(-1) * offsets
+
+    return sample_polyline_by_progress(
+        polyline=polyline,
+        progress_values=progress_values,
+        n_points_long_term=n_points_long_term,
+        is_polyline_a_loop=is_polyline_a_loop,
+        is_extend_non_loop=is_extend_non_loop,
+    )
+
+
+def get_reference_progress_aligned_sampled_points(
+    reference_polyline: torch.Tensor,
+    aligned_polyline: torch.Tensor,
+    route_progress: torch.Tensor,
+    n_points_to_return: int,
+    n_points_reference: torch.Tensor,
+    is_polyline_a_loop: torch.Tensor,
+    sample_interval: int = 1,
+    n_points_shift: int = 0,
+    sample_spacing=None,
+    is_extend_non_loop: bool = False,
+):
+    """Sample an aligned polyline using the reference polyline's progress grid.
+
+    Args:
+        reference_polyline: Reference points with shape ``[P, 2]`` or
+            ``[B, P, 2]``. Its cumulative arc length defines the station grid.
+        aligned_polyline: Points aligned by index to ``reference_polyline`` with
+            shape ``[P, 2]`` or ``[B, P, 2]``.
+        route_progress: Current arc-length progress on ``reference_polyline`` with
+            shape ``[]`` or ``[B]``.
+        n_points_to_return: Number of local points to sample.
+        n_points_reference: Number of valid aligned reference points with shape
+            ``[]``, ``[1]``, or ``[B]``.
+        is_polyline_a_loop: Loop flags with shape ``[]``, ``[1]``, or ``[B]``.
+        sample_interval: Multiplier for default reference-point spacing.
+        n_points_shift: Sample offset in units of the selected spacing.
+        sample_spacing: Optional metric spacing on the reference polyline. If
+            omitted, the mean valid reference segment length is used.
+        is_extend_non_loop: If ``True``, samples outside non-loop reference bounds
+            are linearly extrapolated using the first or last aligned segment.
+
+    Returns:
+        Sampled aligned-polyline points with shape ``[B, n_points_to_return, 2]``.
+    """
+    if reference_polyline.ndim == 2:
+        reference_polyline = reference_polyline.unsqueeze(0)
+    if aligned_polyline.ndim == 2:
+        aligned_polyline = aligned_polyline.unsqueeze(0)
+    if route_progress.ndim == 0:
+        route_progress = route_progress.unsqueeze(0)
+    if n_points_reference.ndim == 0:
+        n_points_reference = n_points_reference.unsqueeze(0)
+    if not isinstance(is_polyline_a_loop, torch.Tensor):
+        is_polyline_a_loop = torch.tensor(
+            is_polyline_a_loop, device=reference_polyline.device, dtype=torch.bool
+        )
+    if is_polyline_a_loop.ndim == 0:
+        is_polyline_a_loop = is_polyline_a_loop.unsqueeze(0)
+
+    batch_size = max(
+        reference_polyline.shape[0],
+        aligned_polyline.shape[0],
+        route_progress.shape[0],
+        n_points_reference.shape[0],
+        is_polyline_a_loop.shape[0],
+    )
+    if reference_polyline.shape[0] == 1 and batch_size > 1:
+        reference_polyline = reference_polyline.expand(batch_size, -1, -1)
+    if aligned_polyline.shape[0] == 1 and batch_size > 1:
+        aligned_polyline = aligned_polyline.expand(batch_size, -1, -1)
+    if route_progress.shape[0] == 1 and batch_size > 1:
+        route_progress = route_progress.expand(batch_size)
+    if n_points_reference.shape[0] == 1 and batch_size > 1:
+        n_points_reference = n_points_reference.expand(batch_size)
+    if is_polyline_a_loop.shape[0] == 1 and batch_size > 1:
+        is_polyline_a_loop = is_polyline_a_loop.expand(batch_size)
+
+    n_points_to_return = int(n_points_to_return)
+    n_points_reference = n_points_reference.to(
+        device=reference_polyline.device, dtype=torch.long
+    )
+    n_points_reference = torch.minimum(
+        n_points_reference,
+        torch.full_like(n_points_reference, reference_polyline.shape[-2]),
+    )
+    n_points_reference = torch.minimum(
+        n_points_reference,
+        torch.full_like(n_points_reference, aligned_polyline.shape[-2]),
+    )
+    n_segments_total = min(reference_polyline.shape[-2], aligned_polyline.shape[-2]) - 1
+    if n_segments_total <= 0:
+        return aligned_polyline[:, :1, :].expand(
+            batch_size, n_points_to_return, aligned_polyline.shape[-1]
+        )
+
+    eps = torch.finfo(reference_polyline.dtype).eps
+    reference_vecs = reference_polyline[:, 1:, :] - reference_polyline[:, :-1, :]
+    aligned_vecs = aligned_polyline[:, 1:, :] - aligned_polyline[:, :-1, :]
+    reference_segment_lengths = torch.linalg.vector_norm(reference_vecs, dim=-1)
+    segment_indices_all = torch.arange(
+        reference_segment_lengths.shape[-1], device=reference_polyline.device
+    )
+    valid_segments = segment_indices_all.unsqueeze(0) < (
+        n_points_reference - 1
+    ).unsqueeze(1)
+    reference_segment_lengths = torch.where(
+        valid_segments,
+        reference_segment_lengths,
+        torch.zeros(
+            (), device=reference_polyline.device, dtype=reference_polyline.dtype
+        ),
+    )
+    cumulative_lengths = torch.cat(
+        (
+            torch.zeros(
+                (batch_size, 1),
+                device=reference_polyline.device,
+                dtype=reference_polyline.dtype,
+            ),
+            torch.cumsum(reference_segment_lengths, dim=-1),
+        ),
+        dim=-1,
+    )
+    batch_indices = torch.arange(batch_size, device=reference_polyline.device)
+    last_point_indices = torch.clamp(n_points_reference - 1, min=0)
+    total_lengths = cumulative_lengths[batch_indices, last_point_indices]
+    total_lengths_safe = torch.clamp(total_lengths, min=eps)
+
+    route_progress = route_progress.to(reference_polyline.dtype)
+    progress_wrapped = torch.where(
+        is_polyline_a_loop.unsqueeze(-1),
+        route_progress.unsqueeze(-1) % total_lengths_safe.unsqueeze(-1),
+        route_progress.unsqueeze(-1),
+    )
+    offsets = (
+        torch.arange(
+            n_points_to_return,
+            device=reference_polyline.device,
+            dtype=reference_polyline.dtype,
+        )
+        * sample_interval
+        + n_points_shift
+    )
+    if sample_spacing is None:
+        spacing = total_lengths / torch.clamp(
+            n_points_reference.to(reference_polyline.dtype) - 1,
+            min=torch.ones(
+                (), device=reference_polyline.device, dtype=reference_polyline.dtype
+            ),
+        )
+    else:
+        spacing = torch.as_tensor(
+            sample_spacing,
+            device=reference_polyline.device,
+            dtype=reference_polyline.dtype,
+        )
+        if spacing.ndim == 0:
+            spacing = spacing.unsqueeze(0)
+        if spacing.numel() == 1 and batch_size > 1:
+            spacing = spacing.expand(batch_size)
+    progress_values = progress_wrapped + spacing.unsqueeze(-1) * offsets
+
+    before_start = progress_values < 0
+    after_end = progress_values > total_lengths.unsqueeze(-1)
+    progress_clamped = torch.minimum(
+        torch.clamp(progress_values, min=0),
+        total_lengths.unsqueeze(-1),
+    )
+    segment_indices = torch.searchsorted(cumulative_lengths, progress_clamped)
+    upper_segment_indices = torch.clamp(n_points_reference - 1, min=1).unsqueeze(-1)
+    segment_indices = torch.minimum(
+        torch.clamp(segment_indices, min=1), upper_segment_indices
+    )
+
+    segment_starts = torch.gather(cumulative_lengths, 1, segment_indices - 1)
+    segment_ends = torch.gather(cumulative_lengths, 1, segment_indices)
+    segment_denoms = torch.clamp(segment_ends - segment_starts, min=eps)
+    segment_ratios = (progress_clamped - segment_starts) / segment_denoms
+
+    gather_start_idx = (
+        (segment_indices - 1).unsqueeze(-1).expand(-1, -1, aligned_polyline.shape[-1])
+    )
+    gather_end_idx = segment_indices.unsqueeze(-1).expand(
+        -1, -1, aligned_polyline.shape[-1]
+    )
+    start_points = torch.gather(aligned_polyline, 1, gather_start_idx)
+    end_points = torch.gather(aligned_polyline, 1, gather_end_idx)
+    sampled_points = start_points + segment_ratios.unsqueeze(-1) * (
+        end_points - start_points
+    )
+
+    degenerate_polylines = total_lengths <= eps
+    if torch.any(degenerate_polylines):
+        sampled_points = torch.where(
+            degenerate_polylines.view(batch_size, 1, 1),
+            aligned_polyline[:, :1, :].expand(-1, n_points_to_return, -1),
+            sampled_points,
+        )
+
+    if is_extend_non_loop:
+        non_loop = ~is_polyline_a_loop
+        needs_before = before_start & non_loop.unsqueeze(-1)
+        needs_after = after_end & non_loop.unsqueeze(-1)
+        if torch.any(needs_before):
+            first_lengths = torch.clamp(reference_segment_lengths[:, 0], min=eps)
+            before_points = (
+                aligned_polyline[:, :1, :]
+                + (progress_values / first_lengths.unsqueeze(-1)).unsqueeze(-1)
+                * aligned_vecs[:, :1, :]
+            )
+            sampled_points = torch.where(
+                needs_before.unsqueeze(-1), before_points, sampled_points
+            )
+        if torch.any(needs_after):
+            last_segment_indices = torch.clamp(n_points_reference - 2, min=0)
+            last_lengths = torch.clamp(
+                reference_segment_lengths[batch_indices, last_segment_indices], min=eps
+            )
+            last_points = aligned_polyline[batch_indices, last_point_indices, :]
+            last_vecs = aligned_vecs[batch_indices, last_segment_indices, :]
+            after_points = last_points.unsqueeze(1) + (
+                (progress_values - total_lengths.unsqueeze(-1))
+                / last_lengths.unsqueeze(-1)
+            ).unsqueeze(-1) * last_vecs.unsqueeze(1)
+            sampled_points = torch.where(
+                needs_after.unsqueeze(-1), after_points, sampled_points
+            )
+
+    return sampled_points
+
+
 def get_short_term_reference_path(
     polyline: torch.Tensor,
     index_closest_point: torch.Tensor,
@@ -898,6 +1484,7 @@ def get_short_term_reference_path(
     n_points_long_term: torch.Tensor = None,
     sample_interval: int = 2,
     n_points_shift: int = 1,
+    is_extend_non_loop: bool = False,
 ):
     """
 
@@ -913,16 +1500,39 @@ def get_short_term_reference_path(
         n_points_shift:             Number of points to be shifted to match specific purposes;
                                     set to 1 when using this function to get the short-term reference path to "force" the first point of the short-term reference path being in front of the agent;
                                     set to -2 when using this function to get the nearing boundary points to consider the points behind the agent.
+        is_extend_non_loop:         Whether to extrapolate samples outside the valid range of a non-loop polyline using the first or last valid segment.
     """
+
+    def warn_if_overlapping_points(points: torch.Tensor):
+        """Print a warning if consecutive sampled points overlap."""
+        if points.shape[-2] < 2:
+            return
+        overlapping = torch.diff(points, dim=-2).norm(dim=-1) <= 1e-6
+        if torch.any(overlapping):
+            print(
+                "[WARN] get_short_term_reference_path returned overlapping consecutive points."
+            )
+
     if polyline.ndim == 2:
         polyline = polyline.unsqueeze(0)
     if index_closest_point.ndim == 1:
         index_closest_point = index_closest_point.unsqueeze(1)
     elif index_closest_point.ndim == 0:
         index_closest_point = index_closest_point.unsqueeze(0).unsqueeze(1)
+    if not isinstance(is_polyline_a_loop, torch.Tensor):
+        is_polyline_a_loop = torch.tensor(
+            is_polyline_a_loop, device=device, dtype=torch.bool
+        )
     if is_polyline_a_loop.ndim == 0:
         is_polyline_a_loop = is_polyline_a_loop.unsqueeze(0)
-    if n_points_long_term.ndim == 0:
+    if n_points_long_term is None:
+        n_points_long_term = torch.full(
+            (index_closest_point.shape[0],),
+            polyline.shape[-2],
+            device=device,
+            dtype=torch.int32,
+        )
+    elif n_points_long_term.ndim == 0:
         n_points_long_term = n_points_long_term.unsqueeze(0)
 
     batch_size = index_closest_point.shape[0]
@@ -933,18 +1543,56 @@ def get_short_term_reference_path(
         + n_points_shift
     )
 
-    if n_points_long_term is None:
-        n_points_long_term = polyline.shape[-2]
-
     for env_i in range(batch_size):
         n_long_term_point = n_points_long_term[env_i]
         if is_polyline_a_loop[env_i]:
             # Apply modulo to handle the case that each agent's reference path is a loop
-            future_points_idx[env_i] = torch.where(
-                future_points_idx[env_i] >= n_long_term_point - 1,
-                (future_points_idx[env_i] + 1) % n_long_term_point,
-                future_points_idx[env_i],
-            )  # Use "+ 1" to skip the last point since it overlaps with the first point
+            future_points_idx[env_i] = future_points_idx[env_i] % (
+                n_long_term_point - 1
+            )  # Skip the last point since it overlaps with the first point.
+
+    if is_extend_non_loop:
+        short_term_path = torch.empty(
+            (batch_size, n_points_to_return, polyline.shape[-1]),
+            device=polyline.device,
+            dtype=polyline.dtype,
+        )
+        for env_i in range(batch_size):
+            n_long_term_point = int(n_points_long_term[env_i].item())
+            indices_i = future_points_idx[env_i]
+            if is_polyline_a_loop[env_i] or n_long_term_point < 2:
+                short_term_path[env_i] = polyline[env_i, indices_i]
+                continue
+
+            last_valid_idx = n_long_term_point - 1
+            indices_clamped = torch.clamp(indices_i, 0, last_valid_idx)
+            short_term_path[env_i] = polyline[env_i, indices_clamped]
+
+            before_start = indices_i < 0
+            if torch.any(before_start):
+                first_segment = polyline[env_i, 1] - polyline[env_i, 0]
+                short_term_path[env_i, before_start] = (
+                    polyline[env_i, 0]
+                    + indices_i[before_start].unsqueeze(1).to(polyline.dtype)
+                    * first_segment
+                )
+
+            after_end = indices_i > last_valid_idx
+            if torch.any(after_end):
+                last_segment = (
+                    polyline[env_i, last_valid_idx]
+                    - polyline[env_i, last_valid_idx - 1]
+                )
+                short_term_path[env_i, after_end] = (
+                    polyline[env_i, last_valid_idx]
+                    + (indices_i[after_end] - last_valid_idx)
+                    .unsqueeze(1)
+                    .to(polyline.dtype)
+                    * last_segment
+                )
+
+        warn_if_overlapping_points(short_term_path)
+        return short_term_path, future_points_idx
 
     # Extract
     short_term_path = polyline[
@@ -954,6 +1602,7 @@ def get_short_term_reference_path(
         future_points_idx,
     ]
 
+    warn_if_overlapping_points(short_term_path)
     return short_term_path, future_points_idx
 
 
@@ -1044,98 +1693,86 @@ def get_distances_between_agents(
             -1
         )  # Normalize
 
-        for i in range(n_agents):
-            vertices_i = data[:, i, 0:4, :]
-            axes_norm_i = axes_norm_all[:, i]
-            for j in range(i + 1, n_agents):
-                vertices_j = data[:, j, 0:4, :]
-                axes_norm_j = axes_norm_all[:, j]
+        if n_agents > 1:
+            # Compute each unordered agent pair once
+            pair_indices = torch.triu_indices(
+                n_agents,
+                n_agents,
+                offset=1,
+                device=device,
+            )
+            vertices_i = data[:, pair_indices[0], 0:4, :]
+            vertices_j = data[:, pair_indices[1], 0:4, :]
+            axes_norm_i = axes_norm_all[:, pair_indices[0]]
+            axes_norm_j = axes_norm_all[:, pair_indices[1]]
 
-                # 1. Project each of the four vertices of rectangle i and all the four vertices of rectangle j to each of the two axes of rectangle j.
-                # 2. The distance from a vertex of rectangle i to rectangle j is calculated by taking the Euclidean distance of the "gaps" on the two axes of rectangle j between the projected point of this vertex on the axes and the projected points of rectangle j. If the projected point of this vertex lies inside the projection of rectangle j, the gap is consider zero. If the projections of a vertex to both axes of rectangle j are inside the projection of rectangle j, this vertex is considered inside rectangle j. In this case, the distance is a negative value indicating the shortest distance that this vertex should move to be outside rectangle j, while its other three vertices are still outside rectangle j.
-                # 3. Steps 1 and 2 give us four distances. Repeat these two step for rectangle j, which give us another four distances.
-                # 4. The mtv-based distance between the two rectangles is the smallest distance among the eight distances.
+            def project(vertices, axes):
+                return (vertices.unsqueeze(-2) * axes.unsqueeze(-3)).sum(dim=-1)
 
-                # Project rectangle j to its own axes
-                projection_jj = (
-                    vertices_j.unsqueeze(2) * axes_norm_j.unsqueeze(1)
-                ).sum(dim=3)
-                max_jj, _ = torch.max(projection_jj, dim=1)
-                min_jj, _ = torch.min(projection_jj, dim=1)
-                # Project rectangle i to the axes of rectangle j
-                projection_ij = (
-                    vertices_i.unsqueeze(2) * axes_norm_j.unsqueeze(1)
-                ).sum(dim=3)
-                max_ij, _ = torch.max(projection_ij, dim=1)
-                min_ij, _ = torch.min(projection_ij, dim=1)
+            # Project both rectangles in every pair onto the two local axes of
+            # each rectangle. For example, ij projects i onto j's axes.
+            projection_jj = project(vertices_j, axes_norm_j)
+            projection_ij = project(vertices_i, axes_norm_j)
+            projection_ii = project(vertices_i, axes_norm_i)
+            projection_ji = project(vertices_j, axes_norm_i)
 
-                MTVs_ij_positive = (projection_ij - min_jj.unsqueeze(1)) * (
-                    projection_ij <= min_jj.unsqueeze(1)
-                ) + (max_jj.unsqueeze(1) - projection_ij) * (
-                    projection_ij >= max_jj.unsqueeze(1)
-                )
-                MTVs_ij_Euclidean_positive = torch.norm(MTVs_ij_positive, dim=2)
-                # Overlap of the projections on the axes of rectangle j
-                overlap_j = torch.min(max_jj, max_ij) - torch.max(min_jj, min_ij)
-                MTVs_ij_Euclidean_negative = -overlap_j.min(dim=-1)[0].unsqueeze(-1) * (
-                    (projection_ij > min_jj.unsqueeze(1))
-                    * (projection_ij < max_jj.unsqueeze(1))
-                ).all(dim=-1)
-                # MTVs_ij_Euclidean = MTVs_ij_Euclidean_positive + MTVs_ij_Euclidean_negative
+            max_jj, _ = torch.max(projection_jj, dim=-2)
+            min_jj, _ = torch.min(projection_jj, dim=-2)
+            max_ij, _ = torch.max(projection_ij, dim=-2)
+            min_ij, _ = torch.min(projection_ij, dim=-2)
+            max_ii, _ = torch.max(projection_ii, dim=-2)
+            min_ii, _ = torch.min(projection_ii, dim=-2)
+            max_ji, _ = torch.max(projection_ji, dim=-2)
+            min_ji, _ = torch.min(projection_ji, dim=-2)
 
-                # Project rectangle i to its own axes
-                projection_ii = (
-                    vertices_i.unsqueeze(2) * axes_norm_i.unsqueeze(1)
-                ).sum(dim=3)
-                max_ii, _ = torch.max(projection_ii, dim=1)
-                min_ii, _ = torch.min(projection_ii, dim=1)
-                # Project rectangle j to the axes of rectangle i
-                projection_ji = (
-                    vertices_j.unsqueeze(2) * axes_norm_i.unsqueeze(1)
-                ).sum(dim=3)
-                max_ji, _ = torch.max(projection_ji, dim=1)
-                min_ji, _ = torch.min(projection_ji, dim=1)
-                MTVs_ji_positive = (projection_ji - min_ii.unsqueeze(1)) * (
-                    projection_ji <= min_ii.unsqueeze(1)
-                ) + (max_ii.unsqueeze(1) - projection_ji) * (
-                    projection_ji >= max_ii.unsqueeze(1)
-                )
-                MTVs_ji_Euclidean_positive = torch.norm(MTVs_ji_positive, dim=2)
-                overlap_i = torch.min(max_ii, max_ji) - torch.max(min_ii, min_ji)
+            # For each vertex, measure its gaps to the other rectangle's
+            # projection intervals. A gap is zero when the projection lies
+            # inside an interval; the norm across both axes is its distance.
+            mtvs_ij_positive = (projection_ij - min_jj.unsqueeze(-2)) * (
+                projection_ij <= min_jj.unsqueeze(-2)
+            ) + (max_jj.unsqueeze(-2) - projection_ij) * (
+                projection_ij >= max_jj.unsqueeze(-2)
+            )
+            mtvs_ji_positive = (projection_ji - min_ii.unsqueeze(-2)) * (
+                projection_ji <= min_ii.unsqueeze(-2)
+            ) + (max_ii.unsqueeze(-2) - projection_ji) * (
+                projection_ji >= max_ii.unsqueeze(-2)
+            )
+            mtvs_ij_positive = torch.norm(mtvs_ij_positive, dim=-1)
+            mtvs_ji_positive = torch.norm(mtvs_ji_positive, dim=-1)
 
-                MTVs_ji_Euclidean_negative = -overlap_i.min(dim=1)[0].unsqueeze(-1) * (
-                    (projection_ji > min_ii.unsqueeze(1))
-                    * (projection_ji < max_ii.unsqueeze(1))
-                ).all(dim=-1)
+            # Projection overlaps on each axis. For overlapping rectangles,
+            # the distance is minus the smallest overlap, i.e., the shortest
+            # translation needed to separate them.
+            overlap_j = torch.min(max_jj, max_ij) - torch.max(min_jj, min_ij)
+            overlap_i = torch.min(max_ii, max_ji) - torch.max(min_ii, min_ji)
 
-                # The distance from rectangle j to rectangle i is calculated as the Euclidean distance of the two lengths of the MTVs on the two axes of rectangle i
-                distance_ji, _ = torch.min(
-                    torch.hstack(
-                        (MTVs_ij_Euclidean_positive, MTVs_ji_Euclidean_positive)
-                    ),
-                    dim=1,
-                )
-                is_negative_distance = (MTVs_ij_Euclidean_negative.abs() > 0).any(
-                    dim=-1
-                ) | (MTVs_ji_Euclidean_negative.abs() > 0).any(dim=-1)
-                distance_ji[is_negative_distance] = -torch.min(
-                    overlap_j.min(dim=1)[0], overlap_i.min(dim=1)[0]
-                )[is_negative_distance]
+            # The rectangle distance is the smallest of the eight vertex
+            # distances (four vertices in each direction).
+            pair_distances, _ = torch.min(
+                torch.cat((mtvs_ij_positive, mtvs_ji_positive), dim=-1),
+                dim=-1,
+            )
+            # By the separating axis theorem, the rectangles overlap iff their
+            # projections overlap on all four axes. This also covers crossing
+            # overlaps where no vertex lies inside the other rectangle.
+            is_negative_distance = (overlap_j > 0).all(dim=-1) & (overlap_i > 0).all(
+                dim=-1
+            )
+            negative_pair_distances = -torch.min(
+                overlap_j.min(dim=-1)[0],
+                overlap_i.min(dim=-1)[0],
+            )
+            pair_distances = torch.where(
+                is_negative_distance,
+                negative_pair_distances,
+                pair_distances,
+            )
 
-                # # Check rectangles are overlapping
-                # is_projection_overlapping = torch.hstack(
-                #     (
-                #         (max_ii >= min_ji) & (min_ii <= max_ji),
-                #         (max_jj >= min_ij) & (min_jj <= max_ij),
-                #     )
-                # )
-                # is_overlapping = torch.all(is_projection_overlapping, dim=1)
-                # distance_ji[is_overlapping] = 0  # Rectangles are overlapping
-
-                mutual_distances[
-                    :, i, j
-                ] = distance_ji  # The smaller one among the distance from rectangle i to j and the distance from rectangle j to i is define as the distance between two rectangles
-                mutual_distances[:, j, i] = distance_ji
+            # Scatter the unordered-pair results into both halves of the
+            # symmetric distance matrix.
+            mutual_distances[:, pair_indices[0], pair_indices[1]] = pair_distances
+            mutual_distances[:, pair_indices[1], pair_indices[0]] = pair_distances
 
     if is_set_diagonal:
         mutual_distances.diagonal(dim1=-2, dim2=-1).fill_(
@@ -1156,7 +1793,9 @@ def interX(L1, L2, is_return_points=False):
     # L1[:,:,0] -= 0.35
     # L1[:,:,1] -= 0.05
     batch_dim = L1.shape[0]
-    collision_index = torch.zeros(batch_dim, dtype=torch.bool)  # Initialize
+    collision_index = torch.zeros(
+        batch_dim, dtype=torch.bool, device=L1.device
+    )  # Initialize
 
     # Handle empty inputs
     if L1.numel() == 0 or L2.numel() == 0:

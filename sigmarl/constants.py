@@ -4,11 +4,13 @@
 # LICENSE file in the root directory of this source tree.
 
 import math
+import os
+import warnings
 
 SCENARIOS = {
     "cpm_entire": {
         "map_path": "cpm.xml",
-        "n_agents": 15,
+        "n_agents": 12,
         "name": "CPM Map",
         "x_dim_min": 0,  # Min x-coordinate
         "x_dim_max": 4.5,  # Max x-coordinate
@@ -21,9 +23,25 @@ SCENARIOS = {
         "lane_width": 0.15,  # [m] Lane width
         "scale": 1.0,  # Scale the map
     },
+    # cpm_mixed scenario is mainly used as an intersection scenario with cpm_scenario_probabilities = [1.0, 0, 0] in sigmarl/helper_common.py
     "cpm_mixed": {
         "map_path": "cpm.xml",
-        "n_agents": 4,
+        "n_agents": 6,
+        "name": "CPM Map",
+        "x_dim_min": 0,  # Min x-coordinate
+        "x_dim_max": 4.5,  # Max x-coordinate
+        "y_dim_min": 0,
+        "y_dim_max": 4.0,
+        "world_x_dim": 4.5,  # Environment x-dimension. (0, 0) is assumed to be the origin
+        "world_y_dim": 4.0,  # Environment y-dimension. (0, 0) is assumed to be the origin
+        "figsize_x": 3,  # For evaluation figs
+        "viewer_zoom": 1.44,  # For VMAS render
+        "lane_width": 0.15,  # [m] Lane width
+        "scale": 1.0,  # Scale the map
+    },
+    "cpm_intersection_extended": {
+        "map_path": "cpm.xml",
+        "n_agents": 8,
         "name": "CPM Map",
         "x_dim_min": 0,  # Min x-coordinate
         "x_dim_max": 4.5,  # Max x-coordinate
@@ -103,7 +121,7 @@ SCENARIOS = {
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "interchange_3": {
@@ -154,7 +172,7 @@ SCENARIOS = {
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 0.8e5,  # Scale the map
     },
     "intersection_1": {
@@ -206,7 +224,7 @@ SCENARIOS = {
         },
         "figsize_x": 2.0,
         "viewer_zoom": 1.15,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "intersection_3": {
@@ -233,7 +251,7 @@ SCENARIOS = {
         },
         "figsize_x": 2.5,
         "viewer_zoom": 1.15,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "intersection_4": {
@@ -277,7 +295,7 @@ SCENARIOS = {
             "20": ["2", "3", "5", "6", "14", "16", "20"],  # Lanelet with ID "20"
         },
         "figsize_x": 3.0,
-        "viewer_zoom": 1.1,  # For VMAS render
+        "viewer_zoom": 1.45,  # For VMAS render
         "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
@@ -323,7 +341,7 @@ SCENARIOS = {
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 0.7e5,  # Scale the map
     },
     "intersection_6": {
@@ -372,7 +390,7 @@ SCENARIOS = {
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "intersection_7": {
@@ -404,7 +422,7 @@ SCENARIOS = {
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "intersection_8": {
@@ -440,7 +458,7 @@ SCENARIOS = {
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "on_ramp_1": {
@@ -464,7 +482,7 @@ SCENARIOS = {
         },
         "figsize_x": 3.5,
         "viewer_zoom": 0.95,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "on_ramp_2_multilane": {
@@ -524,7 +542,7 @@ SCENARIOS = {
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "roundabout_1": {
@@ -551,7 +569,7 @@ SCENARIOS = {
         },
         "figsize_x": 3.0,
         "viewer_zoom": 1.1,  # For VMAS render
-        "lane_width": 0.20,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
     "roundabout_2": {
@@ -601,9 +619,43 @@ SCENARIOS = {
             "18": ["16", "17", "18"],  # Lanelet with ID "18"
         },
         "figsize_x": 2.0,
-        "viewer_zoom": 1.0,  # For VMAS render
-        "lane_width": 0.2,  # [m] Lane width
+        "viewer_zoom": 1.4,  # For VMAS render
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
+    },
+    # rounD location 0 as a Lanelet2 map (from drone-dataset-tools), scaled 1:18 to the size of the CPM Lab
+    # vehicles. The reference paths are all entry-to-exit routes, computed by ParseLanelet2.
+    "round_location0_1to18": {
+        "map_path": "round_location0.osm",
+        "map_format": "lanelet2",
+        "n_agents": 10,
+        "name": "rounD Location 0 (1:18)",
+        "utm_origin": [
+            301221.365,
+            5641501.341,
+        ],  # xUtmOrigin, yUtmOrigin of the rounD recordings at location 0
+        "figsize_x": 3.0,
+        "viewer_zoom": 1.4,  # For VMAS render
+        "lane_width": 0.24,  # [m] Median lane width (4.3 m / 18)
+        "point_spacing": 0.08,  # [m] Max. distance between boundary points (1.5 m / 18)
+        "scale": 1 / 18,  # Map units per meter of the real road
+    },
+    "round_location0": {
+        "map_path": "round_location0.osm",
+        "map_format": "lanelet2",
+        "agent_profile": "full_scale",  # Agent profile this scenario is sized for
+        "n_agents": 10,
+        "name": "rounD Location 0",
+        "utm_origin": [
+            301221.365,
+            5641501.341,
+        ],  # xUtmOrigin, yUtmOrigin of the rounD recordings at location 0
+        "figsize_x": 3.0,
+        "viewer_zoom": 1.4,  # For VMAS render
+        "lane_width": 0.24 * 18,  # [m] Median lane width
+        "point_spacing": 0.08 * 18,  # [m] Max. distance between boundary points
+        "scale": 1.0,  # Real size, 18 times the size of round_location0_1to18
+        "max_speed": 50 / 3.6,  # [m/s] Speed limit (urban 50 km/h)
     },
     "pseudo_distance_example": {
         "map_path": "pseudo_distance_example.osm",
@@ -619,37 +671,275 @@ SCENARIOS = {
         },
         "figsize_x": 2.0,
         "viewer_zoom": 1.0,  # For VMAS render
-        "lane_width": 0.2,  # [m] Lane width
+        "lane_width": 0.30,  # [m] Lane width
         "scale": 1e5,  # Scale the map
     },
 }
 
+# Lanelet2 maps of the inD (intersections) and exiD (highway entries and exits) locations, fixed and cut to the
+# recorded area by `src/fix_lanelet_map.py` in drone-dataset-tools (like round_location0.osm), and of the highD
+# (highway) locations, at real size for the `full_scale` agent profile. The reference paths are all entry-to-exit
+# routes, computed by ParseLanelet2.
+DRONE_DATASET_LANELET2_MAPS = {
+    # Scenario: (name, xUtmOrigin and yUtmOrigin of the recordings, median lane width [m])
+    "ind_location1": ("inD Bendplatz", [293487.12240, 5629711.58163], 3.3),
+    "ind_location1_construction": (
+        "inD Bendplatz (construction site)",
+        [293487.12240, 5629711.58163],
+        3.3,
+    ),
+    "ind_location2": ("inD Frankenburg", [295620.95750, 5628102.04258], 3.1),
+    "ind_location3": ("inD Heckstrasse", [300127.08530, 5629091.05870], 3.2),
+    "ind_location4": ("inD Aseag", [297631.31870, 5629917.34465], 3.5),
+    "exid_location0": ("exiD Cologne Butzweiler", [352146.6, 5651141.9], 3.8),
+    "exid_location1": ("exiD Cologne Fortiib", [351816.7, 5651523.4], 3.7),
+    "exid_location2": ("exiD Aachen Brand", [298089.6, 5626462.9], 3.9),
+    "exid_location3": ("exiD Bergheim Roemer", [334905.3, 5645453.9], 3.9),
+    "exid_location4": ("exiD Cologne Klettenberg", [353013.5, 5640508.6], 3.7),
+    "exid_location5": ("exiD Aachen Laurensberg", [293790.2, 5632271.9], 4.0),
+    "exid_location6": ("exiD Merzenich Rather", [325298.1, 5635819.6], 3.6),
+    # The highD maps are in local coordinates; 3.75 m is the German motorway lane width
+    **{
+        f"highd_location{i}": (f"highD location {i}", [0.0, 0.0], 3.75)
+        for i in range(1, 7)
+    },
+}
+# Dataset: (speed limit [m/s], CLF reference speed [m/s] or None for the default).
+# inD follows the maps' speed_limit tags (highest per map), exiD 120 km/h, and
+# highD the 130 km/h advisory speed on German motorways.
+DRONE_DATASET_SPEEDS = {
+    "ind": (50 / 3.6, None),
+    "exid": (120 / 3.6, 25.0),
+    "highd": (130 / 3.6, 30.0),
+}
+DRONE_DATASET_SPEED_LIMIT_OVERRIDES = {"ind_location2": 30 / 3.6}  # 30 km/h zone
+for _scenario, (_name, _utm_origin, _lane_width) in DRONE_DATASET_LANELET2_MAPS.items():
+    _max_speed, _ref_speed = DRONE_DATASET_SPEEDS[_scenario.split("_")[0]]
+    SCENARIOS[_scenario] = {
+        "map_path": f"{_scenario}.osm",
+        "map_format": "lanelet2",
+        "agent_profile": "full_scale",  # Agent profile this scenario is sized for
+        "n_agents": 10,
+        "name": _name,
+        "utm_origin": _utm_origin,  # xUtmOrigin, yUtmOrigin of the recordings
+        "figsize_x": 3.0,
+        "viewer_zoom": 1.4,  # For VMAS render
+        "lane_width": _lane_width,  # [m] Median lane width
+        "point_spacing": 0.08 * 18,  # [m] Max. distance between boundary points
+        "scale": 1.0,  # Real size
+        # [m/s] Speed limit (see Parameters.resolve_speed_defaults)
+        "max_speed": DRONE_DATASET_SPEED_LIMIT_OVERRIDES.get(_scenario, _max_speed),
+    }
+    if _ref_speed is not None:
+        SCENARIOS[_scenario]["ref_speed"] = _ref_speed  # [m/s] CLF reference speed
 
-AGENTS = {
-    # Larger dimension
-    "width": 0.107,  # [m]
-    "length": 0.22,  # [m]
-    # Smaller dimension
-    # "width": 0.08,  # [m]
-    # "length": 0.16,  # [m]
-    "l_f": 0.075,  # [m] Front wheelbase
-    "l_r": 0.075,  # [m] Rear wheelbase
-    "l_wb": 0.15,  # [m] Wheelbase
-    "max_speed": 1.0,  # [m/s]
-    "min_speed": -0.5,  # [m/s]
-    "max_steering": 31 * math.pi / 180,  # [radian]
-    "min_steering": -31 * math.pi / 180,  # [radian]
-    "max_acc": 5.0,  # [m/s^2]
-    "min_acc": -5.0,  # [m/s^2]
-    "max_steering_rate": math.pi / 2,  # [radian/s] math.pi / 2
-    "min_steering_rate": -math.pi / 2,  # [radian/s]
-    "n_actions": 2,
+# VMAS scenarios that do not use the road-traffic map stack. These entries are
+# kept separate so the higher-speed road scenario definitions above remain the
+# source of truth.
+NON_ROAD_SCENARIOS = {
+    "goal_reaching_1": {
+        "n_agents": 1,
+        "name": "",
+        "x_dim_min": 0.0,
+        "x_dim_max": 20.0,
+        "y_dim_min": 0.0,
+        "y_dim_max": 20.0,
+        "world_x_dim": 20.0,
+        "world_y_dim": 20.0,
+        "reference_paths_ids": [],
+        "neighboring_lanelet_ids": {},
+        "figsize_x": 3.0,
+        "viewer_zoom": 3.5,
+        "resolution_factor": 50,
+        "lane_width": 0.30,
+        "scale": 0.0,
+    },
+    "balance": {"n_agents": 4},
+    "ball_passage": {"n_agents": 2},
+    "ball_trajectory": {"n_agents": 2},
+    "buzz_wire": {"n_agents": 2},
+    "discovery": {"n_agents": 6},
+    "dispersion": {"n_agents": 8},
+    "dropout": {"n_agents": 6},
+    "flocking": {"n_agents": 6},
+    "football": {"n_agents": 8},
+    "navigation": {"n_agents": 6},
+    "sampling": {"n_agents": 5},
+    "wheel": {"n_agents": 4},
+    "wind_flocking": {"n_agents": 2},
+    "give_way": {"n_agents": 2},
+    "joint_passage_size": {"n_agents": 2},
+    "joint_passage": {"n_agents": 2},
+    "multi_give_way": {"n_agents": 4},
+    "reverse_transport": {"n_agents": 4},
+    "transport": {"n_agents": 4},
+}
+SCENARIOS.update(NON_ROAD_SCENARIOS)
+ROAD_TRAFFIC_SCENARIOS = set(SCENARIOS).difference(NON_ROAD_SCENARIOS)
+
+# `max_speed` of a profile is the default speed limit of the agents; a scenario
+# may set its own (see "max_speed" in SCENARIOS and Parameters.resolve_speed_defaults).
+AGENT_PROFILES = {
+    # Smaller agents with higher acceleration and steering-rate limits.
+    "agile": {
+        "width": 0.08,
+        "length": 0.16,
+        "l_f": 0.08,
+        "l_r": 0.08,
+        "l_wb": 0.16,
+        "max_speed": 1.0,
+        "min_speed": -0.5,
+        "max_steering": math.pi / 4,
+        "min_steering": -math.pi / 4,
+        "max_acc": 20.0,
+        "min_acc": -20.0,
+        "max_steering_rate": 5 * math.pi,
+        "min_steering_rate": -5 * math.pi,
+        "n_actions": 2,
+    },
+    # Lab dynamics with the smaller geometry used for simulation training.
+    "semi_real_dyn": {
+        "width": 0.08,
+        "length": 0.16,
+        "l_f": 0.075,
+        "l_r": 0.075,
+        "l_wb": 0.15,
+        "max_speed": 1.0,
+        "min_speed": -1.0,
+        "max_steering": 24 * math.pi / 180,
+        "min_steering": -24 * math.pi / 180,
+        "max_acc": 2.5,
+        "min_acc": -2.5,
+        "max_steering_rate": 1.75,
+        "min_steering_rate": -1.75,
+        "n_actions": 2,
+    },
+    # Lab dynamics and the physical vehicle geometry.
+    "real_dyn": {
+        "width": 0.107,
+        "length": 0.22,
+        "l_f": 0.075,
+        "l_r": 0.075,
+        "l_wb": 0.15,
+        "max_speed": 1.0,
+        "min_speed": -1.0,
+        "max_steering": 24 * math.pi / 180,
+        "min_steering": -24 * math.pi / 180,
+        "max_acc": 2.5,
+        "min_acc": -2.5,
+        "max_steering_rate": 1.75,
+        "min_steering_rate": -1.75,
+        "n_actions": 2,
+    },
+    "real_dyn_2": {
+        "width": 0.107,
+        "length": 0.22,
+        "l_f": 0.075,
+        "l_r": 0.075,
+        "l_wb": 0.15,
+        "max_speed": 1.0,
+        "min_speed": -1.0,
+        "max_steering": 24 * math.pi / 180,
+        "min_steering": -24 * math.pi / 180,
+        "max_acc": 4.0,
+        "min_acc": -4.0,
+        "max_steering_rate": 1.75,
+        "min_steering_rate": -1.75,
+        "n_actions": 2,
+    },
+    # Full-size passenger car, based on the cars in the rounD dataset (median
+    # 2.07 m x 4.57 m; speed median 6.9 m/s, 99th percentile 12.6 m/s).
+    "full_scale": {
+        "width": 2.0,
+        "length": 4.6,
+        "l_f": 1.35,
+        "l_r": 1.35,
+        "l_wb": 2.7,
+        "max_speed": 14.0,
+        "min_speed": 0.0,
+        "max_steering": 35 * math.pi / 180,
+        "min_steering": -35 * math.pi / 180,
+        "max_acc": 3.0,
+        "min_acc": -6.0,
+        # Fast for a car; with 0.6 rad/s the CLF-CBF-QP left the lane more often
+        "max_steering_rate": 1.0,
+        "min_steering_rate": -1.0,
+        "n_actions": 2,
+        # Factors by which lengths and typical speeds exceed those of the lab
+        # vehicles. Defaults of parameters given in absolute meters or meters per
+        # second are multiplied by them (see LENGTH_SCALE and SPEED_SCALE below).
+        "length_scale": 20.0,
+        "speed_scale": 8.0,
+    },
 }
 
+# The profile is selected before any module copies its values, so it is read
+# from the environment variable SIGMARL_AGENT_PROFILE (default: "real_dyn_2").
+ACTIVE_AGENT_PROFILE = os.environ.get(
+    "SIGMARL_AGENT_PROFILE",
+    "real_dyn_2",  # one of {"agile", "semi_real_dyn", "real_dyn" "real_dyn_2", "full_scale"}
+)
+if ACTIVE_AGENT_PROFILE not in AGENT_PROFILES:
+    raise ValueError(
+        f"Unknown agent profile '{ACTIVE_AGENT_PROFILE}' in SIGMARL_AGENT_PROFILE. "
+        f"Available profiles: {sorted(AGENT_PROFILES)}."
+    )
+AGENTS = AGENT_PROFILES[ACTIVE_AGENT_PROFILE]
+# Scale factors for parameters in absolute units that were tuned for the lab
+# vehicles (1.0 for all lab profiles, so their defaults are unchanged).
+LENGTH_SCALE = AGENTS.get("length_scale", 1.0)  # For [m] (squared for [m^2])
+SPEED_SCALE = AGENTS.get("speed_scale", 1.0)  # For [m/s]
+ACCELERATION_SCALE = SPEED_SCALE**2 / LENGTH_SCALE  # For [m/s^2]
+# Unitless factor of the CBF-margin reward normalizers: with 1, a reward channel
+# saturates at -1 when an agent closes on its barrier at the speed limit while
+# the barrier requires holding (see CBFQP.cbf_margin_reward_scales).
+H_NOM = 1.0
+print(
+    f"[INFO] Using agent profile '{ACTIVE_AGENT_PROFILE}' with parameters:\n {AGENTS}"
+)
+
+
+def validate_agent_profile(saved_profile_name: str | None) -> None:
+    """Validate checkpoint agent metadata against the active profile."""
+    if saved_profile_name is None:
+        warnings.warn(
+            "The checkpoint predates agent-profile metadata; compatibility with "
+            f"the active profile '{ACTIVE_AGENT_PROFILE}' cannot be verified.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return
+
+    if saved_profile_name != ACTIVE_AGENT_PROFILE:
+        raise ValueError(
+            "Agent profile mismatch: checkpoint was trained with "
+            f"'{saved_profile_name}', but '{ACTIVE_AGENT_PROFILE}' is active. "
+            f"Set the environment variable SIGMARL_AGENT_PROFILE={saved_profile_name}."
+        )
+
+
+def validate_scenario_agent_profile(scenario_type: str) -> None:
+    """Raise if a scenario is sized for an agent profile other than the active one."""
+    required_profile = SCENARIOS[scenario_type].get("agent_profile")
+    if required_profile is not None and required_profile != ACTIVE_AGENT_PROFILE:
+        raise ValueError(
+            f"Scenario '{scenario_type}' requires agent profile '{required_profile}', "
+            f"but '{ACTIVE_AGENT_PROFILE}' is active. Set the environment variable "
+            f"SIGMARL_AGENT_PROFILE={required_profile}."
+        )
+
+
+# Used when parameters.rl_action_type is "position_speed"
+POSITION_SPEED_LOOKAHEAD_DIST = AGENTS["length"]  # [m]
+POSITION_SPEED_LATERAL_OFFSET_BOUND = AGENTS["width"] / 2.0  # [m]
 
 THRESHOLD = {
     "initial_distance": 1.2 * math.sqrt(AGENTS["width"] ** 2 + AGENTS["length"] ** 2),
     "reach_goal": AGENTS[
         "width"
     ],  # An agent is considered having reached its goal if its distance to the goal is less than its width
+    "disk_radius": 0.5
+    * math.sqrt(
+        AGENTS["width"] ** 2 + AGENTS["length"] ** 2
+    ),  # [m] The radius of the disk that fully encloses the agent's shape
 }

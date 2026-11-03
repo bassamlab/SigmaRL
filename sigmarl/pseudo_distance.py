@@ -25,7 +25,9 @@ class PseudoDistance:
         # self.initialize_map(map)
         # self.prepare_for_calculation()
         self.map = map
-        if "cpm_mixed" == self.scenario_type:
+        if self.scenario_type == "cpm_intersection_extended":
+            self.reference_paths = self.map.parser.reference_paths_intersection_extended
+        elif "cpm_mixed" == self.scenario_type:
             # Intersection scenario (TODO: consider actual mixed scenarios consisting of intersection, merge-in, and merge-out)
             self.reference_paths = self.map.parser.reference_paths_intersection
         else:
@@ -115,8 +117,8 @@ class PseudoDistance:
         pseudo_distance = torch.norm(n_lambda, dim=-1).unsqueeze(-1)
 
         return (
-            pseudo_distance.to(torch.float16),
-            direction.to(torch.float16),
+            pseudo_distance.to(position.dtype),
+            direction.to(position.dtype),
             lambda_factor,
         )
 

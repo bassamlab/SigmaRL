@@ -57,8 +57,6 @@ class Evaluation:
 
         self.agent_width = AGENTS["width"]
 
-        self.max_speed = AGENTS["max_speed_achievable"]  # Maximum achievable speed
-
         self.model_paths = kwargs.pop("model_paths", None)
 
         self.where_to_save_eva_results = kwargs.pop(
@@ -692,7 +690,8 @@ class Evaluation:
             self.distance_ref_average = (
                 self.distance_ref_average / self.agent_width * 100
             )
-            self.average_speed = self.average_speed / self.max_speed * 100
+            # Relative to the speed limit, resolved when the model was run
+            self.average_speed = self.average_speed / self.parameters.max_speed * 100
 
         self.collision_rate_with_agents = self.collision_rate_with_agents * 100
         self.collision_rate_with_lanelets = self.collision_rate_with_lanelets * 100

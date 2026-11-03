@@ -1,147 +1,215 @@
-import os
-import sys
-from datetime import datetime
-from sigmarl.mappo_cavs import mappo_cavs
-from sigmarl.helper_training import Parameters
-from sigmarl.constants import SCENARIOS, AGENTS
+"""Launch target-architecture MAPPO from legacy flags or a benchmark YAML."""
+
 import argparse
+import contextlib
+import inspect
+import json
+import os
+from pathlib import Path
+import sys
+import traceback
 
-# ===============================
-# Check if running in HPC environment
-# ===============================
-hpc_environment = os.getenv("HPC_ENVIRONMENT", "false").lower() == "true"
-if hpc_environment:
-    print(
-        "HPC environment detected. Setting the environment variable PYGLET_HEADLESS to True."
-    )
-    os.environ["PYGLET_HEADLESS"] = "True"  # Enable if run in HPC
+import yaml
+
+from sigmarl.constants import SCENARIOS
+from sigmarl.env_factory import canonical_scenario_name
+from sigmarl.helper_common import Parameters, Tee, start_run_log
 
 
-def _float_or_none(s: str):
-    if s is None:
+REPO_ROOT = Path(__file__).resolve().parent
+DEFAULT_JSON = REPO_ROOT / "sigmarl" / "config.json"
+
+
+def _float_or_none(value: str):
+    if value is None:
         return None
-    s = str(s).strip()
-    if s.lower() in {"none", "null", ""}:
+    value = str(value).strip()
+    if value.lower() in {"none", "null", ""}:
         return None
-    return float(s)
+    return float(value)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--yaml_config", type=Path)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--h_nom", type=_float_or_none, default=0.1)
+    parser.add_argument("--h_nom", type=_float_or_none, default=None)
     parser.add_argument("--reward_progress", type=float, default=0.1)
-    parser.add_argument(
-        "--rew_method",
-        type=str,
-        choices=[
-            "cbf",
-            "ttc",
-            "distance",
-            "sparse",
-            "distance_sparse",
-            "cbf_sparse",
-            "ttc_sparse",
-        ],
-        default="ttc_sparse",
-    )
-
-    # If you sometimes pass extra flags and do not want errors:
+    parser.add_argument("--cbf_lambda_rew_scale", type=float, default=0.1)
+    parser.add_argument("--cbf_lambda_rew_scale_abs", type=float, default=1.0)
+    parser.add_argument("--penalty_deviate_from_cbf_vel", type=float, default=-0.05)
+    parser.add_argument("--penalty_deviate_from_cbf_steer", type=float, default=-0.05)
+    parser.add_argument("--rew_method", type=str, default="distance_sparse")
     args, _unknown = parser.parse_known_args()
     return args
 
 
-args = parse_args()
+def _load_mapping(path: Path, *, yaml_file: bool) -> dict:
+    path = path.expanduser()
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            data = yaml.safe_load(file) if yaml_file else json.load(file)
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"Configuration file does not exist: {path}") from error
+    except (yaml.YAMLError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"Could not parse configuration file {path}: {error}"
+        ) from error
+    if not isinstance(data, dict):
+        kind = "YAML" if yaml_file else "JSON"
+        raise ValueError(f"{kind} configuration must contain a mapping: {path}")
+    return data
 
-random_seed = args.seed
-h_nom = args.h_nom
-reward_progress = args.reward_progress
-rew_method = args.rew_method
 
-print(f"[INFO] Using random seed = {random_seed}")
-print(f"[INFO] Using h_nom = {h_nom}")
-print(f"[INFO] Using reward_progress = {reward_progress}")
-print(f"[INFO] Using rew_method = {rew_method}")
+def _normalize_yaml_config(config: dict) -> dict:
+    normalized = dict(config)
+    aliases = {
+        "seed": "random_seed",
+        "is_add_noise": "is_obs_noise",
+    }
+    for old_name, new_name in aliases.items():
+        if old_name in normalized:
+            if new_name in normalized and normalized[new_name] != normalized[old_name]:
+                raise ValueError(
+                    f"Conflicting YAML values for `{old_name}` and `{new_name}`."
+                )
+            normalized[new_name] = normalized.pop(old_name)
 
-# ===============================
-# Training configuration
-# ===============================
-scenario_type = "cpm_mixed"  # One of "cpm_mixed", "cpm_entire", "intersection_1", etc.
-config_file = "sigmarl/config.json"  # Adjust parameters therein
+    algorithm = str(normalized.pop("algorithm", "mappo")).lower()
+    if algorithm != "mappo":
+        raise ValueError("Only MAPPO benchmark configurations are supported.")
 
-parameters = Parameters.from_json(config_file)
+    normalized.pop("total_frames", None)
+    return normalized
 
-# Set parameters
-parameters.scenario_type = scenario_type
-# parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
-parameters.n_agents = 4
 
-# parameters.where_to_save = "outputs/marl_cbf_fixed_group_2_episode_100_rl/"
-parameters.n_iters = 1000
-parameters.random_seed = random_seed
-parameters.is_using_centralized_cbf = True
-parameters.is_using_cbf_testing = False
-parameters.is_using_prioritized_marl = False
-parameters.is_continue_train = True
-parameters.is_load_model = False
-parameters.is_apply_cbf_action = False
-parameters.is_solve_qp = False
-parameters.h_nom = h_nom
-parameters.is_testing_mode = False
-parameters.lane_width = 0.25  # lane width in meter (except cpm_mixed and cpm_entire)
-parameters.reward_progress = reward_progress
+def load_parameters(yaml_config: Path) -> Parameters:
+    """Load and validate a benchmark YAML against target Parameters."""
 
-if "cbf" not in rew_method and parameters.h_nom is not None:
-    parameters.h_nom = None
-    print(
-        "[WARN] CBF reward method is not compatible with h_nom specified. Set h_nom to None."
-    )
+    overrides = _normalize_yaml_config(_load_mapping(Path(yaml_config), yaml_file=True))
+    scenario_type = canonical_scenario_name(overrides.get("scenario_type", "cpm_mixed"))
+    overrides["scenario_type"] = scenario_type
 
-if parameters.h_nom is None:
+    config = {
+        **_load_mapping(DEFAULT_JSON, yaml_file=False),
+        **overrides,
+        "n_agents": overrides.get("n_agents", SCENARIOS[scenario_type]["n_agents"]),
+    }
+    if "frames_per_batch" in config:
+        frames_per_batch = config.pop("frames_per_batch")
+        # Legacy benchmark YAMLs derived this field against the benchmark
+        # horizon (512) when they did not spell out max_steps themselves.
+        max_steps = overrides.get("max_steps", 512)
+        config["max_steps"] = max_steps
+        if (
+            isinstance(frames_per_batch, bool)
+            or not isinstance(frames_per_batch, int)
+            or frames_per_batch <= 0
+        ):
+            raise ValueError("`frames_per_batch` must be a positive integer.")
+        if (
+            isinstance(max_steps, bool)
+            or not isinstance(max_steps, int)
+            or max_steps <= 0
+            or frames_per_batch % max_steps
+        ):
+            raise ValueError(
+                "`frames_per_batch` must be divisible by positive `max_steps`."
+            )
+        config["num_vmas_envs"] = frames_per_batch // max_steps
+    valid_keys = set(inspect.signature(Parameters.__init__).parameters) - {"self"}
+    unknown_keys = sorted(set(config) - valid_keys)
+    if unknown_keys:
+        raise ValueError(
+            "Unknown Parameters configuration field(s): " + ", ".join(unknown_keys)
+        )
+    parameters = Parameters(**config)
+    parameters.algorithm = "mappo"
+    return parameters
+
+
+def build_legacy_parameters(args: argparse.Namespace) -> Parameters:
+    """Preserve the existing higher-speed non-YAML training behavior."""
+
+    parameters = Parameters.from_json(DEFAULT_JSON)
+    parameters.scenario_type = "cpm_mixed"
+    parameters.n_agents = SCENARIOS[parameters.scenario_type]["n_agents"]
+    parameters.n_iters = 1000
+    parameters.random_seed = args.seed
+    parameters.is_using_centralized_cbf = False
     parameters.is_using_cbf_training = False
-    parameters.rew_method = "distance" if rew_method is None else rew_method
-    if rew_method is None:
-        print("[INFO] No reward method specified. Using default reward method.")
-else:
-    parameters.is_using_cbf_training = True
+    parameters.is_using_cbf_testing = False
+    parameters.is_grouping_agents = False
+    parameters.max_group_size = 1
+    parameters.is_using_prioritized_marl = False
+    parameters.is_continue_train = True
+    parameters.is_load_model = False
+    parameters.is_apply_cbf_action = False
+    parameters.is_solve_qp = False
+    parameters.h_nom = args.h_nom
+    parameters.is_testing_mode = False
+    parameters.lane_width = 0.25
+    parameters.reward_progress = args.reward_progress
+    parameters.rew_method = args.rew_method
+    parameters.is_learn_cbf_lambda = False
+    parameters.cbf_lambda_rew_scale = args.cbf_lambda_rew_scale
+    parameters.cbf_lambda_rew_scale_abs = args.cbf_lambda_rew_scale_abs
+    parameters.adaptive_lambda = False
+    parameters.nom_controller_type = "rl"
+    parameters.is_alternating_action_lambda_training = False
+    parameters.alternating_train_action_iters = 100
+    parameters.alternating_train_lambda_iters = 100
+    parameters.pretrained_motion_policy_path = ""
+    parameters.pretrained_lambda_policy_path = ""
+    parameters.is_load_pretrained_motion_policy = False
+    parameters.is_load_pretrained_lambda_policy = False
+    parameters.is_train_motion_policy = True
+    parameters.is_train_lambda_policy = False
+    parameters.penalty_deviate_from_cbf_vel = args.penalty_deviate_from_cbf_vel
+    parameters.penalty_deviate_from_cbf_steer = args.penalty_deviate_from_cbf_steer
+    parameters.where_to_save = "outputs/test/"
+    return parameters
 
-parameters.rew_method = rew_method
 
-parameters.where_to_save = f"outputs/{datetime.now():%Y%m%d}_test"
+def run_training(parameters: Parameters):
+    from sigmarl.mappo_cavs import mappo_cavs
 
-# ===============================
-# Save parameters and AGENTS
-# ===============================
-os.makedirs(parameters.where_to_save, exist_ok=True)
+    return mappo_cavs(parameters=parameters)
 
-info_path = os.path.join(parameters.where_to_save, "info.txt")
 
-with open(info_path, "w") as f:
-    f.write("===== PARAMETERS =====\n")
-
-    # Parameters is a class instance. Use __dict__ for readable key-value export.
-    for key, value in vars(parameters).items():
-        f.write(f"{key}: {value}\n")
-
-    f.write("\n===== AGENTS =====\n")
-
-    # AGENTS is typically a dict or list defined in sigmarl.constants
-    if isinstance(AGENTS, dict):
-        for key, value in AGENTS.items():
-            f.write(f"{key}: {value}\n")
+def main() -> None:
+    if os.getenv("HPC_ENVIRONMENT", "false").lower() == "true":
+        os.environ["PYGLET_HEADLESS"] = "True"
+    args = parse_args()
+    if args.yaml_config is not None:
+        try:
+            parameters = load_parameters(args.yaml_config)
+        except Exception as error:
+            print(f"[INFO] Failed to read YAML config {args.yaml_config}: {error}")
+            raise
+        print(f"[INFO] Successfully read YAML config: {args.yaml_config}")
     else:
-        f.write(str(AGENTS))
+        parameters = build_legacy_parameters(args)
+    save_directory = Path(parameters.where_to_save)
+    save_directory.mkdir(parents=True, exist_ok=True)
+    start_run_log(parameters.where_to_save, "training")
+    log_path = save_directory / "training_logs.txt"
 
-print(f"[INFO] Saved parameters and AGENTS to: {info_path}")
+    with log_path.open("a", encoding="utf-8") as log_file:
+        stdout = Tee(sys.stdout, log_file)
+        stderr = Tee(sys.stderr, log_file)
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                print(
+                    f"[INFO] Scenario: {parameters.scenario_type}; "
+                    f"agents: {parameters.n_agents}; seed: {parameters.random_seed}"
+                )
+                print(f"[INFO] Saving outputs to: {parameters.where_to_save}")
+                run_training(parameters)
+            except BaseException:
+                traceback.print_exc()
+                raise
 
-# ===============================
-# Run training
-# ===============================
-(
-    env,
-    decision_making_module,
-    optimization_module,
-    priority_module,
-    cbf_controllers,
-    parameters,
-) = mappo_cavs(parameters=parameters)
+
+if __name__ == "__main__":
+    main()

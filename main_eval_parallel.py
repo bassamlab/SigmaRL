@@ -9,12 +9,14 @@ import matplotlib
 matplotlib.use("Agg")
 import os
 
-os.environ["PYGLET_HEADLESS"] = "true"
+# Enable this if run in HPC
+# os.environ["PYGLET_HEADLESS"] = "true"
 
 
 PYTHON_EXEC = "python"
 SCRIPT = "main_eval.py"
-OUTPUT_DIR = "outputs/marl_cbf_new/cbf_informed_rl/seed1"
+# OUTPUT_DIR = "outputs/marl_cbf_new/cbf_informed_rl/seed1"
+OUTPUT_DIR = "outputs/marl_cbf_fixed_group_agile_100_rl"
 
 LOG_DIR = Path(OUTPUT_DIR) / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -31,7 +33,6 @@ def build_configs(is_skip_if_exist: bool = True):
     seeds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     grouping_flags = [True, False]
     nom_controllers = ["rl"]
-    # ["cpm_entire", "intersection_6", "intersection_4", "intersection_6", "interchange_3"]
     scenario_types = [
         "intersection_6",
         "intersection_4",
@@ -39,7 +40,6 @@ def build_configs(is_skip_if_exist: bool = True):
         "cpm_entire",
         "cpm_mixed",
     ]
-    # scenario_types = ["cpm_entire", "interchange_3"]
     is_using_cbf_testing_list = [True, False]
 
     for scenario in scenario_types:
@@ -63,21 +63,27 @@ def build_configs(is_skip_if_exist: bool = True):
                 f"Please define n_agents and max_group_sizes for scenario type: {scenario}"
             )
 
-        # n_agents = [SCENARIOS[scenario]["n_agents"]]
-
         print(scenario, n_agents)
         for n_agent in n_agents:
             for seed in seeds:
+                for nom in nom_controllers:
+                    for is_using_cbf_testing in is_using_cbf_testing_list:
 
-                for grouping in grouping_flags:
-                    if grouping:
-                        group_sizes_iter = max_group_sizes
-                    else:
-                        group_sizes_iter = [None]
+                        # Logic enforcement:
+                        # - If is_using_cbf_testing is True: iterate grouping_flags and max_group_sizes (when grouping=True).
+                        # - If is_using_cbf_testing is False: force grouping=False and do not use max_group_sizes.
+                        if is_using_cbf_testing:
+                            grouping_iter = grouping_flags
+                        else:
+                            grouping_iter = [False]
 
-                    for max_group in group_sizes_iter:
-                        for nom in nom_controllers:
-                            for is_using_cbf_testing in is_using_cbf_testing_list:
+                        for grouping in grouping_iter:
+                            if grouping:
+                                group_sizes_iter = max_group_sizes
+                            else:
+                                group_sizes_iter = [None]
+
+                            for max_group in group_sizes_iter:
                                 name_suffix = get_name_suffix(
                                     grouping,
                                     is_using_cbf_testing,
@@ -94,6 +100,7 @@ def build_configs(is_skip_if_exist: bool = True):
                                 if is_skip_if_exist and os.path.exists(td_path):
                                     skipped += 1
                                     continue
+
                                 cmd = [
                                     PYTHON_EXEC,
                                     SCRIPT,
@@ -141,8 +148,11 @@ def run_command(cmd):
     )
     log_path = LOG_DIR / f"{suffix}.log"
 
+    env = os.environ.copy()
+    env.pop("PYGLET_HEADLESS", None)  # do not force pyglet headless
+
     with open(log_path, "w") as f:
-        subprocess.run(cmd, check=True, stdout=f, stderr=f, text=True)
+        subprocess.run(cmd, check=True, stdout=f, stderr=f, text=True, env=env)
 
     return time.time() - start_time
 
@@ -151,7 +161,7 @@ if __name__ == "__main__":
     t_0 = time.time()
 
     is_skip_if_exist = True
-    num_workers = 4
+    num_workers = 3
 
     configs, skipped = build_configs(is_skip_if_exist)
     total_jobs = len(configs)

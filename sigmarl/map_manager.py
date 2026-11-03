@@ -6,6 +6,8 @@
 import torch
 from torch.nn.functional import pad
 
+from sigmarl.constants import SCENARIOS
+from sigmarl.parse_lanelet2 import ParseLanelet2
 from sigmarl.parse_osm import ParseOSM
 from sigmarl.parse_xml import ParseXML
 
@@ -18,6 +20,9 @@ class MapManager:
 
         self._device = kwargs.pop("device", "cpu")
         self._width = kwargs.pop("lane_width", None)
+        self._is_sample_equal_distance = kwargs.pop("is_sample_equal_distance", True)
+        self._is_center_centerline = kwargs.pop("is_center_centerline", True)
+        self._scale_map = kwargs.pop("scale_map", 1.0)
         self.current_lanelet_idx = []
 
         self._parse_map_file()
@@ -29,12 +34,22 @@ class MapManager:
             map_parser = ParseXML(
                 scenario_type=self._scenario_type,
                 device=self._device,
+                is_sample_equal_distance=self._is_sample_equal_distance,
+                is_center_centerline=self._is_center_centerline,
+                scale_map=self._scale_map,
+            )
+        elif SCENARIOS[self._scenario_type].get("map_format") == "lanelet2":
+            map_parser = ParseLanelet2(
+                scenario_type=self._scenario_type,
+                device=self._device,
+                scale_map=self._scale_map,
             )
         else:
             map_parser = ParseOSM(
                 scenario_type=self._scenario_type,
                 device=self._device,
                 lane_width=self._width,
+                scale_map=self._scale_map,
             )
 
         self.parser = map_parser

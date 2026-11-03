@@ -1,4 +1,5 @@
 from abc import abstractmethod
+import torch
 
 from sigmarl.helper_training import WorldCustom
 from sigmarl.scenarios.observations.observation_provider import AgentState
@@ -15,6 +16,7 @@ class WorldStateSim(WorldState):
         super().__init__(params)
 
         self.world = None
+        self.state_buffer = None
 
     """
     Usually our world state is defined in the _init_params method of our scenarios.

@@ -18,16 +18,18 @@ torch.serialization.add_safe_globals(
 # ---------------------------------------------------------------------
 # Input (change this only)
 # ---------------------------------------------------------------------
-td_file_path = "outputs/cbf_informed_marl/baseline/out_td_grouping_off_seed_1.td"
+# td_file_path = "outputs/cbf_informed_marl/baseline/out_td_grouping_off_seed_1.td"
 
+td_file_path = "/home/george/bachelor/marl_for_cavs/outputs/cpm_mixed_model/out_td_lab_cpm_mixed.td"
 # ---------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------
-def load_collision_and_speed(td_path: str):
+def load_collision_deadlocks_and_speed(td_path: str):
     out_td = torch.load(td_path, weights_only=True)
 
-    aa_flag = out_td["agents", "info", "is_collision_with_agents"].bool()
-    al_flag = out_td["agents", "info", "is_collision_with_lanelets"].bool()
+    aa_flag = out_td["next", "agents", "info", "is_collision_with_agents"].bool()
+    al_flag = out_td["next", "agents", "info", "is_collision_with_lanelets"].bool()
+    dl_flag = out_td["next", "agents", "info", "is_deadlocked"].bool()
 
     collide = aa_flag | al_flag
     num_steps = int(aa_flag.shape[1])
@@ -35,11 +37,12 @@ def load_collision_and_speed(td_path: str):
     aa = aa_flag.squeeze(-1).any(dim=-1).sum(dim=-1) / num_steps
     al = al_flag.squeeze(-1).any(dim=-1).sum(dim=-1) / num_steps
     tot = collide.squeeze(-1).any(dim=-1).sum(dim=-1) / num_steps
+    dl = dl_flag.squeeze(-1).any(dim=-1).sum(dim=-1) / num_steps
 
     speed = out_td["agents", "info", "vel"].norm(dim=-1)
     avg_speed = speed.mean().item()
 
-    return aa.item(), al.item(), tot.item(), avg_speed
+    return aa.item(), al.item(), tot.item(), dl.item(), avg_speed
 
 
 def load_computation_time(json_path: str, grouping: str | None):
@@ -63,7 +66,7 @@ def load_computation_time(json_path: str, grouping: str | None):
 # ---------------------------------------------------------------------
 # Load TD metrics
 # ---------------------------------------------------------------------
-aa, al, tot, avg_speed = load_collision_and_speed(td_file_path)
+aa, al, tot, dl, avg_speed = load_collision_deadlocks_and_speed(td_file_path)
 
 
 # ---------------------------------------------------------------------
@@ -74,4 +77,5 @@ print(td_file_path)
 print(f"Average Speed                : {avg_speed:.4f}")
 print(f"Agent-Agent Collision Rate   : {aa:.4f}")
 print(f"Agent-Lanelet Collision Rate : {al:.4f}")
+print(f"Deadlock Rate                : {dl:.4f}")
 print(f"Total Collision Rate         : {tot:.4f}")

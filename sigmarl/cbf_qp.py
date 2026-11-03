@@ -10,14 +10,23 @@ import time
 import math
 from math import ceil, atan2, pi
 from collections import defaultdict, deque
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass, field
 
-from sigmarl.constants import AGENTS
+from sigmarl.constants import (
+    AGENTS,
+    POSITION_SPEED_LATERAL_OFFSET_BOUND,
+    POSITION_SPEED_LOOKAHEAD_DIST,
+)
 from sigmarl.dynamics import KinematicBicycleModel
 from sigmarl.rectangle_approximation import RectangleCircleApproximation
-from sigmarl.helper_common import Parameters
+from sigmarl.helper_common import (
+    Parameters,
+    compute_applied_action_control,
+    compute_path_tracking_target_steering,
+)
 from sigmarl.pseudo_distance import PseudoDistance
+from sigmarl.softmin_distance import SoftminDistance
 from sigmarl.mtv_based_sm_predictor import SafetyMarginEstimatorModule  # TODO?
 from sigmarl.helper_common import Vehicle
 
@@ -32,162 +41,6 @@ class AgentStateList:
 def _euclid(p: np.ndarray, q: np.ndarray) -> float:
     d = p - q
     return float(np.sqrt(d[0] * d[0] + d[1] * d[1]))
-
-
-def group_agents(
-    agent_states: List[AgentStateList],
-    max_group_size: int,
-    max_group_radius: float,
-) -> List[List[int]]:
-    """
-    Group agents into spatially coherent clusters with a hard capacity constraint.
-
-    Key properties:
-      - Scalability: avoids all-pairs distance checks via spatial hashing.
-      - Spatial coherence: agents in the same group are mutually close.
-      - Hard constraints:
-          * group size <= max_group_size
-          * group spatial radius <= max_group_radius
-
-    The algorithm follows a region-growing strategy:
-      1) Partition the plane using a uniform spatial grid.
-      2) Iteratively grow groups from unassigned seed agents.
-      3) Add neighboring agents only if they remain close to the current group centroid.
-    """
-
-    # -----------------------------
-    # Input validation
-    # -----------------------------
-    if max_group_size <= 0:
-        raise ValueError("max_group_size must be positive")
-
-    n_agents = len(agent_states)
-    if n_agents == 0:
-        return []
-
-    # -----------------------------
-    # Estimate spatial scale
-    # -----------------------------
-    # We compute an approximate spatial scale from the agent distribution.
-    # This is used to define a grid cell size such that each cell contains
-    # only a small number of agents on average, ensuring scalability.
-    xs = [s.x for s in agent_states]
-    ys = [s.y for s in agent_states]
-
-    span_x = max(xs) - min(xs) if n_agents > 1 else 1.0
-    span_y = max(ys) - min(ys) if n_agents > 1 else 1.0
-    area = max(span_x * span_y, 1e-6)
-
-    # Average inter-agent spacing heuristic
-    cell_size = math.sqrt(area / n_agents)
-    cell_size = max(cell_size, 1e-3)
-
-    # -----------------------------
-    # Spatial hashing
-    # -----------------------------
-    # Each agent is assigned to a grid cell. During grouping, we only
-    # consider agents in the same or neighboring cells, which avoids
-    # quadratic neighbor searches.
-    def cell_index(x: float, y: float) -> Tuple[int, int]:
-        return (
-            int(math.floor(x / cell_size)),
-            int(math.floor(y / cell_size)),
-        )
-
-    grid: Dict[Tuple[int, int], List[int]] = defaultdict(list)
-    for i, s in enumerate(agent_states):
-        grid[cell_index(s.x, s.y)].append(i)
-
-    # -----------------------------
-    # Group construction
-    # -----------------------------
-    # We maintain a set of agents that have not yet been assigned to any group.
-    unassigned = set(range(n_agents))
-    groups: List[List[int]] = []
-
-    # Moore neighborhood offsets: check the current cell and its 8 neighbors.
-    neighbor_offsets = [
-        (-1, -1),
-        (-1, 0),
-        (-1, 1),
-        (0, -1),
-        (0, 0),
-        (0, 1),
-        (1, -1),
-        (1, 0),
-        (1, 1),
-    ]
-
-    # Continue until all agents are assigned to some group.
-    while unassigned:
-        # -----------------------------
-        # Initialize a new group
-        # -----------------------------
-        # Pick an arbitrary unassigned agent as the seed.
-        seed = next(iter(unassigned))
-        unassigned.remove(seed)
-
-        group: List[int] = [seed]
-        queue = deque([seed])
-
-        # Initialize the group centroid.
-        # We update this incrementally as agents are added.
-        cx = agent_states[seed].x
-        cy = agent_states[seed].y
-
-        # -----------------------------
-        # Region growing
-        # -----------------------------
-        # We expand the group by exploring spatial neighbors of
-        # agents already in the group, subject to size and radius constraints.
-        while queue and len(group) < max_group_size:
-            i = queue.popleft()
-            s_i = agent_states[i]
-            cell_x, cell_y = cell_index(s_i.x, s_i.y)
-
-            # Examine agents in neighboring grid cells only.
-            for dx, dy in neighbor_offsets:
-                cell = (cell_x + dx, cell_y + dy)
-                for j in grid.get(cell, []):
-                    # Skip agents that are already assigned to a group.
-                    if j not in unassigned:
-                        continue
-
-                    s_j = agent_states[j]
-
-                    # -----------------------------
-                    # Spatial coherence check
-                    # -----------------------------
-                    # Enforce that the candidate agent lies within
-                    # max_group_radius of the current group centroid.
-                    dx_c = s_j.x - cx
-                    dy_c = s_j.y - cy
-                    if dx_c * dx_c + dy_c * dy_c > max_group_radius * max_group_radius:
-                        continue
-
-                    # -----------------------------
-                    # Accept agent into group
-                    # -----------------------------
-                    unassigned.remove(j)
-                    queue.append(j)
-                    group.append(j)
-
-                    # Incremental centroid update:
-                    # new_centroid = old_centroid + (x_j - old_centroid) / k
-                    k = len(group)
-                    cx += (s_j.x - cx) / k
-                    cy += (s_j.y - cy) / k
-
-                    # Stop growing if capacity is reached.
-                    if len(group) >= max_group_size:
-                        break
-
-                if len(group) >= max_group_size:
-                    break
-
-        groups.append(group)
-
-    return groups
 
 
 def group_agents_k_nearest(
@@ -317,9 +170,11 @@ class TrajectoryHistory:
     u1: List[float] = field(default_factory=list)
     u2: List[float] = field(default_factory=list)
     evt: List[str] = field(default_factory=list)  # "", "COLL", "QP-INF"
-    lambda_ttcbf: List[float] = field(default_factory=list)
     qp_solving_t: List[float] = field(default_factory=list)
     qp_solving_iter: List[int] = field(default_factory=list)
+    lambda_history: List[np.ndarray] = field(default_factory=list)
+    max_lane_slack: List[float] = field(default_factory=list)
+    max_pair_slack: List[float] = field(default_factory=list)
 
 
 class CBFQP:
@@ -330,7 +185,7 @@ class CBFQP:
         self.env_idx = env_idx
         self.agent_idx = agent_idx
         self.scenario = self.env.base_env.scenario_name
-        self.map_pseudo_distance: PseudoDistance = (
+        self.map_pseudo_distance: PseudoDistance | SoftminDistance = (
             self.env.base_env.scenario_name.map_pseudo_distance
         )
         self.initialize_params()
@@ -355,11 +210,14 @@ class CBFQP:
         )
 
         # Build QPs based on mode
-        if self.parameters.is_grouping_agents:
-            self.build_grouped_cbf_qps()
-        else:
-            if self.parameters.is_solve_qp:
-                self.build_centralized_cbf_qp()
+        if self.parameters.is_solve_qp:
+            if self.parameters.is_using_centralized_cbf:
+                if self.parameters.is_grouping_agents:
+                    self.build_grouped_cbf_qps()
+                else:
+                    self.build_centralized_cbf_qp()
+            else:
+                self.build_fully_decentralized_cbf_qps()
 
         self.cbf_solving_t = []
 
@@ -372,8 +230,6 @@ class CBFQP:
         self.dx = 0.02
         self.dy = 0.02
 
-        self.adaptive_lambda = True if self.parameters.is_solve_qp else False
-
         self.length = AGENTS["length"]
         self.width = AGENTS["width"]
         self.l_wb = AGENTS["l_wb"]
@@ -381,7 +237,7 @@ class CBFQP:
         self.l_r = AGENTS["l_r"]
 
         self.v_max = torch.tensor(
-            AGENTS["max_speed"], device=self.device, dtype=torch.float32
+            self.parameters.max_speed, device=self.device, dtype=torch.float32
         )
         self.v_min = torch.tensor(
             AGENTS["min_speed"], device=self.device, dtype=torch.float32
@@ -400,14 +256,23 @@ class CBFQP:
         self.is_obs_noise = self.parameters.is_obs_noise
         self.obs_noise_level = self.parameters.obs_noise_level
 
-        self.safety_buffer = 0
-        self.lambda_ttcbf = 0.5
+        self.safety_buffer = 0.02 * self.width
+        self.lambda_ttcbf_predefined = (
+            0.2  # Should between 0 and 1. Higher -> more aggressive
+        )
+        self._warned_invalid_cbf_lambda = False
+        self._warned_positive_centralized_slack = False
 
         # Nominal controller selection
         self.nom_controller_type = self.parameters.nom_controller_type
+        self.rl_action_type = getattr(self.parameters, "rl_action_type", "speed_steer")
+        self.lookahead_dist = float(
+            getattr(self.parameters, "lookahead_dist", POSITION_SPEED_LOOKAHEAD_DIST)
+        )
+        self.position_speed_lateral_max = POSITION_SPEED_LATERAL_OFFSET_BOUND
         # CLF parameters
         self.lam_clf = float(getattr(self.parameters, "lam_clf", 2.0))
-        self.ref_speed = float(getattr(self.parameters, "ref_speed", 1.0))  # m/s
+        self.ref_speed = float(self.parameters.ref_speed)  # m/s
         self.w_clf_relax = float(getattr(self.parameters, "w_clf_relax", 1.0))
         self.k_clf_heading = float(
             getattr(self.parameters, "k_clf_heading", 1.0)
@@ -439,8 +304,222 @@ class CBFQP:
         a = (a + pi) % (2 * pi) - pi
         return a
 
+    def _sanitize_raw_action(self, raw_actions):
+        if isinstance(raw_actions, np.ndarray):
+            raw_actions = torch.from_numpy(raw_actions)
+
+        raw_actions = raw_actions.to(self.device, dtype=torch.float32).clone()
+        if raw_actions.ndim == 1:
+            raw_actions = raw_actions.unsqueeze(0)
+            is_batch = False
+        else:
+            is_batch = True
+
+        if self.rl_action_type == "speed":
+            raw_actions[:, 0] = torch.clamp(
+                raw_actions[:, 0],
+                min=-float(self.v_max.item()),
+                max=float(self.v_max.item()),
+            )
+        elif self.rl_action_type == "position_speed":
+            raw_actions[:, 0] = torch.clamp(
+                raw_actions[:, 0],
+                min=-self.position_speed_lateral_max,
+                max=self.position_speed_lateral_max,
+            )
+            raw_actions[:, 1] = torch.clamp(
+                raw_actions[:, 1],
+                min=-float(self.v_max.item()),
+                max=float(self.v_max.item()),
+            )
+        else:
+            raw_actions[:, 0] = torch.clamp(
+                raw_actions[:, 0],
+                min=-float(self.v_max.item()),
+                max=float(self.v_max.item()),
+            )
+            raw_actions[:, 1] = torch.clamp(
+                raw_actions[:, 1],
+                min=float(self.steering_min.item()),
+                max=float(self.steering_max.item()),
+            )
+
+        if not is_batch:
+            raw_actions = raw_actions.squeeze(0)
+        return raw_actions
+
+    def _ref_xy_from_tensordict(self, tensordict, agent_idx: int):
+        ref = tensordict["agents", "info", "ref"][self.env_idx, agent_idx]
+        n_points = ref.shape[-1] // 2
+        ref_idx = min(2, n_points - 1)
+        start = 2 * ref_idx
+        return ref[start : start + 2]
+
+    def _set_speed_target_action_override(self, agent_idx: int, target_action):
+        if self.rl_action_type != "speed":
+            return
+        agent = self.env.base_env.scenario_name.world.agents[agent_idx]
+        target_action = torch.as_tensor(
+            target_action,
+            device=self.device,
+            dtype=torch.float32,
+        ).reshape(2)
+        if not hasattr(agent.dynamics, "speed_target_action_override"):
+            batch_dim = agent.state.pos.shape[0]
+            agent.dynamics.speed_target_action_override = torch.zeros(
+                (batch_dim, 2), device=self.device, dtype=torch.float32
+            )
+            agent.dynamics.speed_target_action_override_mask = torch.zeros(
+                batch_dim, device=self.device, dtype=torch.bool
+            )
+        agent.dynamics.speed_target_action_override[self.env_idx] = target_action
+        agent.dynamics.speed_target_action_override_mask[self.env_idx] = True
+
+    def _target_actions_from_current_actions(self, tensordict, states):
+        raw_actions = tensordict[("agents", "action")][self.env_idx].clone()
+        if self.rl_action_type != "speed":
+            return self.raw_action_to_target_action(raw_actions)
+
+        target_actions = torch.zeros(
+            (raw_actions.shape[0], 2), device=self.device, dtype=torch.float32
+        )
+        agents = self.env.base_env.scenario_name.world.agents
+        for i in range(raw_actions.shape[0]):
+            override_mask = getattr(
+                agents[i].dynamics, "speed_target_action_override_mask", None
+            )
+            if override_mask is not None and override_mask[self.env_idx]:
+                target_actions[i] = agents[i].dynamics.speed_target_action_override[
+                    self.env_idx
+                ]
+            else:
+                target_actions[i] = self.raw_action_to_target_action(
+                    raw_actions[i],
+                    state=states[i],
+                    ref_xy=self._ref_xy_from_tensordict(tensordict, i),
+                )
+        return target_actions
+
+    def raw_action_to_target_action(self, raw_actions, state=None, ref_xy=None):
+        raw_actions = self._sanitize_raw_action(raw_actions)
+        if raw_actions.ndim == 1:
+            raw_actions = raw_actions.unsqueeze(0)
+            is_batch = False
+        else:
+            is_batch = True
+
+        if self.rl_action_type == "speed":
+            if state is None or ref_xy is None:
+                raise ValueError(
+                    "speed rl_action_type requires state and ref_xy to recover target steering."
+                )
+            state = state.to(self.device, dtype=torch.float32)
+            if state.ndim == 1:
+                state = state.unsqueeze(0)
+            ref_xy = ref_xy.to(self.device, dtype=torch.float32)
+            if ref_xy.ndim == 1:
+                ref_xy = ref_xy.unsqueeze(0)
+            target_speed = raw_actions[:, 0]
+            steering_target = compute_path_tracking_target_steering(
+                pos=state[:, 0:2],
+                rot=state[:, 2],
+                ref_point=ref_xy,
+                l_wb=self.l_wb,
+            )
+            target_actions = torch.stack([target_speed, steering_target], dim=1)
+        elif self.rl_action_type == "position_speed":
+            lateral_offset = raw_actions[:, 0]
+            target_speed = raw_actions[:, 1]
+            ld = raw_actions.new_tensor(self.lookahead_dist)
+            L = raw_actions.new_tensor(self.l_wb)
+            steering_target = torch.atan(
+                2.0 * L * lateral_offset / (ld**2 + lateral_offset**2)
+            )
+            target_actions = torch.stack([target_speed, steering_target], dim=1)
+        else:
+            target_actions = raw_actions
+
+        target_actions[:, 0] = torch.clamp(
+            target_actions[:, 0],
+            min=-float(self.v_max.item()),
+            max=float(self.v_max.item()),
+        )
+        target_actions[:, 1] = torch.clamp(
+            target_actions[:, 1],
+            min=float(self.steering_min.item()),
+            max=float(self.steering_max.item()),
+        )
+
+        if not is_batch:
+            target_actions = target_actions.squeeze(0)
+        return target_actions
+
+    def target_action_to_raw_action(self, target_actions):
+        if isinstance(target_actions, np.ndarray):
+            target_actions = torch.from_numpy(target_actions)
+
+        target_actions = target_actions.to(self.device, dtype=torch.float32).clone()
+        if target_actions.ndim == 1:
+            target_actions = target_actions.unsqueeze(0)
+            is_batch = False
+        else:
+            is_batch = True
+
+        target_actions[:, 0] = torch.clamp(
+            target_actions[:, 0],
+            min=-float(self.v_max.item()),
+            max=float(self.v_max.item()),
+        )
+        target_actions[:, 1] = torch.clamp(
+            target_actions[:, 1],
+            min=float(self.steering_min.item()),
+            max=float(self.steering_max.item()),
+        )
+
+        if self.rl_action_type == "speed":
+            raw_actions = target_actions[:, 0:1]
+            projected_target_actions = target_actions
+        elif self.rl_action_type == "position_speed":
+            # Invert the pure-pursuit mapping used in raw_action_to_target_action:
+            #   delta = atan(L * kappa),  kappa = 2*y / (ld^2 + y^2)
+            # where y is the lateral offset of the lookahead point.
+            kappa = torch.tan(target_actions[:, 1]) / float(self.l_wb)
+            ld = float(self.lookahead_dist)
+            y_max = float(self.position_speed_lateral_max)
+            # With the current parameters y_max <= ld, so curvature is monotonic
+            # on the allowed lateral-offset interval and reaches its largest
+            # representable magnitude at +/-y_max.
+            max_kappa = 2.0 * y_max / (ld**2 + y_max**2) if y_max > 0 else 0.0
+            kappa = torch.clamp(kappa, min=-max_kappa, max=max_kappa)
+            # Solve kappa*y^2 - 2*y + kappa*ld^2 = 0 using the numerically stable
+            # root y = kappa*ld^2 / (1 + sqrt(1 - (kappa*ld)^2)). This is the
+            # branch that satisfies y -> 0 as kappa -> 0.
+            discr = torch.clamp(1.0 - (kappa * ld) ** 2, min=0.0)
+            lateral_offset = torch.where(
+                kappa.abs() < 1e-8,
+                torch.zeros_like(kappa),
+                (kappa * (ld**2)) / (1.0 + torch.sqrt(discr)),
+            )
+            lateral_offset = torch.clamp(lateral_offset, min=-y_max, max=y_max)
+            raw_actions = torch.stack([lateral_offset, target_actions[:, 0]], dim=1)
+            # Recompute the target action after projection so callers can compare
+            # the requested target with the closest representable position_speed
+            # action under the lateral-offset bound.
+            projected_target_actions = self.raw_action_to_target_action(raw_actions)
+        else:
+            raw_actions = target_actions
+            projected_target_actions = target_actions
+
+        if not is_batch:
+            raw_actions = raw_actions.squeeze(0)
+            projected_target_actions = projected_target_actions.squeeze(0)
+        return raw_actions, projected_target_actions
+
     def _clf_errors_for_agent(
-        self, state_i: torch.Tensor, ref_xy_i: torch.Tensor
+        self,
+        state_i: torch.Tensor,
+        ref_xy_i: torch.Tensor,
+        ref_speed: Optional[float] = None,
     ) -> Tuple[float, float]:
         """
         heading and speed errors.
@@ -455,51 +534,163 @@ class CBFQP:
         ry = float(ref_xy_i[1].item())
         desired = atan2(ry - y, rx - x)
         e_h = self._wrap_angle(desired - psi)
-        e_v = self.ref_speed - v
+        if ref_speed is None:
+            ref_speed = self.ref_speed
+        e_v = float(ref_speed) - v
         return e_h, e_v
 
+    def _resolve_clf_reference(self, tensordict, state_i: torch.Tensor, agent_idx: int):
+        if (
+            self.parameters.uses_motion_policy
+            and self.rl_action_type == "position_speed"
+        ):
+            raw_action = tensordict[("agents", "action")][
+                self.env_idx, agent_idx
+            ].clone()
+            if self.is_obs_noise:
+                raw_action = (
+                    raw_action + torch.rand_like(raw_action) * self.obs_noise_level
+                )
+            raw_action = self._sanitize_raw_action(raw_action)
+            lateral_offset = raw_action[0]
+            target_speed = float(raw_action[1].item())
+
+            x = state_i[0]
+            y = state_i[1]
+            psi = state_i[2]
+            ld = state_i.new_tensor(self.lookahead_dist)
+            ref_xy = torch.stack(
+                [
+                    x + torch.cos(psi) * ld - torch.sin(psi) * lateral_offset,
+                    y + torch.sin(psi) * ld + torch.cos(psi) * lateral_offset,
+                ]
+            )
+            return ref_xy, target_speed
+
+        if self.parameters.uses_motion_policy and self.rl_action_type == "speed":
+            raw_action = tensordict[("agents", "action")][
+                self.env_idx, agent_idx
+            ].clone()
+            if self.is_obs_noise:
+                raw_action = (
+                    raw_action + torch.rand_like(raw_action) * self.obs_noise_level
+                )
+            raw_action = self._sanitize_raw_action(raw_action)
+            return self._ref_xy_from_tensordict(tensordict, agent_idx), float(
+                raw_action[0].item()
+            )
+
+        ref_xy = self._ref_xy_from_tensordict(tensordict, agent_idx)
+        return ref_xy, self.ref_speed
+
+    def _compute_nominal_control_for_agent(self, tensordict, state_i, agent_idx: int):
+        if self.nom_controller_type == "rl":
+            raw_action = tensordict[("agents", "action")][
+                self.env_idx, agent_idx
+            ].clone()
+            if self.is_obs_noise:
+                raw_action = (
+                    raw_action + torch.rand_like(raw_action) * self.obs_noise_level
+                )
+            target_action, u_nom = self.rl_action_to_u(
+                rl_actions=raw_action,
+                v=state_i[3],
+                steering=state_i[4],
+                state=state_i,
+                ref_xy=(
+                    self._ref_xy_from_tensordict(tensordict, agent_idx)
+                    if self.rl_action_type == "speed"
+                    else None
+                ),
+            )
+            return (
+                u_nom.detach().cpu().numpy().reshape(2),
+                target_action.detach(),
+                0.0,
+                0.0,
+            )
+
+        ref_xy, ref_speed = self._resolve_clf_reference(tensordict, state_i, agent_idx)
+        e_h, e_v = self._clf_errors_for_agent(state_i, ref_xy, ref_speed)
+        u_nom_np = np.array(
+            [
+                np.clip(self.k_clf_speed * e_v, self.a_min, self.a_max),
+                np.clip(
+                    self.k_clf_heading * e_h,
+                    self.steering_rate_min,
+                    self.steering_rate_max,
+                ),
+            ],
+            dtype=np.float64,
+        )
+        target_action = self.u_to_target_action(
+            u_nom_np, state_i[3], state_i[4]
+        ).detach()
+        return u_nom_np, target_action, e_h, e_v
+
+    def _compute_applied_control_for_agent(self, tensordict, state_i, agent_idx: int):
+        raw_action = tensordict[("agents", "action")][self.env_idx, agent_idx].clone()
+
+        target_action, u_applied = self.rl_action_to_u(
+            rl_actions=raw_action,
+            v=state_i[3],
+            steering=state_i[4],
+            state=state_i,
+            ref_xy=(
+                self._ref_xy_from_tensordict(tensordict, agent_idx)
+                if self.rl_action_type == "speed"
+                else None
+            ),
+        )
+        return (
+            u_applied.detach().cpu().numpy().reshape(2),
+            target_action.detach(),
+        )
+
     def rl_action_to_u(
-        self, rl_actions: torch.tensor, v: torch.tensor, steering: torch.tensor
+        self,
+        rl_actions: torch.tensor,
+        v: torch.tensor,
+        steering: torch.tensor,
+        state: torch.Tensor = None,
+        ref_xy: torch.Tensor = None,
     ):
         """
-        Copy the original function
+        Convert the environment action representation into a target speed/steering
+        pair and then into low-level acceleration / steering-rate inputs.
 
         Args:
-            rl_actions: [target_speed, target_steering_angle]
+            rl_actions: [target_speed, target_steering_angle] for "speed_steer",
+                [lateral_offset, target_speed] for "position_speed", or
+                [target_speed] for "speed"
 
         Returns:
+            target_action: [target_speed, target_steering_angle]
             u: [acceleration, steering_rate]
         """
-        # Transform for btach calcultion
-        if rl_actions.ndim == 1 or v.ndim == 0 or steering.ndim == 0:
-            rl_actions = rl_actions.unsqueeze(0)
-            v = v.unsqueeze(0)
-            steering = steering.unsqueeze(0)
-            is_batch = False
-        else:
-            is_batch = True
-
-        rl_actions[:, 0] = torch.clamp(rl_actions[:, 0], min=self.v_min, max=self.v_max)
-        rl_actions[:, 1] = torch.clamp(
-            rl_actions[:, 1], min=self.steering_min, max=self.steering_max
+        return compute_applied_action_control(
+            rl_actions,
+            v,
+            steering,
+            self.dt,
+            rl_action_type=self.rl_action_type,
+            lookahead_dist=self.lookahead_dist,
+            l_wb=self.l_wb,
+            position_speed_lateral_max=self.position_speed_lateral_max,
+            pos=state[..., 0:2] if state is not None else None,
+            rot=state[..., 2] if state is not None else None,
+            path_tracking_ref_point=ref_xy,
+            target_speed_min=-float(self.v_max.item()),
+            target_speed_max=float(self.v_max.item()),
+            target_steering_min=float(self.steering_min.item()),
+            target_steering_max=float(self.steering_max.item()),
+            min_acc=self.a_min,
+            max_acc=self.a_max,
+            min_steering_rate=self.steering_rate_min,
+            max_steering_rate=self.steering_rate_max,
         )
 
-        u_acc = (rl_actions[:, 0] - v) / self.dt
-        u_steering_rate = (rl_actions[:, 1] - steering) / self.dt
-
-        u_acc = torch.clamp(u_acc, min=self.a_min, max=self.a_max)
-        u_steering_rate = torch.clamp(
-            u_steering_rate, min=self.steering_rate_min, max=self.steering_rate_max
-        )
-
-        u = torch.stack((u_acc, u_steering_rate), dim=1)
-
-        return rl_actions, u
-
-    def u_to_rl_action(self, u, state_v, state_steering):
-        """
-        Copy the original function
-        """
+    def u_to_target_action(self, u, state_v, state_steering):
         if isinstance(u, np.ndarray):
             u = torch.from_numpy(u)
         if (
@@ -514,14 +705,28 @@ class CBFQP:
         else:
             is_batch = True
 
+        u = u.to(self.device, dtype=torch.float32)
+        state_v = state_v.to(self.device, dtype=torch.float32)
+        state_steering = state_steering.to(self.device, dtype=torch.float32)
+
         v = state_v + u[:, 0] * self.dt
         steering = state_steering + u[:, 1] * self.dt
         steering = (steering + torch.pi) % (2 * torch.pi) - torch.pi
         v = torch.clamp(v, min=self.v_min, max=self.v_max)
         steering = torch.clamp(steering, min=self.steering_min, max=self.steering_max)
-        rl_action = torch.stack([v, steering], dim=1)
+        target_action = torch.stack([v, steering], dim=1)
         if not is_batch:
-            rl_action = rl_action.squeeze(0)
+            target_action = target_action.squeeze(0)
+        return target_action
+
+    def u_to_rl_action(self, u, state_v, state_steering, agent_idx: int = None):
+        """
+        Copy the original function
+        """
+        target_action = self.u_to_target_action(u, state_v, state_steering)
+        if agent_idx is not None:
+            self._set_speed_target_action_override(agent_idx, target_action)
+        rl_action, _ = self.target_action_to_raw_action(target_action)
         return rl_action.to(self.device)
 
     def get_circle_centers(self, state: torch.Tensor) -> torch.Tensor:
@@ -574,7 +779,8 @@ class CBFQP:
 
     def estimate_agent_2_lane_safety_margin(self, agent_pos: torch.tensor, path_id):
         """
-        Copy the original function
+        agent_pos: torch.Size([2])
+        path_id: Integer
         """
         offsets = torch.tensor(
             [
@@ -593,10 +799,31 @@ class CBFQP:
         query_points = agent_pos.unsqueeze(0) + offsets
 
         time_pseudo_dis_start = time.time()
-        dleft_results, dright_results = self.map_pseudo_distance.get_distance(
-            path_id, query_points
-        )
+        if self.parameters.lane_distance_type == "softmin":
+            (
+                dleft_results,
+                dright_results,
+            ) = self.map_pseudo_distance.get_distance_with_derivatives(
+                path_id, query_points, dx=self.dx, dy=self.dy
+            )
+        else:
+            dleft_results, dright_results = self.map_pseudo_distance.get_distance(
+                path_id, query_points
+            )
         self.time_pseudo_dis += time.time() - time_pseudo_dis_start
+
+        if self.parameters.lane_distance_type == "softmin":
+            dleft, grad_left, hessian_left = dleft_results
+            dright, grad_right, hessian_right = dright_results
+
+            sm_left = dleft - self.circle_radius**2
+            sm_right = dright - self.circle_radius**2
+
+            return sm_left, grad_left, hessian_left, sm_right, grad_right, hessian_right
+        if self.parameters.lane_distance_type != "pseudo":
+            raise ValueError(
+                f"Unsupported lane_distance_type: {self.parameters.lane_distance_type}"
+            )
 
         (
             dleft,
@@ -796,7 +1023,7 @@ class CBFQP:
         cbf_pair_cons = {}  # (i, j, ci, cj) -> cvxpy.Constraint
 
         # Adaptive lambda variables for CBF constraints
-        if self.adaptive_lambda:
+        if self.parameters.adaptive_lambda:
             A_L = [[cp.Parameter((1, 2)) for _ in range(n_circles)] for _ in range(n)]
             b_L = [[cp.Parameter((1,)) for _ in range(n_circles)] for _ in range(n)]
             A_R = [[cp.Parameter((1, 2)) for _ in range(n_circles)] for _ in range(n)]
@@ -849,7 +1076,7 @@ class CBFQP:
                     cbf_lane_cons_R[i][c] = cR
 
         # Vehicle pairwise CBF constraints
-        if self.adaptive_lambda:
+        if self.parameters.adaptive_lambda:
             Aij_i = {}
             Aij_j = {}
             b0ij = {}
@@ -922,14 +1149,16 @@ class CBFQP:
             cost += self.pair_slack_weight * cp.sum_squares(s_pair)
 
         if self.parameters.adaptive_lambda:
-            cost += self.lambda_weight * cp.sum_squares(lambda_bound)
+            cost += self.lambda_weight * cp.sum_squares(
+                lambda_bound - self.lambda_ttcbf_predefined
+            )
             if lambda_pair is not None:
                 cost += self.lambda_weight * cp.sum_squares(lambda_pair)
 
         prob = cp.Problem(cp.Minimize(cost), cons)
 
         # Cache
-        if self.adaptive_lambda:
+        if self.parameters.adaptive_lambda:
             self._qp_cache = dict(
                 n=n,
                 n_circles=n_circles,
@@ -1005,16 +1234,6 @@ class CBFQP:
         self._qp_cache["e_speed"].value = np.zeros((n,))
         self._qp_cache["v_head_const"].value = np.zeros((n,))
         self._qp_cache["v_speed_const"].value = np.zeros((n,))
-        if self.adaptive_lambda:
-            self._qp_cache["lambda_bound"].value = np.zeros(
-                self._qp_cache["lambda_bound"].shape,
-                dtype=np.float64,
-            )
-            if self._qp_cache.get("lambda_pair", None) is not None:
-                self._qp_cache["lambda_pair"].value = np.zeros(
-                    self._qp_cache["lambda_pair"].shape,
-                    dtype=np.float64,
-                )
 
     def update_centralized_cbf_qp(self, tensordict):
         # print(f"[INFO] Updating centralized CBF-QP for env {self.env_idx}...")
@@ -1028,11 +1247,10 @@ class CBFQP:
         path_ids = [int(path_ids_t[i].item()) for i in range(n)]
 
         # Buffers
-        rl_actions = torch.zeros((n, 2), device=self.device, dtype=torch.float32)
-        nominal_actions = np.zeros((n, 2), dtype=np.float64)
-
+        nominal_target_actions = torch.zeros(
+            (n, 2), device=self.device, dtype=torch.float32
+        )
         nom_acc_omega = np.zeros((n, 2), dtype=np.float64)
-        nom_v_steer = np.zeros((n, 2), dtype=np.float64)
 
         # Precompute states and circle centers
         states = []
@@ -1050,41 +1268,22 @@ class CBFQP:
             states.append(s)
             circles_all.append(self.get_circle_centers(s))
 
+        learned_lambdas = self._get_env_cbf_lambdas(tensordict)
+
         # CLF errors and U_nom
         e_h_np = np.zeros((n,), dtype=np.float64)
         e_v_np = np.zeros((n,), dtype=np.float64)
         for i in range(n):
-            if self.nom_controller_type == "rl":
-                rl_i = tensordict[("agents", "action")][self.env_idx, i].clone()
-                if self.is_obs_noise:
-                    rl_i = rl_i + torch.rand_like(rl_i) * self.obs_noise_level
-                rl_i, u_nom_i = self.rl_action_to_u(
-                    rl_actions=rl_i, v=states[i][3], steering=states[i][4]
-                )
-                rl_actions[i, :] = rl_i
-                # nominal_actions[i, :] = u_nom_i.detach().cpu().numpy()
-
-                nom_acc_omega[i, :] = u_nom_i.detach().cpu().numpy()
-                nom_v_steer[i, :] = rl_i.detach().cpu().numpy()
-
-            else:  # "clf"
-                ref_xy = tensordict["agents", "info", "ref"][self.env_idx, i, 4:6]
-                e_h, e_v = self._clf_errors_for_agent(states[i], ref_xy)
-                e_h_np[i] = e_h
-                e_v_np[i] = e_v
-                # nominal P controller: u1 = k_v * e_v ; u2 = k_h * e_h
-                u1_nom = np.clip(self.k_clf_speed * e_v, self.a_min, self.a_max)
-                u2_nom = np.clip(
-                    self.k_clf_heading * e_h,
-                    self.steering_rate_min,
-                    self.steering_rate_max,
-                )
-                # nominal_actions[i, 0] = u1_nom
-                # nominal_actions[i, 1] = u2_nom
-                nom_acc_omega[i, 0] = u1_nom
-                nom_acc_omega[i, 1] = u2_nom
-                nom_v_steer[i, 0] = states[i][3] + e_v
-                nom_v_steer[i, 1] = e_h
+            (
+                u_nom_i,
+                target_action_i,
+                e_h,
+                e_v,
+            ) = self._compute_nominal_control_for_agent(tensordict, states[i], i)
+            nominal_target_actions[i, :] = target_action_i
+            nom_acc_omega[i, :] = u_nom_i
+            e_h_np[i] = e_h
+            e_v_np[i] = e_v
 
         # Fill CLF parameters when in CLF mode; leave zeros for RL
         if self.nom_controller_type == "clf":
@@ -1110,7 +1309,7 @@ class CBFQP:
                 smL, gL, HL, smR, gR, HR = self.estimate_agent_2_lane_safety_margin(
                     circle_pos_i, path_ids[i]
                 )
-                if self.adaptive_lambda:
+                if self.parameters.adaptive_lambda:
                     A_L_ic, b0_L_ic, h_L_ic = self.ttcbf_lane_affine_coeffs(
                         kins_i, ci, smL, gL, HL, self.dt_taylor, None
                     )
@@ -1125,10 +1324,22 @@ class CBFQP:
                     C["h_R"][i][ci].value = h_R_ic
                 else:
                     A_L_ic, b_L_ic = self.ttcbf_lane_affine_coeffs(
-                        kins_i, ci, smL, gL, HL, self.dt_taylor, self.lambda_ttcbf
+                        kins_i,
+                        ci,
+                        smL,
+                        gL,
+                        HL,
+                        self.dt_taylor,
+                        self.lambda_ttcbf_predefined,
                     )
                     A_R_ic, b_R_ic = self.ttcbf_lane_affine_coeffs(
-                        kins_i, ci, smR, gR, HR, self.dt_taylor, self.lambda_ttcbf
+                        kins_i,
+                        ci,
+                        smR,
+                        gR,
+                        HR,
+                        self.dt_taylor,
+                        self.lambda_ttcbf_predefined,
                     )
                     C["A_L"][i][ci].value = np.asarray(
                         A_L_ic, dtype=np.float64
@@ -1150,6 +1361,13 @@ class CBFQP:
         # Pairwise constraints between agents
         for i in range(n - 1):
             for j in range(i + 1, n):
+                if self.parameters.is_learn_cbf_lambda:
+                    lam_i = self._get_agent_cbf_lambda(learned_lambdas, i)
+                    lam_j = self._get_agent_cbf_lambda(learned_lambdas, j)
+                    lambda_ttcbf = float((lam_i + lam_j) / 2.0)
+                    # print(f"Learned lambda for pair ({i}, {j}): {lambda_ttcbf}")
+                else:
+                    lambda_ttcbf = self.lambda_ttcbf_predefined
                 kins_i = self.linearized_center_kinematics_coeffs(states[i])
                 kins_j = self.linearized_center_kinematics_coeffs(states[j])
                 for ci in range(n_circles):
@@ -1159,7 +1377,7 @@ class CBFQP:
                         delta = pi - pj
                         dx = float(delta[0].item())
                         dy = float(delta[1].item())
-                        if self.adaptive_lambda:
+                        if self.parameters.adaptive_lambda:
                             A_i, A_j, b0, h = self.ttcbf_pair_affine_coeffs(
                                 kins_i,
                                 kins_j,
@@ -1185,7 +1403,7 @@ class CBFQP:
                                 dy,
                                 d_safe_sq,
                                 self.dt_taylor,
-                                self.lambda_ttcbf,
+                                lambda_ttcbf,
                             )
                             C["Aij_i"][(i, j, ci, cj)].value = np.asarray(
                                 A_i, dtype=np.float64
@@ -1214,51 +1432,61 @@ class CBFQP:
         if C["u_var"].value.shape != C["u_var"].shape:
             C["u_var"].value = np.zeros(C["u_var"].shape)
 
+        # TODO Remove: instead of solving CBF, we check if the RL actions violate the QP constraints
         if self.parameters.is_solve_qp:
             # Solve
             prob: cp.Problem = C["prob"]
+            invalid_param = self._find_invalid_qp_parameter(C, path="_qp_cache")
 
             solved = False
-            try:
-                prob.solve(
-                    solver=cp.OSQP,
-                    warm_start=True,
-                    max_iter=20000,
-                    eps_abs=1e-5,
-                    eps_rel=1e-5,
-                    polish=True,
-                    adaptive_rho=True,
+            if invalid_param is not None:
+                print(
+                    "[WARN] Skipping centralized OSQP solve due to invalid QP "
+                    f"parameter at {invalid_param[0]}: {invalid_param[1]}"
                 )
-
-            except cp.SolverError:
-                print("[WARN] OSQP solver failed, trying CLARABEL...")
+            else:
                 try:
                     prob.solve(
-                        solver=cp.CLARABEL,
+                        solver=cp.OSQP,
                         warm_start=True,
-                        tol_feas=1e-8,
-                        tol_gap_abs=1e-8,
-                        tol_gap_rel=1e-8,
+                        max_iter=20000,
+                        eps_abs=1e-5,
+                        eps_rel=1e-5,
+                        polish=True,
+                        adaptive_rho=True,
                     )
+
                 except cp.SolverError:
-                    print("[WARN] CLARABEL solver failed, trying SCS...")
+                    print("[WARN] OSQP solver failed, trying CLARABEL...")
                     try:
                         prob.solve(
-                            solver=cp.SCS,
+                            solver=cp.CLARABEL,
                             warm_start=True,
-                            max_iters=100000,
-                            eps=1e-4,
+                            tol_feas=1e-8,
+                            tol_gap_abs=1e-8,
+                            tol_gap_rel=1e-8,
                         )
                     except cp.SolverError:
-                        print(
-                            "[ERROR] SCS solver also failed. Using nominal actions as fallback."
-                        )
+                        print("[WARN] CLARABEL solver failed, trying SCS...")
+                        try:
+                            prob.solve(
+                                solver=cp.SCS,
+                                warm_start=True,
+                                max_iters=100000,
+                                eps=1e-4,
+                            )
+                        except cp.SolverError:
+                            print(
+                                "[ERROR] SCS solver also failed. Using nominal actions as fallback."
+                            )
 
             solved = (
                 prob.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]
                 and C["u_var"].value is not None
                 and np.isfinite(C["u_var"].value).all()
             )
+            if solved:
+                self._record_centralized_slack_usage(C)
 
             if self.env.scenario_name.parameters.is_apply_cbf_action:
                 # Only replace RL actions with CBF actions if is_apply_cbf_action is True
@@ -1266,7 +1494,7 @@ class CBFQP:
                     for i in range(n):
                         s_i = states[i]
                         actions_v_steer_safe = self.u_to_rl_action(
-                            C["u_var"].value[i, :], s_i[3], s_i[4]
+                            C["u_var"].value[i, :], s_i[3], s_i[4], agent_idx=i
                         ).detach()
                         tensordict[("agents", "action")][
                             self.env_idx, i
@@ -1276,19 +1504,22 @@ class CBFQP:
                     for i in range(n):
                         s_i = states[i]
                         actions_v_steer_nom = self.u_to_rl_action(
-                            nom_acc_omega[i, :], s_i[3], s_i[4]
+                            nom_acc_omega[i, :], s_i[3], s_i[4], agent_idx=i
                         ).detach()
                         tensordict[("agents", "action")][
                             self.env_idx, i
                         ] = actions_v_steer_nom
                     self.hist.evt.append("QP-INF")
 
+            applied_target_actions = self._target_actions_from_current_actions(
+                tensordict, states
+            ).detach()
             self.env.base_env.scenario_name.world_state.applied_action_vel[
                 self.env_idx, :
-            ] = tensordict[("agents", "action")][self.env_idx, :, 0]
+            ] = applied_target_actions[:, 0]
             self.env.base_env.scenario_name.world_state.applied_action_steer[
                 self.env_idx, :
-            ] = tensordict[("agents", "action")][self.env_idx, :, 1]
+            ] = applied_target_actions[:, 1]
 
             st = prob.solver_stats
             if hasattr(st, "solve_time"):
@@ -1299,73 +1530,45 @@ class CBFQP:
             if hasattr(st, "num_iters"):
                 self.hist.qp_solving_iter.append(st.num_iters)
 
-            # if self.adaptive_lambda and C["lambda_pair"] is not None:
+            # if self.parameters.adaptive_lambda and C["lambda_pair"] is not None:
             #     print(f"lambda_bound mean {np.mean(C['lambda_bound'].value):.4f}; max {np.max(C['lambda_bound'].value):.4f}; min {np.min(C['lambda_bound'].value):.4f}")
             #     print(f"lambda_pair mean {np.mean(C['lambda_pair'].value):.4f}; max {np.max(C['lambda_pair'].value):.4f}; min {np.min(C['lambda_pair'].value):.4f}")
 
             # For visualization of nominal actions
             if self.env.scenario_name.parameters.is_apply_cbf_action:
-                if self.nom_controller_type == "rl":
-                    self.env.base_env.scenario_name.world_state.nominal_action_vel[
-                        self.env_idx, :
-                    ] = rl_actions[:, 0]
-                    self.env.base_env.scenario_name.world_state.nominal_action_steer[
-                        self.env_idx, :
-                    ] = rl_actions[:, 1]
-                else:
-                    # na = torch.from_numpy(C["U_nom"].value).to(self.device)
-                    self.env.base_env.scenario_name.world_state.nominal_action_vel[
-                        self.env_idx, :
-                    ] = torch.tensor(
-                        nom_v_steer[:, 0], device=self.device, dtype=torch.float32
-                    )
-                    self.env.base_env.scenario_name.world_state.nominal_action_steer[
-                        self.env_idx, :
-                    ] = torch.tensor(
-                        nom_v_steer[:, 1], device=self.device, dtype=torch.float32
-                    )
+                self.env.base_env.scenario_name.world_state.nominal_action_vel[
+                    self.env_idx, :
+                ] = nominal_target_actions[:, 0]
+                self.env.base_env.scenario_name.world_state.nominal_action_steer[
+                    self.env_idx, :
+                ] = nominal_target_actions[:, 1]
             else:
                 # Store the CBF actions
                 if solved:
+                    compare_target_actions = torch.zeros_like(nominal_target_actions)
                     for i in range(n):
                         s_i = states[i]
-                        actions_v_steer_safe = self.u_to_rl_action(
+                        compare_target_actions[i] = self.u_to_target_action(
                             C["u_var"].value[i, :], s_i[3], s_i[4]
                         ).detach()
-
-                        self.env.base_env.scenario_name.world_state.nominal_action_vel[
-                            self.env_idx, i
-                        ] = actions_v_steer_safe[0]
-                        self.env.base_env.scenario_name.world_state.nominal_action_steer[
-                            self.env_idx, i
-                        ] = actions_v_steer_safe[
-                            1
-                        ]
                 else:
-                    # Fallback: use nominal actions
-                    for i in range(n):
-                        s_i = states[i]
-                        actions_v_steer_nom = self.u_to_rl_action(
-                            nom_acc_omega[i, :], s_i[3], s_i[4]
-                        ).detach()
-
-                        self.env.base_env.scenario_name.world_state.nominal_action_vel[
-                            self.env_idx, i
-                        ] = actions_v_steer_nom[0]
-                        self.env.base_env.scenario_name.world_state.nominal_action_steer[
-                            self.env_idx, i
-                        ] = actions_v_steer_nom[
-                            1
-                        ]
-
+                    compare_target_actions = nominal_target_actions
                     self.hist.evt.append("QP-INF")
+
+                self.env.base_env.scenario_name.world_state.nominal_action_vel[
+                    self.env_idx, :
+                ] = compare_target_actions[:, 0]
+                self.env.base_env.scenario_name.world_state.nominal_action_steer[
+                    self.env_idx, :
+                ] = compare_target_actions[:, 1]
         else:
-            if self.adaptive_lambda:
+            print(f"Env {self.env_idx}")
+            if self.parameters.adaptive_lambda:
                 # Ensure lambda variables have values before reading constraint.expr.value
                 if C["lambda_bound"].value is None:
                     C["lambda_bound"].value = np.full(
                         C["lambda_bound"].shape,
-                        float(self.lambda_ttcbf),
+                        float(self.lambda_ttcbf_predefined),
                         dtype=np.float64,
                     )
                 if (
@@ -1374,7 +1577,7 @@ class CBFQP:
                 ):
                     C["lambda_pair"].value = np.full(
                         C["lambda_pair"].shape,
-                        float(self.lambda_ttcbf),
+                        float(self.lambda_ttcbf_predefined),
                         dtype=np.float64,
                     )
 
@@ -1398,6 +1601,527 @@ class CBFQP:
 
         # print(f"abs vel: {(self.env.base_env.scenario_name.world_state.applied_action_vel[self.env_idx, :] - self.env.base_env.scenario_name.world_state.nominal_action_vel[self.env_idx, :]).abs()}")
         # print(f"abs steer: {(self.env.base_env.scenario_name.world_state.applied_action_steer[self.env_idx, :] - self.env.base_env.scenario_name.world_state.nominal_action_steer[self.env_idx, :]).abs()}")
+
+    def build_fully_decentralized_cbf_qps(self):
+        print(
+            f"[INFO] Building fully decentralized CBF-QP for env {self.env_idx}, "
+            f"agent {self.agent_idx}..."
+        )
+        if self.agent_idx is None:
+            raise ValueError("Fully decentralized CBF-QP requires agent_idx to be set.")
+        if hasattr(self, "_fd_qp_cache"):
+            return
+
+        n_agents = int(self.parameters.n_agents)
+        n_circles = int(self.parameters.n_circles_approximate_vehicle)
+
+        e_cap_user = getattr(self.parameters, "max_cross_neighbors", None)
+        if e_cap_user is None:
+            e_cap = max(0, n_agents - 1)
+        else:
+            e_cap = min(max(0, n_agents - 1), max(0, int(e_cap_user)))
+
+        def idx_lane(i_c, side):
+            return 2 * i_c + side
+
+        cross_base = {}
+        cross_count = 0
+        for e_idx in range(e_cap):
+            cross_base[e_idx] = cross_count
+            cross_count += n_circles * n_circles
+
+        u_var = cp.Variable(2)
+        s_lane = cp.Variable(2 * n_circles, nonneg=True)
+        s_cross = cp.Variable(cross_count, nonneg=True) if cross_count > 0 else None
+        s_clf_head = cp.Variable(nonneg=True)
+        s_clf_speed = cp.Variable(nonneg=True)
+
+        cons = [
+            self.a_min <= u_var[0],
+            u_var[0] <= self.a_max,
+            self.steering_rate_min <= u_var[1],
+            u_var[1] <= self.steering_rate_max,
+        ]
+
+        u_nom = cp.Parameter(2)
+        e_head = cp.Parameter()
+        e_speed = cp.Parameter()
+        v_head_const = cp.Parameter()
+        v_speed_const = cp.Parameter()
+
+        cons += [-e_head * u_var[1] + v_head_const - s_clf_head <= 0]
+        cons += [-e_speed * u_var[0] + v_speed_const - s_clf_speed <= 0]
+
+        a_l = [cp.Parameter((1, 2)) for _ in range(n_circles)]
+        a_r = [cp.Parameter((1, 2)) for _ in range(n_circles)]
+        if self.parameters.adaptive_lambda:
+            b0_l = [cp.Parameter((1,)) for _ in range(n_circles)]
+            h_l = [cp.Parameter((1,)) for _ in range(n_circles)]
+            b0_r = [cp.Parameter((1,)) for _ in range(n_circles)]
+            h_r = [cp.Parameter((1,)) for _ in range(n_circles)]
+            b_l = None
+            b_r = None
+            lambda_lane = cp.Variable(2 * n_circles)
+            lambda_lane_ref = cp.Parameter(2 * n_circles)
+            cons += [lambda_lane >= 0, lambda_lane <= 1]
+            if self.parameters.is_learn_cbf_lambda:
+                cons += [lambda_lane == lambda_lane_ref]
+
+            for ci in range(n_circles):
+                cons += [
+                    a_l[ci] @ u_var + b0_l[ci] + h_l[ci] * lambda_lane[idx_lane(ci, 0)]
+                    >= -s_lane[idx_lane(ci, 0)]
+                ]
+                cons += [
+                    a_r[ci] @ u_var + b0_r[ci] + h_r[ci] * lambda_lane[idx_lane(ci, 1)]
+                    >= -s_lane[idx_lane(ci, 1)]
+                ]
+        else:
+            b_l = [cp.Parameter((1,)) for _ in range(n_circles)]
+            b_r = [cp.Parameter((1,)) for _ in range(n_circles)]
+            b0_l = None
+            h_l = None
+            b0_r = None
+            h_r = None
+            lambda_lane = None
+            lambda_lane_ref = None
+
+            for ci in range(n_circles):
+                cons += [a_l[ci] @ u_var + b_l[ci] >= -s_lane[idx_lane(ci, 0)]]
+                cons += [a_r[ci] @ u_var + b_r[ci] >= -s_lane[idx_lane(ci, 1)]]
+
+        cross_uses_symbolic_lambda = (
+            self.parameters.adaptive_lambda and not self.parameters.is_learn_cbf_lambda
+        )
+        axc_i = {}
+        if cross_uses_symbolic_lambda:
+            b0xc = {}
+            hxc = {}
+            bxc = None
+            lambdax_i = cp.Variable(cross_count) if cross_count > 0 else None
+            if lambdax_i is not None:
+                cons += [lambdax_i >= 0, lambdax_i <= 1]
+        else:
+            bxc = {}
+            b0xc = None
+            hxc = None
+            lambdax_i = None
+
+        if cross_count > 0:
+            for e_idx in range(e_cap):
+                for ci in range(n_circles):
+                    for cj in range(n_circles):
+                        axc_i[(e_idx, ci, cj)] = cp.Parameter((1, 2))
+                        if cross_uses_symbolic_lambda:
+                            b0xc[(e_idx, ci, cj)] = cp.Parameter((1,))
+                            hxc[(e_idx, ci, cj)] = cp.Parameter((1,))
+                            cons += [
+                                axc_i[(e_idx, ci, cj)] @ u_var
+                                + self._cross_cbf_drift_scale()
+                                * (
+                                    b0xc[(e_idx, ci, cj)]
+                                    + hxc[(e_idx, ci, cj)]
+                                    * lambdax_i[cross_base[e_idx] + ci * n_circles + cj]
+                                )
+                                >= -s_cross[cross_base[e_idx] + ci * n_circles + cj]
+                            ]
+                        else:
+                            bxc[(e_idx, ci, cj)] = cp.Parameter((1,))
+                            cons += [
+                                axc_i[(e_idx, ci, cj)] @ u_var + bxc[(e_idx, ci, cj)]
+                                >= -s_cross[cross_base[e_idx] + ci * n_circles + cj]
+                            ]
+
+        cost = cp.quad_form(u_var - u_nom, self.nom_weight)
+        cost += self.lane_slack_weight * cp.sum_squares(s_lane)
+        if s_cross is not None:
+            cost += self.cross_slack_weight * cp.sum_squares(s_cross)
+        cost += self.w_clf_relax * (cp.square(s_clf_head) + cp.square(s_clf_speed))
+
+        if self.parameters.adaptive_lambda:
+            cost += self.lambda_weight * cp.sum_squares(
+                lambda_lane - self.lambda_ttcbf_predefined
+            )
+        if lambdax_i is not None:
+            cost += self.lambda_weight * cp.sum_squares(
+                lambdax_i - float(self.lambda_ttcbf_predefined)
+            )
+
+        prob = cp.Problem(cp.Minimize(cost), cons)
+
+        self._fd_qp_cache = dict(
+            n_agents=n_agents,
+            n_circles=n_circles,
+            e_cap=e_cap,
+            cross_base=cross_base,
+            cross_count=cross_count,
+            u_var=u_var,
+            U_nom=u_nom,
+            s_lane=s_lane,
+            s_cross=s_cross,
+            s_clf_head=s_clf_head,
+            s_clf_speed=s_clf_speed,
+            e_head=e_head,
+            e_speed=e_speed,
+            v_head_const=v_head_const,
+            v_speed_const=v_speed_const,
+            A_L=a_l,
+            b_L=b_l,
+            b0_L=b0_l,
+            h_L=h_l,
+            A_R=a_r,
+            b_R=b_r,
+            b0_R=b0_r,
+            h_R=h_r,
+            lambda_lane=lambda_lane,
+            lambda_lane_ref=lambda_lane_ref,
+            Axc_i=axc_i,
+            bxc=bxc,
+            b0xc=b0xc,
+            hxc=hxc,
+            lambdax_i=lambdax_i,
+            idx_lane=idx_lane,
+            prob=prob,
+        )
+
+        u_nom.value = np.zeros((2,), dtype=np.float64)
+        s_lane.value = np.zeros((2 * n_circles,), dtype=np.float64)
+        if s_cross is not None:
+            s_cross.value = np.zeros((cross_count,), dtype=np.float64)
+        s_clf_head.value = 0.0
+        s_clf_speed.value = 0.0
+        e_head.value = 0.0
+        e_speed.value = 0.0
+        v_head_const.value = 0.0
+        v_speed_const.value = 0.0
+        u_var.value = np.zeros((2,), dtype=np.float64)
+        if lambda_lane is not None:
+            lambda_lane.value = np.full(
+                lambda_lane.shape, float(self.lambda_ttcbf_predefined), dtype=np.float64
+            )
+            lambda_lane_ref.value = np.full(
+                lambda_lane_ref.shape,
+                float(self.lambda_ttcbf_predefined),
+                dtype=np.float64,
+            )
+        if lambdax_i is not None:
+            lambdax_i.value = np.full(
+                lambdax_i.shape, float(self.lambda_ttcbf_predefined), dtype=np.float64
+            )
+
+    def update_fully_decentralized_cbf_qps(self, tensordict):
+        assert hasattr(
+            self, "_fd_qp_cache"
+        ), "Call build_fully_decentralized_cbf_qps first."
+        if self.agent_idx is None:
+            raise ValueError("Fully decentralized CBF-QP requires agent_idx to be set.")
+
+        cache = self._fd_qp_cache
+        i = int(self.agent_idx)
+        n_agents = int(cache["n_agents"])
+        n_circles = int(cache["n_circles"])
+        e_cap = int(cache["e_cap"])
+        cbf_coupling_range = float(self.parameters.cbf_coupling_range)
+
+        agents: List[Vehicle] = self.env.base_env.scenario_name.world.agents
+        path_ids_t = tensordict["agents", "info", "path_id"][self.env_idx]
+        path_ids = [int(path_ids_t[k].item()) for k in range(n_agents)]
+
+        states = []
+        centers = []
+        centers_flat = []
+        for k in range(n_agents):
+            s = torch.cat(
+                [
+                    agents[k].state.pos[self.env_idx],
+                    agents[k].state.rot[self.env_idx],
+                    agents[k].state.speed[self.env_idx],
+                    agents[k].state.steering[self.env_idx],
+                ],
+                dim=-1,
+            )
+            states.append(s)
+            centers.append(self.get_circle_centers(s))
+            centers_flat.append(
+                np.array([float(s[0].item()), float(s[1].item())], dtype=np.float64)
+            )
+
+        learned_lambdas = self._get_env_cbf_lambdas(tensordict)
+
+        (
+            u_nom_np,
+            nominal_target_i,
+            e_head_i,
+            e_speed_i,
+        ) = self._compute_nominal_control_for_agent(tensordict, states[i], i)
+        v_head_const_i = self.lam_clf * 0.5 * (e_head_i**2)
+        v_speed_const_i = self.lam_clf * 0.5 * (e_speed_i**2)
+
+        cache["U_nom"].value = u_nom_np
+        cache["e_head"].value = float(e_head_i)
+        cache["e_speed"].value = float(e_speed_i)
+        cache["v_head_const"].value = float(v_head_const_i)
+        cache["v_speed_const"].value = float(v_speed_const_i)
+
+        kins_i = self.linearized_center_kinematics_coeffs(states[i])
+        lane_lambda_ref = None
+        if cache["lambda_lane"] is not None:
+            lane_lambda_ref = np.full(
+                cache["lambda_lane"].shape,
+                float(self.lambda_ttcbf_predefined),
+                dtype=np.float64,
+            )
+        # Lane constraints
+        for ci in range(n_circles):
+            p_ic = centers[i][ci][0:2]
+            sm_l, g_l, h_l, sm_r, g_r, h_r = self.estimate_agent_2_lane_safety_margin(
+                p_ic, path_ids[i]
+            )
+            if self.parameters.adaptive_lambda:
+                a_l_ic, b0_l_ic, h_l_ic = self.ttcbf_lane_affine_coeffs(
+                    kins_i, ci, sm_l, g_l, h_l, self.dt_taylor, None
+                )
+                a_r_ic, b0_r_ic, h_r_ic = self.ttcbf_lane_affine_coeffs(
+                    kins_i, ci, sm_r, g_r, h_r, self.dt_taylor, None
+                )
+                cache["A_L"][ci].value = a_l_ic
+                cache["b0_L"][ci].value = b0_l_ic
+                cache["h_L"][ci].value = h_l_ic
+                cache["A_R"][ci].value = a_r_ic
+                cache["b0_R"][ci].value = b0_r_ic
+                cache["h_R"][ci].value = h_r_ic
+            else:
+                a_l_ic, b_l_ic = self.ttcbf_lane_affine_coeffs(
+                    kins_i,
+                    ci,
+                    sm_l,
+                    g_l,
+                    h_l,
+                    self.dt_taylor,
+                    self.lambda_ttcbf_predefined,
+                )
+                a_r_ic, b_r_ic = self.ttcbf_lane_affine_coeffs(
+                    kins_i,
+                    ci,
+                    sm_r,
+                    g_r,
+                    h_r,
+                    self.dt_taylor,
+                    self.lambda_ttcbf_predefined,
+                )
+                cache["A_L"][ci].value = np.asarray(a_l_ic, dtype=np.float64).reshape(
+                    1, 2
+                )
+                cache["b_L"][ci].value = np.asarray(b_l_ic, dtype=np.float64).reshape(
+                    1,
+                )
+                cache["A_R"][ci].value = np.asarray(a_r_ic, dtype=np.float64).reshape(
+                    1, 2
+                )
+                cache["b_R"][ci].value = np.asarray(b_r_ic, dtype=np.float64).reshape(
+                    1,
+                )
+
+        nbrs: List[int] = []
+        for j in range(n_agents):
+            if j == i:
+                continue
+            if _euclid(centers_flat[i], centers_flat[j]) <= cbf_coupling_range + 1e-9:
+                nbrs.append(j)
+        nbrs = nbrs[:e_cap]
+
+        cross_lambda_ref = None
+        if cache["lambdax_i"] is not None:
+            cross_lambda_ref = np.full(
+                cache["lambdax_i"].shape,
+                float(self.lambda_ttcbf_predefined),
+                dtype=np.float64,
+            )
+
+        # Cross constraints with neighbors
+        d_safe = float(2.0 * self.circle_radius + self.safety_buffer)
+        d_safe_sq = d_safe * d_safe
+        for e_idx in range(e_cap):
+            if e_idx < len(nbrs):
+                j = nbrs[e_idx]
+                kins_j = self.linearized_center_kinematics_coeffs(states[j])
+                for ci in range(n_circles):
+                    for cj in range(n_circles):
+                        lam_cross = (
+                            self._get_agent_cbf_lambda(learned_lambdas, i)
+                            if self.parameters.is_learn_cbf_lambda
+                            else float(self.lambda_ttcbf_predefined)
+                        )
+                        pi = centers[i][ci][0:2]
+                        pj = centers[j][cj][0:2]
+                        dx = float((pi - pj)[0].item())
+                        dy = float((pi - pj)[1].item())
+                        if cache["lambdax_i"] is not None:
+                            cross_lambda_ref[
+                                cache["cross_base"][e_idx] + ci * n_circles + cj
+                            ] = lam_cross
+                            a_i, b0, h = self.ttcbf_pair_affine_coeffs_cross(
+                                kins_i,
+                                kins_j,
+                                ci,
+                                cj,
+                                dx,
+                                dy,
+                                d_safe_sq,
+                                self.dt_taylor,
+                                None,
+                            )
+                            cache["Axc_i"][(e_idx, ci, cj)].value = a_i
+                            cache["b0xc"][(e_idx, ci, cj)].value = b0
+                            cache["hxc"][(e_idx, ci, cj)].value = h
+                        else:
+                            a_i, b = self.ttcbf_pair_affine_coeffs_cross(
+                                kins_i,
+                                kins_j,
+                                ci,
+                                cj,
+                                dx,
+                                dy,
+                                d_safe_sq,
+                                self.dt_taylor,
+                                lam_cross,
+                            )
+                            cache["Axc_i"][(e_idx, ci, cj)].value = a_i
+                            cache["bxc"][(e_idx, ci, cj)].value = b
+            else:
+                for ci in range(n_circles):
+                    for cj in range(n_circles):
+                        cache["Axc_i"][(e_idx, ci, cj)].value = np.zeros((1, 2))
+                        if cache["lambdax_i"] is not None:
+                            cache["b0xc"][(e_idx, ci, cj)].value = np.array([1.0])
+                            cache["hxc"][(e_idx, ci, cj)].value = np.array([0.0])
+                        else:
+                            cache["bxc"][(e_idx, ci, cj)].value = np.array([1.0])
+
+        cache["s_lane"].value = np.zeros(cache["s_lane"].shape)
+        if cache["s_cross"] is not None:
+            cache["s_cross"].value = np.zeros(cache["s_cross"].shape)
+        cache["s_clf_head"].value = 0.0
+        cache["s_clf_speed"].value = 0.0
+        cache["u_var"].value = cache["U_nom"].value.copy()
+
+        if cache["lambda_lane"] is not None:
+            cache["lambda_lane_ref"].value = lane_lambda_ref
+            cache["lambda_lane"].value = (
+                lane_lambda_ref.copy()
+                if self.parameters.is_learn_cbf_lambda
+                else np.full(
+                    cache["lambda_lane"].shape,
+                    float(self.lambda_ttcbf_predefined),
+                    dtype=np.float64,
+                )
+            )
+        if cache["lambdax_i"] is not None:
+            cache["lambdax_i"].value = (
+                cross_lambda_ref.copy()
+                if self.parameters.is_learn_cbf_lambda
+                else np.full(
+                    cache["lambdax_i"].shape,
+                    float(self.lambda_ttcbf_predefined),
+                    dtype=np.float64,
+                )
+            )
+
+        prob: cp.Problem = cache["prob"]
+        invalid_param = self._find_invalid_qp_parameter(
+            cache, path=f"_fd_qp_cache[agent={i}]"
+        )
+        if invalid_param is not None:
+            print(
+                "[WARN] Skipping fully decentralized OSQP solve due to invalid QP "
+                f"parameter at {invalid_param[0]}: {invalid_param[1]}"
+            )
+        else:
+            try:
+                prob.solve(
+                    solver=cp.OSQP,
+                    warm_start=True,
+                    max_iter=20000,
+                    eps_abs=1e-5,
+                    eps_rel=1e-5,
+                    polish=True,
+                    adaptive_rho=True,
+                )
+            except (ValueError, cp.SolverError):
+                print(
+                    "[WARN] Fully decentralized OSQP solve failed, trying CLARABEL..."
+                )
+                try:
+                    prob.solve(
+                        solver=cp.CLARABEL,
+                        warm_start=True,
+                        tol_feas=1e-8,
+                        tol_gap_abs=1e-8,
+                        tol_gap_rel=1e-8,
+                    )
+                except cp.SolverError:
+                    print("[WARN] CLARABEL solver failed, trying SCS...")
+                    try:
+                        prob.solve(
+                            solver=cp.SCS,
+                            warm_start=True,
+                            max_iters=100000,
+                            eps=1e-4,
+                        )
+                    except cp.SolverError:
+                        print(
+                            "[ERROR] SCS solver also failed. Using nominal actions as fallback."
+                        )
+
+        solved = (
+            prob.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]
+            and cache["u_var"].value is not None
+            and np.isfinite(cache["u_var"].value).all()
+        )
+
+        if solved:
+            u_safe = cache["u_var"].value
+            action_safe = self.u_to_rl_action(
+                u_safe, states[i][3], states[i][4], agent_idx=i
+            ).detach()
+            tensordict[("agents", "action")][self.env_idx, i] = action_safe
+        else:
+            action_nom = self.u_to_rl_action(
+                u_nom_np, states[i][3], states[i][4], agent_idx=i
+            ).detach()
+            tensordict[("agents", "action")][self.env_idx, i] = action_nom
+            self.hist.evt.append("QP-INF")
+
+        applied_target_i = self._target_actions_from_current_actions(
+            tensordict, states
+        )[i].detach()
+        self.env.base_env.scenario_name.world_state.applied_action_vel[
+            self.env_idx, i
+        ] = applied_target_i[0]
+        self.env.base_env.scenario_name.world_state.applied_action_steer[
+            self.env_idx, i
+        ] = applied_target_i[1]
+
+        self.env.base_env.scenario_name.world_state.nominal_action_vel[
+            self.env_idx, i
+        ] = nominal_target_i[0]
+        self.env.base_env.scenario_name.world_state.nominal_action_steer[
+            self.env_idx, i
+        ] = nominal_target_i[1]
+
+        if i == 0:
+            self.scenario.inter_groups = [[k] for k in range(n_agents)]
+            self.scenario.cross_groups = {}
+        if hasattr(self.scenario, "cross_groups") and isinstance(
+            self.scenario.cross_groups, dict
+        ):
+            self.scenario.cross_groups[i] = nbrs
+
+        st = prob.solver_stats
+        if hasattr(st, "solve_time"):
+            self.hist.qp_solving_t.append(st.solve_time)
+        if hasattr(st, "num_iters"):
+            self.hist.qp_solving_iter.append(st.num_iters)
 
     def _get_nominal_cbf_constraint_values(self, tol: float = 1e-9):
         """
@@ -1559,6 +2283,231 @@ class CBFQP:
 
         return r_left, r_right, r_pair
 
+    # =========================
+    # Grouped multi-QP path
+    # =========================
+
+    def _get_env_cbf_lambdas(self, tensordict):
+        if not self.parameters.is_learn_cbf_lambda:
+            return None
+
+        lambda_env = tensordict.get(("agents", "cbf", "lambda"))[self.env_idx]
+        lambda_env = lambda_env.squeeze(-1).detach().cpu().numpy()
+        lambda_env = np.asarray(lambda_env, dtype=np.float64)
+
+        invalid_mask = ~np.isfinite(lambda_env)
+        if invalid_mask.any():
+            if not self._warned_invalid_cbf_lambda:
+                invalid_agents = np.nonzero(invalid_mask)[0].tolist()
+                print(
+                    "[WARN] Non-finite learned CBF lambda detected in "
+                    f"env {self.env_idx} for agents {invalid_agents}. "
+                    f"Falling back to lambda_ttcbf={self.lambda_ttcbf_predefined:.3f}."
+                )
+                self._warned_invalid_cbf_lambda = True
+            lambda_env = lambda_env.copy()
+            lambda_env[invalid_mask] = float(self.lambda_ttcbf_predefined)
+
+        return np.clip(lambda_env, 0.0, 1.0)
+
+    def _get_agent_cbf_lambda(self, learned_lambdas, agent_idx: int) -> float:
+        if learned_lambdas is None:
+            return float(self.lambda_ttcbf_predefined)
+        return float(learned_lambdas[agent_idx])
+
+    def _cross_cbf_drift_scale(self) -> float:
+        """Return the half-split factor for decentralized pair CBF terms.
+
+        For one circle pair, the centralized Taylor CBF inequality has the
+        affine form
+
+            A_i u_i + A_j u_j + b0 + lambda h >= 0,
+
+        where ``b0`` contains the state-only Taylor drift terms
+        ``dot_h * Dt + 0.5 * Dt**2 * ddot_h_0`` and the control inputs only
+        enter through ``A_i u_i`` and ``A_j u_j``.  The fully decentralized
+        cross-agent constraints assign each agent only its own control block:
+
+            A_i u_i + 0.5 * (b0 + lambda h) >= 0,
+            A_j u_j + 0.5 * (b0 + lambda h) >= 0.
+
+        Summing the two directed constraints recovers the centralized
+        inequality, so satisfying both decentralized constraints is a
+        sufficient condition for satisfying the centralized pair constraint.
+        This split is independent of whether ``lambda`` is learned or fixed;
+        learning changes the value of ``lambda``, not the algebraic split.
+        """
+        return 0.5
+
+    def _record_centralized_slack_usage(self, C: dict) -> None:
+        lane_slack = C["s_bound"].value
+        pair_slack = None if C["s_pair"] is None else C["s_pair"].value
+
+        lane_max = (
+            float(np.max(lane_slack))
+            if lane_slack is not None and np.size(lane_slack) > 0
+            else 0.0
+        )
+        pair_max = (
+            float(np.max(pair_slack))
+            if pair_slack is not None and np.size(pair_slack) > 0
+            else 0.0
+        )
+
+        self.hist.max_lane_slack.append(lane_max)
+        self.hist.max_pair_slack.append(pair_max)
+
+        if (
+            not self._warned_positive_centralized_slack
+            and max(lane_max, pair_max) > 1e-3
+        ):
+            print(
+                "[WARN] Centralized CBF-QP required positive slack in "
+                f"env {self.env_idx}: lane={lane_max:.3e}, pair={pair_max:.3e}. "
+                "OSQP success does not imply hard safety when slack is active."
+            )
+            self._warned_positive_centralized_slack = True
+
+    def _find_invalid_qp_parameter(self, obj, path="cache"):
+        if isinstance(obj, cp.Parameter):
+            if obj.value is None:
+                return path, "value is None"
+            arr = np.asarray(obj.value, dtype=np.float64)
+            if not np.isfinite(arr).all():
+                bad_idx = np.argwhere(~np.isfinite(arr))
+                bad_suffix = ""
+                if bad_idx.size > 0:
+                    bad_suffix = (
+                        f", first_bad_index={tuple(int(i) for i in bad_idx[0])}"
+                    )
+                return (
+                    path,
+                    "non-finite value"
+                    f"{bad_suffix}, shape={arr.shape}, sample={arr.reshape(-1)[:4]}",
+                )
+            return None
+
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key in {"prob", "pair_base", "cross_base", "idx_lane"}:
+                    continue
+                key_str = str(key)
+                result = self._find_invalid_qp_parameter(
+                    value, path=f"{path}[{key_str}]"
+                )
+                if result is not None:
+                    return result
+            return None
+
+        if isinstance(obj, (list, tuple)):
+            for idx, value in enumerate(obj):
+                result = self._find_invalid_qp_parameter(value, path=f"{path}[{idx}]")
+                if result is not None:
+                    return result
+            return None
+
+        return None
+
+    def _debug_osqp_bound_update_failure(self, prob: cp.Problem, context: dict):
+        print(
+            "[DEBUG] OSQP bound update failure context: "
+            f"env={context.get('env_idx')}, group={context.get('group_idx')}, "
+            f"members={context.get('members')}, slot2id={context.get('slot2id')}, "
+            f"cross_neighbors={context.get('cross_neighbors')}"
+        )
+
+        try:
+            problem_data = prob.get_problem_data(cp.OSQP)
+            data = problem_data[0] if isinstance(problem_data, tuple) else problem_data
+        except Exception as exc:
+            print(f"[DEBUG] Failed to extract OSQP problem data: {exc!r}")
+            return
+
+        if not isinstance(data, dict):
+            print(
+                "[DEBUG] Unexpected OSQP problem data type: " f"{type(data).__name__}"
+            )
+            return
+
+        print(f"[DEBUG] OSQP data keys: {sorted(data.keys())}")
+
+        lower = data.get("lower_bounds")
+        upper = data.get("upper_bounds")
+        if lower is None or upper is None:
+            lower = data.get("l")
+            upper = data.get("u")
+        if lower is None or upper is None:
+            beq = data.get("b")
+            gineq = data.get("G")
+            if beq is not None and gineq is not None:
+                beq_arr = np.asarray(beq, dtype=np.float64).reshape(-1)
+                gineq_arr = np.asarray(gineq, dtype=np.float64).reshape(-1)
+                lower = np.concatenate(
+                    [beq_arr, np.full(gineq_arr.shape, -np.inf, dtype=np.float64)]
+                )
+                upper = np.concatenate([beq_arr, gineq_arr])
+            elif beq is not None:
+                beq_arr = np.asarray(beq, dtype=np.float64).reshape(-1)
+                lower = beq_arr
+                upper = beq_arr
+            elif gineq is not None:
+                gineq_arr = np.asarray(gineq, dtype=np.float64).reshape(-1)
+                lower = np.full(gineq_arr.shape, -np.inf, dtype=np.float64)
+                upper = gineq_arr
+
+        if lower is None or upper is None:
+            print("[DEBUG] Could not reconstruct OSQP lower/upper bounds.")
+            return
+
+        lower = np.asarray(lower, dtype=np.float64).reshape(-1)
+        upper = np.asarray(upper, dtype=np.float64).reshape(-1)
+
+        if lower.shape != upper.shape:
+            print(
+                "[DEBUG] Bound shape mismatch: "
+                f"lower={lower.shape}, upper={upper.shape}"
+            )
+            return
+
+        nan_lower = np.flatnonzero(np.isnan(lower))
+        nan_upper = np.flatnonzero(np.isnan(upper))
+        if nan_lower.size > 0:
+            print(
+                "[DEBUG] NaN detected in lower bounds at rows "
+                f"{nan_lower[:10].tolist()}"
+            )
+        if nan_upper.size > 0:
+            print(
+                "[DEBUG] NaN detected in upper bounds at rows "
+                f"{nan_upper[:10].tolist()}"
+            )
+
+        finite_lower = lower[np.isfinite(lower)]
+        finite_upper = upper[np.isfinite(upper)]
+        if finite_lower.size > 0 and finite_upper.size > 0:
+            print(
+                "[DEBUG] Bound stats: "
+                f"lower[min,max]=({finite_lower.min():.12e}, {finite_lower.max():.12e}), "
+                f"upper[min,max]=({finite_upper.min():.12e}, {finite_upper.max():.12e})"
+            )
+
+        bad_rows = np.flatnonzero(lower > upper)
+        if bad_rows.size == 0:
+            print(
+                "[DEBUG] No rows with lower > upper found in reconstructed OSQP data."
+            )
+            return
+
+        print(
+            "[DEBUG] Rows with lower > upper detected: "
+            f"count={bad_rows.size}, first_rows={bad_rows[:10].tolist()}"
+        )
+        for row in bad_rows[:10]:
+            print(
+                "[DEBUG]   row="
+                f"{int(row)} lower={lower[row]:.12e} upper={upper[row]:.12e}"
+            )
+
     def build_grouped_cbf_qps(self):
         """
         Prebuild G group QPs. Each group has capacity m = max_group_size.
@@ -1580,6 +2529,12 @@ class CBFQP:
         self._group_capacity = m
         self._group_count = G
         self._group_circle_count = C
+        self._group_disable_osqp = m == 1
+        if self._group_disable_osqp:
+            print(
+                "[INFO] Grouped QPs with max_group_size=1 will use CLARABEL "
+                "directly to avoid OSQP bound-update failures."
+            )
 
         # -----------------------------
         # Cross-group preallocation size E
@@ -1665,38 +2620,78 @@ class CBFQP:
 
             # Lane params
             A_L = [[cp.Parameter((1, 2)) for _ in range(C)] for _ in range(m)]
-            b0_L = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
-            h_L = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
             A_R = [[cp.Parameter((1, 2)) for _ in range(C)] for _ in range(m)]
-            b0_R = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
-            h_R = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
+            if self.parameters.adaptive_lambda:
+                b0_L = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
+                h_L = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
+                b0_R = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
+                h_R = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
+                b_L = None
+                b_R = None
 
-            lambda_lane = cp.Variable(2 * m * C)
-            cons += [lambda_lane >= 0, lambda_lane <= 1]
+                lambda_lane = cp.Variable(2 * m * C)
+                lambda_lane_ref = cp.Parameter(2 * m * C)
+                cons += [lambda_lane >= 0, lambda_lane <= 1]
+                if self.parameters.is_learn_cbf_lambda:
+                    cons += [lambda_lane == lambda_lane_ref]
 
-            for i in range(m):
-                for c in range(C):
-                    cons += [
-                        A_L[i][c] @ u_var[i, :]
-                        + b0_L[i][c]
-                        + h_L[i][c] * lambda_lane[idx_lane(i, c, 0)]
-                        >= -s_lane[idx_lane(i, c, 0)]
-                    ]
-                    cons += [
-                        A_R[i][c] @ u_var[i, :]
-                        + b0_R[i][c]
-                        + h_R[i][c] * lambda_lane[idx_lane(i, c, 1)]
-                        >= -s_lane[idx_lane(i, c, 1)]
-                    ]
+                for i in range(m):
+                    for c in range(C):
+                        cons += [
+                            A_L[i][c] @ u_var[i, :]
+                            + b0_L[i][c]
+                            + h_L[i][c] * lambda_lane[idx_lane(i, c, 0)]
+                            >= -s_lane[idx_lane(i, c, 0)]
+                        ]
+                        cons += [
+                            A_R[i][c] @ u_var[i, :]
+                            + b0_R[i][c]
+                            + h_R[i][c] * lambda_lane[idx_lane(i, c, 1)]
+                            >= -s_lane[idx_lane(i, c, 1)]
+                        ]
+            else:
+                b_L = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
+                b_R = [[cp.Parameter((1,)) for _ in range(C)] for _ in range(m)]
+                b0_L = None
+                h_L = None
+                b0_R = None
+                h_R = None
+                lambda_lane = None
+                lambda_lane_ref = None
+
+                for i in range(m):
+                    for c in range(C):
+                        cons += [
+                            A_L[i][c] @ u_var[i, :] + b_L[i][c]
+                            >= -s_lane[idx_lane(i, c, 0)]
+                        ]
+                        cons += [
+                            A_R[i][c] @ u_var[i, :] + b_R[i][c]
+                            >= -s_lane[idx_lane(i, c, 1)]
+                        ]
+
+            pair_uses_symbolic_lambda = (
+                self.parameters.adaptive_lambda
+                and not self.parameters.is_learn_cbf_lambda
+            )
 
             # Intra-group pairs
             Aij_i = {}
             Aij_j = {}
-            b0ij = {}
-            hij = {}
-            lambda_pair = cp.Variable(pair_count) if pair_count > 0 else None
-            if lambda_pair is not None:
-                cons += [lambda_pair >= 0, lambda_pair <= 1]
+            if pair_uses_symbolic_lambda:
+                b0ij = {}
+                hij = {}
+                bij = None
+                lambda_pair = cp.Variable(pair_count) if pair_count > 0 else None
+                lambda_pair_ref = None
+                if lambda_pair is not None:
+                    cons += [lambda_pair >= 0, lambda_pair <= 1]
+            else:
+                bij = {}
+                b0ij = None
+                hij = None
+                lambda_pair = None
+                lambda_pair_ref = None
 
             for i in range(m - 1):
                 for j in range(i + 1, m):
@@ -1704,9 +2699,13 @@ class CBFQP:
                         for cj in range(C):
                             Aij_i[(i, j, ci, cj)] = cp.Parameter((1, 2))
                             Aij_j[(i, j, ci, cj)] = cp.Parameter((1, 2))
-                            b0ij[(i, j, ci, cj)] = cp.Parameter((1,))
-                            hij[(i, j, ci, cj)] = cp.Parameter((1,))
-                            if s_pair is None:
+                            if pair_uses_symbolic_lambda:
+                                b0ij[(i, j, ci, cj)] = cp.Parameter((1,))
+                                hij[(i, j, ci, cj)] = cp.Parameter((1,))
+                            else:
+                                bij[(i, j, ci, cj)] = cp.Parameter((1,))
+
+                            if s_pair is None and pair_uses_symbolic_lambda:
                                 cons += [
                                     Aij_i[(i, j, ci, cj)] @ u_var[i, :]
                                     + Aij_j[(i, j, ci, cj)] @ u_var[j, :]
@@ -1714,7 +2713,14 @@ class CBFQP:
                                     + hij[(i, j, ci, cj)] * 1.0
                                     >= 0
                                 ]
-                            else:
+                            elif s_pair is None:
+                                cons += [
+                                    Aij_i[(i, j, ci, cj)] @ u_var[i, :]
+                                    + Aij_j[(i, j, ci, cj)] @ u_var[j, :]
+                                    + bij[(i, j, ci, cj)]
+                                    >= 0
+                                ]
+                            elif pair_uses_symbolic_lambda:
                                 cons += [
                                     Aij_i[(i, j, ci, cj)] @ u_var[i, :]
                                     + Aij_j[(i, j, ci, cj)] @ u_var[j, :]
@@ -1723,43 +2729,79 @@ class CBFQP:
                                     * lambda_pair[pair_base[(i, j)] + ci * C + cj]
                                     >= -s_pair[pair_base[(i, j)] + ci * C + cj]
                                 ]
+                            else:
+                                cons += [
+                                    Aij_i[(i, j, ci, cj)] @ u_var[i, :]
+                                    + Aij_j[(i, j, ci, cj)] @ u_var[j, :]
+                                    + bij[(i, j, ci, cj)]
+                                    >= -s_pair[pair_base[(i, j)] + ci * C + cj]
+                                ]
 
             # -----------------------------
             # Cross-group (only i's control), only if E > 0
             # -----------------------------
+            cross_uses_symbolic_lambda = (
+                self.parameters.adaptive_lambda
+                and not self.parameters.is_learn_cbf_lambda
+            )
             Axc_i = {}
-            b0xc = {}
-            hxc = {}
+            if cross_uses_symbolic_lambda:
+                b0xc = {}
+                hxc = {}
+                bxc = None
+                lambdax_i = cp.Variable(cross_count) if cross_count > 0 else None
+                lambdax_i_ref = None
+                if lambdax_i is not None:
+                    cons += [lambdax_i >= 0, lambdax_i <= 1]
+            else:
+                bxc = {}
+                b0xc = None
+                hxc = None
+                lambdax_i = None
+                lambdax_i_ref = None
 
-            lambdax_i = cp.Variable(cross_count) if cross_count > 0 else None
-            if lambdax_i is not None:
-                cons += [lambdax_i >= 0, lambdax_i <= 1]
-
+            if cross_count > 0:
                 for i in range(m):
                     for e in range(E):
                         for ci in range(C):
                             for cj in range(C):
                                 Axc_i[(i, e, ci, cj)] = cp.Parameter((1, 2))
-                                b0xc[(i, e, ci, cj)] = cp.Parameter((1,))
-                                hxc[(i, e, ci, cj)] = cp.Parameter((1,))
-                                # Active form (with slack and lambda)
-                                if s_cross is not None:
+                                if cross_uses_symbolic_lambda:
+                                    b0xc[(i, e, ci, cj)] = cp.Parameter((1,))
+                                    hxc[(i, e, ci, cj)] = cp.Parameter((1,))
+                                else:
+                                    bxc[(i, e, ci, cj)] = cp.Parameter((1,))
+                                # Active form
+                                if s_cross is not None and cross_uses_symbolic_lambda:
                                     cons += [
                                         Axc_i[(i, e, ci, cj)] @ u_var[i, :]
-                                        + 0.5
-                                        * b0xc[
-                                            (i, e, ci, cj)
-                                        ]  # TODO: this 0.5 factor is split the drift dynamics term
-                                        + self.parameters.rs
-                                        * hxc[(i, e, ci, cj)]
-                                        * lambdax_i[cross_base[(i, e)] + ci * C + cj]
+                                        + self._cross_cbf_drift_scale()
+                                        * (
+                                            b0xc[(i, e, ci, cj)]
+                                            + hxc[(i, e, ci, cj)]
+                                            * lambdax_i[
+                                                cross_base[(i, e)] + ci * C + cj
+                                            ]
+                                        )
                                         >= -s_cross[cross_base[(i, e)] + ci * C + cj]
                                     ]
-                                else:
+                                elif s_cross is not None:
+                                    cons += [
+                                        Axc_i[(i, e, ci, cj)] @ u_var[i, :]
+                                        + bxc[(i, e, ci, cj)]
+                                        >= -s_cross[cross_base[(i, e)] + ci * C + cj]
+                                    ]
+                                elif cross_uses_symbolic_lambda:
                                     cons += [
                                         Axc_i[(i, e, ci, cj)] @ u_var[i, :]
                                         + b0xc[(i, e, ci, cj)]
                                         + hxc[(i, e, ci, cj)] * 1.0
+                                        >= 0
+                                    ]
+                                else:
+                                    cons += [
+                                        Axc_i[(i, e, ci, cj)] @ u_var[i, :]
+                                        + bxc[(i, e, ci, cj)]
                                         >= 0
                                     ]
 
@@ -1777,13 +2819,19 @@ class CBFQP:
             )
 
             if self.parameters.adaptive_lambda:
-                cost += self.lambda_weight * cp.sum_squares(lambda_lane)
+                cost += self.lambda_weight * cp.sum_squares(
+                    lambda_lane - self.lambda_ttcbf_predefined
+                )
                 if lambda_pair is not None:
-                    cost += self.lambda_weight * cp.sum_squares(lambda_pair)
+                    cost += self.lambda_weight * cp.sum_squares(
+                        lambda_pair - self.lambda_ttcbf_predefined
+                    )
 
             # Always regularize cross lambdas if they exist
             if lambdax_i is not None:
-                cost += self.lambda_weight * cp.sum_squares(lambdax_i)
+                cost += self.lambda_weight * cp.sum_squares(
+                    lambdax_i - float(self.lambda_ttcbf_predefined)
+                )
 
             prob = cp.Problem(cp.Minimize(cost), cons)
 
@@ -1807,21 +2855,28 @@ class CBFQP:
                 v_head_const=v_head_const,
                 v_speed_const=v_speed_const,
                 A_L=A_L,
+                b_L=b_L,
                 b0_L=b0_L,
                 h_L=h_L,
                 A_R=A_R,
+                b_R=b_R,
                 b0_R=b0_R,
                 h_R=h_R,
                 lambda_lane=lambda_lane,
+                lambda_lane_ref=lambda_lane_ref,
                 Aij_i=Aij_i,
                 Aij_j=Aij_j,
+                bij=bij,
                 b0ij=b0ij,
                 hij=hij,
                 lambda_pair=lambda_pair,
+                lambda_pair_ref=lambda_pair_ref,
                 Axc_i=Axc_i,
+                bxc=bxc,
                 b0xc=b0xc,
                 hxc=hxc,
                 lambdax_i=lambdax_i,
+                lambdax_i_ref=lambdax_i_ref,
                 idx_lane=idx_lane,
                 prob=prob,
             )
@@ -1841,12 +2896,30 @@ class CBFQP:
                 s_cross.value = np.zeros((cross_count,))
             u_var.value = np.zeros((m, 2))
 
-            # Warm start lambdas at zero to match the adaptive-lambda regularizer
-            lambda_lane.value = np.zeros(lambda_lane.shape, dtype=np.float64)
+            # Warm start lambdas (bias to lambda_ttcbf)
+            if lambda_lane is not None:
+                lambda_lane.value = np.full(
+                    lambda_lane.shape,
+                    float(self.lambda_ttcbf_predefined),
+                    dtype=np.float64,
+                )
+                lambda_lane_ref.value = np.full(
+                    lambda_lane_ref.shape,
+                    float(self.lambda_ttcbf_predefined),
+                    dtype=np.float64,
+                )
             if lambda_pair is not None:
-                lambda_pair.value = np.zeros(lambda_pair.shape, dtype=np.float64)
+                lambda_pair.value = np.full(
+                    lambda_pair.shape,
+                    float(self.lambda_ttcbf_predefined),
+                    dtype=np.float64,
+                )
             if lambdax_i is not None:
-                lambdax_i.value = np.zeros(lambdax_i.shape, dtype=np.float64)
+                lambdax_i.value = np.full(
+                    lambdax_i.shape,
+                    float(self.lambda_ttcbf_predefined),
+                    dtype=np.float64,
+                )
 
             self._group_qp_caches.append(cache)
 
@@ -1866,8 +2939,10 @@ class CBFQP:
         C = self._group_circle_count
         m = self._group_capacity
         G = self._group_count
-        obs_range = float(self.parameters.observation_range)
-        sigma = self.parameters.rs
+        cbf_coupling_range = float(self.parameters.cbf_coupling_range)
+        learned_lambdas = self._get_env_cbf_lambdas(tensordict)
+
+        # print(f"Env {self.env_idx}: Updating grouped CBF-QPs with learned lambdas: {learned_lambdas}")
 
         # Collect states and centers
         path_ids_t = tensordict["agents", "info", "path_id"][self.env_idx]
@@ -1915,33 +2990,23 @@ class CBFQP:
 
         # Precompute nominal actions or CLF errors for all agents
         U_nom_all = np.zeros((N, 2), dtype=np.float64)
-        rl_actions_all = torch.zeros((N, 2), device=self.device, dtype=torch.float32)
+        nominal_target_actions_all = torch.zeros(
+            (N, 2), device=self.device, dtype=torch.float32
+        )
         e_h_all = np.zeros((N,), dtype=np.float64)
         e_v_all = np.zeros((N,), dtype=np.float64)
 
         for i in range(N):
-            if self.nom_controller_type == "rl":
-                rl_i = tensordict[("agents", "action")][self.env_idx, i].clone()
-                if self.is_obs_noise:
-                    rl_i = rl_i + torch.rand_like(rl_i) * self.obs_noise_level
-                rl_i, u_nom_i = self.rl_action_to_u(
-                    rl_actions=rl_i, v=states[i][3], steering=states[i][4]
-                )
-                rl_actions_all[i, :] = rl_i
-                U_nom_all[i, :] = u_nom_i.detach().cpu().numpy()
-            else:
-                ref_xy = tensordict["agents", "info", "ref"][self.env_idx, i, 4:6]
-                e_h, e_v = self._clf_errors_for_agent(states[i], ref_xy)
-                e_h_all[i] = e_h
-                e_v_all[i] = e_v
-                U_nom_all[i, 0] = np.clip(
-                    self.k_clf_speed * e_v, self.a_min, self.a_max
-                )
-                U_nom_all[i, 1] = np.clip(
-                    self.k_clf_heading * e_h,
-                    self.steering_rate_min,
-                    self.steering_rate_max,
-                )
+            (
+                u_nom_i,
+                target_action_i,
+                e_h,
+                e_v,
+            ) = self._compute_nominal_control_for_agent(tensordict, states[i], i)
+            U_nom_all[i, :] = u_nom_i
+            nominal_target_actions_all[i, :] = target_action_i
+            e_h_all[i] = e_h
+            e_v_all[i] = e_v
 
         # Safety radius
         d_safe = float(2.0 * self.circle_radius + self.safety_buffer)
@@ -1950,6 +3015,7 @@ class CBFQP:
         qp_solving_t_groups = []
         qp_solving_iter_groups = []
         cross_groups: Dict[int, List[int]] = {}
+        compare_target_actions_all = nominal_target_actions_all.clone()
 
         for g in range(G):
             cache = self._group_qp_caches[g]
@@ -1957,12 +3023,35 @@ class CBFQP:
             Cc = cache["C"]
             Ecap = int(cache["E"])  # may be 0
             idx_lane = cache["idx_lane"]
+            pair_base = cache["pair_base"]
 
             members = groups[g][:mcap]
             n_local = len(members)
             slot2id = [-1] * mcap
             for k in range(n_local):
                 slot2id[k] = members[k]
+
+            lane_lambda_ref = None
+            if cache["lambda_lane"] is not None:
+                lane_lambda_ref = np.full(
+                    cache["lambda_lane"].shape,
+                    float(self.lambda_ttcbf_predefined),
+                    dtype=np.float64,
+                )
+            pair_lambda_ref = None
+            if cache["lambda_pair"] is not None:
+                pair_lambda_ref = np.full(
+                    cache["lambda_pair"].shape,
+                    float(self.lambda_ttcbf_predefined),
+                    dtype=np.float64,
+                )
+            cross_lambda_ref = None
+            if cache["lambdax_i"] is not None:
+                cross_lambda_ref = np.full(
+                    cache["lambdax_i"].shape,
+                    float(self.lambda_ttcbf_predefined),
+                    dtype=np.float64,
+                )
 
             # U_nom and CLF params per slot
             U_loc = np.zeros((mcap, 2), dtype=np.float64)
@@ -2002,26 +3091,66 @@ class CBFQP:
                             gR,
                             HR,
                         ) = self.estimate_agent_2_lane_safety_margin(p_ic, path_ids[i])
-                        A_L_ic, b0_L_ic, h_L_ic = self.ttcbf_lane_affine_coeffs(
-                            kins_i, ci, smL, gL, HL, self.dt_taylor, None
-                        )
-                        A_R_ic, b0_R_ic, h_R_ic = self.ttcbf_lane_affine_coeffs(
-                            kins_i, ci, smR, gR, HR, self.dt_taylor, None
-                        )
-                        cache["A_L"][i_slot][ci].value = A_L_ic
-                        cache["b0_L"][i_slot][ci].value = b0_L_ic
-                        cache["h_L"][i_slot][ci].value = h_L_ic
-                        cache["A_R"][i_slot][ci].value = A_R_ic
-                        cache["b0_R"][i_slot][ci].value = b0_R_ic
-                        cache["h_R"][i_slot][ci].value = h_R_ic
+                        if self.parameters.adaptive_lambda:
+                            A_L_ic, b0_L_ic, h_L_ic = self.ttcbf_lane_affine_coeffs(
+                                kins_i, ci, smL, gL, HL, self.dt_taylor, None
+                            )
+                            A_R_ic, b0_R_ic, h_R_ic = self.ttcbf_lane_affine_coeffs(
+                                kins_i, ci, smR, gR, HR, self.dt_taylor, None
+                            )
+                            cache["A_L"][i_slot][ci].value = A_L_ic
+                            cache["b0_L"][i_slot][ci].value = b0_L_ic
+                            cache["h_L"][i_slot][ci].value = h_L_ic
+                            cache["A_R"][i_slot][ci].value = A_R_ic
+                            cache["b0_R"][i_slot][ci].value = b0_R_ic
+                            cache["h_R"][i_slot][ci].value = h_R_ic
+                        else:
+                            A_L_ic, b_L_ic = self.ttcbf_lane_affine_coeffs(
+                                kins_i,
+                                ci,
+                                smL,
+                                gL,
+                                HL,
+                                self.dt_taylor,
+                                self.lambda_ttcbf_predefined,
+                            )
+                            A_R_ic, b_R_ic = self.ttcbf_lane_affine_coeffs(
+                                kins_i,
+                                ci,
+                                smR,
+                                gR,
+                                HR,
+                                self.dt_taylor,
+                                self.lambda_ttcbf_predefined,
+                            )
+                            cache["A_L"][i_slot][ci].value = np.asarray(
+                                A_L_ic, dtype=np.float64
+                            ).reshape(1, 2)
+                            cache["b_L"][i_slot][ci].value = np.asarray(
+                                b_L_ic, dtype=np.float64
+                            ).reshape(
+                                1,
+                            )
+                            cache["A_R"][i_slot][ci].value = np.asarray(
+                                A_R_ic, dtype=np.float64
+                            ).reshape(1, 2)
+                            cache["b_R"][i_slot][ci].value = np.asarray(
+                                b_R_ic, dtype=np.float64
+                            ).reshape(
+                                1,
+                            )
                 else:
                     for ci in range(Cc):
                         cache["A_L"][i_slot][ci].value = np.zeros((1, 2))
-                        cache["b0_L"][i_slot][ci].value = np.array([1.0])
-                        cache["h_L"][i_slot][ci].value = np.array([0.0])
                         cache["A_R"][i_slot][ci].value = np.zeros((1, 2))
-                        cache["b0_R"][i_slot][ci].value = np.array([1.0])
-                        cache["h_R"][i_slot][ci].value = np.array([0.0])
+                        if self.parameters.adaptive_lambda:
+                            cache["b0_L"][i_slot][ci].value = np.array([1.0])
+                            cache["h_L"][i_slot][ci].value = np.array([0.0])
+                            cache["b0_R"][i_slot][ci].value = np.array([1.0])
+                            cache["h_R"][i_slot][ci].value = np.array([0.0])
+                        else:
+                            cache["b_L"][i_slot][ci].value = np.array([1.0])
+                            cache["b_R"][i_slot][ci].value = np.array([1.0])
 
             # Reset slacks and warm start
             cache["s_lane"].value = np.zeros(cache["s_lane"].shape)
@@ -2034,18 +3163,36 @@ class CBFQP:
             cache["u_var"].value = cache["U_nom"].value.copy()
 
             # Warm start lambdas every step (keeps behavior stable when constraints are deactivated)
-            cache["lambda_lane"].value = np.full(
-                cache["lambda_lane"].shape, float(self.lambda_ttcbf), dtype=np.float64
-            )
+            if cache["lambda_lane"] is not None:
+                cache["lambda_lane_ref"].value = lane_lambda_ref
+                cache["lambda_lane"].value = (
+                    lane_lambda_ref.copy()
+                    if self.parameters.is_learn_cbf_lambda
+                    else np.full(
+                        cache["lambda_lane"].shape,
+                        float(self.lambda_ttcbf_predefined),
+                        dtype=np.float64,
+                    )
+                )
             if cache["lambda_pair"] is not None:
-                cache["lambda_pair"].value = np.full(
-                    cache["lambda_pair"].shape,
-                    float(self.lambda_ttcbf),
-                    dtype=np.float64,
+                cache["lambda_pair"].value = (
+                    pair_lambda_ref.copy()
+                    if self.parameters.is_learn_cbf_lambda
+                    else np.full(
+                        cache["lambda_pair"].shape,
+                        float(self.lambda_ttcbf_predefined),
+                        dtype=np.float64,
+                    )
                 )
             if cache["lambdax_i"] is not None:
-                cache["lambdax_i"].value = np.full(
-                    cache["lambdax_i"].shape, float(self.lambda_ttcbf), dtype=np.float64
+                cache["lambdax_i"].value = (
+                    cross_lambda_ref.copy()
+                    if self.parameters.is_learn_cbf_lambda
+                    else np.full(
+                        cache["lambdax_i"].shape,
+                        float(self.lambda_ttcbf_predefined),
+                        dtype=np.float64,
+                    )
                 )
 
             # Intra-group pairs
@@ -2057,6 +3204,11 @@ class CBFQP:
                             if i_loc < n_local and j_loc < n_local:
                                 i = slot2id[i_loc]
                                 j = slot2id[j_loc]
+                                lam_pair = (
+                                    self._get_agent_cbf_lambda(learned_lambdas, i)
+                                    if self.parameters.is_learn_cbf_lambda
+                                    else float(self.lambda_ttcbf_predefined)
+                                )
                                 kins_i = self.linearized_center_kinematics_coeffs(
                                     states[i]
                                 )
@@ -2067,35 +3219,53 @@ class CBFQP:
                                 pj = centers[j][cj][0:2]
                                 dx = float((pi - pj)[0].item())
                                 dy = float((pi - pj)[1].item())
-                                A_i, A_j, b0, h = self.ttcbf_pair_affine_coeffs(
-                                    kins_i,
-                                    kins_j,
-                                    ci,
-                                    cj,
-                                    dx,
-                                    dy,
-                                    d_safe_sq,
-                                    self.dt_taylor,
-                                    None,
-                                )
+                                if cache["lambda_pair"] is not None:
+                                    pair_lambda_ref[
+                                        pair_base[(i_loc, j_loc)] + ci * Cc + cj
+                                    ] = lam_pair
+                                    A_i, A_j, b0, h = self.ttcbf_pair_affine_coeffs(
+                                        kins_i,
+                                        kins_j,
+                                        ci,
+                                        cj,
+                                        dx,
+                                        dy,
+                                        d_safe_sq,
+                                        self.dt_taylor,
+                                        None,
+                                    )
+                                else:
+                                    A_i, A_j, b, _ = self.ttcbf_pair_affine_coeffs(
+                                        kins_i,
+                                        kins_j,
+                                        ci,
+                                        cj,
+                                        dx,
+                                        dy,
+                                        d_safe_sq,
+                                        self.dt_taylor,
+                                        lam_pair,
+                                    )
                                 cache["Aij_i"][key].value = A_i
                                 cache["Aij_j"][key].value = A_j
-                                cache["b0ij"][key].value = b0
-                                cache["hij"][key].value = h
+                                if cache["lambda_pair"] is not None:
+                                    cache["b0ij"][key].value = b0
+                                    cache["hij"][key].value = h
+                                else:
+                                    cache["bij"][key].value = b
                             else:
                                 cache["Aij_i"][key].value = np.zeros((1, 2))
                                 cache["Aij_j"][key].value = np.zeros((1, 2))
-                                cache["b0ij"][key].value = np.array([1.0])
-                                cache["hij"][key].value = np.array([0.0])
+                                if cache["lambda_pair"] is not None:
+                                    cache["b0ij"][key].value = np.array([1.0])
+                                    cache["hij"][key].value = np.array([0.0])
+                                else:
+                                    cache["bij"][key].value = np.array([1.0])
 
             # -----------------------------
             # Cross-group reciprocal (only if Ecap > 0)
             # -----------------------------
-            if (
-                Ecap > 0
-                and cache["lambdax_i"] is not None
-                and cache["s_cross"] is not None
-            ):
+            if Ecap > 0 and cache["s_cross"] is not None:
                 for i_loc in range(mcap):
                     if i_loc < n_local:
                         i = slot2id[i_loc]
@@ -2105,7 +3275,7 @@ class CBFQP:
                                 continue
                             if (
                                 _euclid(centers_flat[i], centers_flat[j])
-                                <= obs_range + 1e-9
+                                <= cbf_coupling_range + 1e-9
                             ):
                                 nbrs.append(j)
                         nbrs = nbrs[:Ecap]
@@ -2122,43 +3292,84 @@ class CBFQP:
                                 )
                                 for ci in range(Cc):
                                     for cj in range(Cc):
+                                        lam_cross = (
+                                            self._get_agent_cbf_lambda(
+                                                learned_lambdas, i
+                                            )
+                                            if self.parameters.is_learn_cbf_lambda
+                                            else float(self.lambda_ttcbf_predefined)
+                                        )
                                         pi = centers[i][ci][0:2]
                                         pj = centers[j][cj][0:2]
                                         dx = float((pi - pj)[0].item())
                                         dy = float((pi - pj)[1].item())
-                                        (
-                                            A_i,
-                                            b0,
-                                            h,
-                                        ) = self.ttcbf_pair_affine_coeffs_cross(
-                                            kins_i,
-                                            kins_j,
-                                            ci,
-                                            cj,
-                                            dx,
-                                            dy,
-                                            d_safe_sq,
-                                            self.dt_taylor,
-                                            None,
-                                            sigma_i=sigma,
-                                        )
+                                        if cache["lambdax_i"] is not None:
+                                            cross_lambda_ref[
+                                                cache["cross_base"][(i_loc, e_idx)]
+                                                + ci * Cc
+                                                + cj
+                                            ] = lam_cross
+                                            (
+                                                A_i,
+                                                b0,
+                                                h,
+                                            ) = self.ttcbf_pair_affine_coeffs_cross(
+                                                kins_i,
+                                                kins_j,
+                                                ci,
+                                                cj,
+                                                dx,
+                                                dy,
+                                                d_safe_sq,
+                                                self.dt_taylor,
+                                                None,
+                                            )
+                                        else:
+                                            (
+                                                A_i,
+                                                b,
+                                            ) = self.ttcbf_pair_affine_coeffs_cross(
+                                                kins_i,
+                                                kins_j,
+                                                ci,
+                                                cj,
+                                                dx,
+                                                dy,
+                                                d_safe_sq,
+                                                self.dt_taylor,
+                                                lam_cross,
+                                            )
                                         cache["Axc_i"][
                                             (i_loc, e_idx, ci, cj)
                                         ].value = A_i
-                                        cache["b0xc"][(i_loc, e_idx, ci, cj)].value = b0
-                                        cache["hxc"][(i_loc, e_idx, ci, cj)].value = h
+                                        if cache["lambdax_i"] is not None:
+                                            cache["b0xc"][
+                                                (i_loc, e_idx, ci, cj)
+                                            ].value = b0
+                                            cache["hxc"][
+                                                (i_loc, e_idx, ci, cj)
+                                            ].value = h
+                                        else:
+                                            cache["bxc"][
+                                                (i_loc, e_idx, ci, cj)
+                                            ].value = b
                             else:
                                 for ci in range(Cc):
                                     for cj in range(Cc):
                                         cache["Axc_i"][
                                             (i_loc, e_idx, ci, cj)
                                         ].value = np.zeros((1, 2))
-                                        cache["b0xc"][
-                                            (i_loc, e_idx, ci, cj)
-                                        ].value = np.array([1.0])
-                                        cache["hxc"][
-                                            (i_loc, e_idx, ci, cj)
-                                        ].value = np.array([0.0])
+                                        if cache["lambdax_i"] is not None:
+                                            cache["b0xc"][
+                                                (i_loc, e_idx, ci, cj)
+                                            ].value = np.array([1.0])
+                                            cache["hxc"][
+                                                (i_loc, e_idx, ci, cj)
+                                            ].value = np.array([0.0])
+                                        else:
+                                            cache["bxc"][
+                                                (i_loc, e_idx, ci, cj)
+                                            ].value = np.array([1.0])
                     else:
                         for e_idx in range(Ecap):
                             for ci in range(Cc):
@@ -2166,52 +3377,100 @@ class CBFQP:
                                     cache["Axc_i"][
                                         (i_loc, e_idx, ci, cj)
                                     ].value = np.zeros((1, 2))
-                                    cache["b0xc"][
-                                        (i_loc, e_idx, ci, cj)
-                                    ].value = np.array([1.0])
-                                    cache["hxc"][
-                                        (i_loc, e_idx, ci, cj)
-                                    ].value = np.array([0.0])
+                                    if cache["lambdax_i"] is not None:
+                                        cache["b0xc"][
+                                            (i_loc, e_idx, ci, cj)
+                                        ].value = np.array([1.0])
+                                        cache["hxc"][
+                                            (i_loc, e_idx, ci, cj)
+                                        ].value = np.array([0.0])
+                                    else:
+                                        cache["bxc"][
+                                            (i_loc, e_idx, ci, cj)
+                                        ].value = np.array([1.0])
             else:
                 # No cross constraints prebuilt: record empty neighbor lists for visualization
                 for k in range(n_local):
                     cross_groups[slot2id[k]] = []
 
+            if cache["lambda_pair"] is not None:
+                cache["lambda_pair"].value = pair_lambda_ref.copy()
+            if cache["lambdax_i"] is not None:
+                cache["lambdax_i"].value = cross_lambda_ref.copy()
+
             # Solve group QP
             prob: cp.Problem = cache["prob"]
-            try:
-                prob.solve(
-                    solver=cp.OSQP,
-                    warm_start=True,
-                    max_iter=20000,
-                    eps_abs=1e-5,
-                    eps_rel=1e-5,
-                    polish=True,
-                    adaptive_rho=True,
+            invalid_param = self._find_invalid_qp_parameter(
+                cache, path=f"_group_qp_caches[{g}]"
+            )
+            if invalid_param is not None:
+                print(
+                    "[WARN] Skipping grouped OSQP solve due to invalid QP "
+                    f"parameter at {invalid_param[0]}: {invalid_param[1]}"
                 )
-            except cp.SolverError:
-                print("[WARN] OSQP solver failed, trying CLARABEL...")
-                try:
-                    prob.solve(
-                        solver=cp.CLARABEL,
-                        warm_start=True,
-                        tol_feas=1e-8,
-                        tol_gap_abs=1e-8,
-                        tol_gap_rel=1e-8,
-                    )
-                except cp.SolverError:
-                    print("[WARN] CLARABEL solver failed, trying SCS...")
+            else:
+                osqp_failed = False
+                if not self._group_disable_osqp:
                     try:
                         prob.solve(
-                            solver=cp.SCS,
+                            solver=cp.OSQP,
                             warm_start=True,
-                            max_iters=100000,
-                            eps=1e-4,
+                            max_iter=20000,
+                            eps_abs=1e-5,
+                            eps_rel=1e-5,
+                            polish=True,
+                            adaptive_rho=True,
+                        )
+                    except ValueError as exc:
+                        osqp_failed = True
+                        print(f"[WARN] OSQP update failed with ValueError: {exc}")
+                        self._debug_osqp_bound_update_failure(
+                            prob,
+                            context=dict(
+                                env_idx=self.env_idx,
+                                group_idx=g,
+                                members=members,
+                                slot2id=slot2id,
+                                cross_neighbors={
+                                    gid: cross_groups.get(gid, [])
+                                    for gid in members
+                                    if gid != -1
+                                },
+                            ),
+                        )
+                        print(
+                            "[WARN] Disabling OSQP for grouped QPs for the rest of "
+                            "this run and switching to CLARABEL/SCS."
+                        )
+                        self._group_disable_osqp = True
+                    except cp.SolverError:
+                        osqp_failed = True
+                else:
+                    osqp_failed = True
+
+                if osqp_failed:
+                    # print("[WARN] Grouped solve using CLARABEL...")
+                    try:
+                        prob.solve(
+                            solver=cp.CLARABEL,
+                            warm_start=True,
+                            tol_feas=1e-8,
+                            tol_gap_abs=1e-8,
+                            tol_gap_rel=1e-8,
                         )
                     except cp.SolverError:
-                        print(
-                            "[ERROR] SCS solver also failed. Using nominal actions as fallback."
-                        )
+                        print("[WARN] CLARABEL solver failed, trying SCS...")
+                        try:
+                            prob.solve(
+                                solver=cp.SCS,
+                                warm_start=True,
+                                max_iters=100000,
+                                eps=1e-4,
+                            )
+                        except cp.SolverError:
+                            print(
+                                "[ERROR] SCS solver also failed. Using nominal actions as fallback."
+                            )
 
             solved = (
                 prob.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]
@@ -2225,21 +3484,25 @@ class CBFQP:
                     gid = slot2id[k]
                     s_i = states[gid]
                     actions_v_steer_safe = self.u_to_rl_action(
-                        u_opt[k, :], s_i[3], s_i[4]
+                        u_opt[k, :], s_i[3], s_i[4], agent_idx=gid
                     ).detach()
                     tensordict[("agents", "action")][
                         self.env_idx, gid
                     ] = actions_v_steer_safe
+                    compare_target_actions_all[gid] = self.u_to_target_action(
+                        u_opt[k, :], s_i[3], s_i[4]
+                    ).detach()
             else:
                 for k in range(n_local):
                     gid = slot2id[k]
                     s_i = states[gid]
                     actions_v_steer_nom = self.u_to_rl_action(
-                        U_nom_all[gid, :], s_i[3], s_i[4]
+                        U_nom_all[gid, :], s_i[3], s_i[4], agent_idx=gid
                     ).detach()
                     tensordict[("agents", "action")][
                         self.env_idx, gid
                     ] = actions_v_steer_nom
+                    compare_target_actions_all[gid] = nominal_target_actions_all[gid]
                 self.hist.evt.append("QP-INF")
 
             st = prob.solver_stats
@@ -2252,30 +3515,39 @@ class CBFQP:
         self.scenario.inter_groups = groups
         self.scenario.cross_groups = cross_groups
 
+        applied_target_actions_all = self._target_actions_from_current_actions(
+            tensordict, states
+        ).detach()
+        self.env.base_env.scenario_name.world_state.applied_action_vel[
+            self.env_idx, :
+        ] = applied_target_actions_all[:, 0]
+        self.env.base_env.scenario_name.world_state.applied_action_steer[
+            self.env_idx, :
+        ] = applied_target_actions_all[:, 1]
+
         self.hist.qp_solving_t.append(qp_solving_t_groups)
         t_avg = sum(qp_solving_t_groups) / max(1, len(qp_solving_t_groups))
-        print(
-            f"[INFO] Semi-centralized QP solving time per group: {t_avg*1000:.2f} ms. "
-            f"Over all time steps: {np.mean(np.array(self.hist.qp_solving_t))*1000:.2f} ms"
-        )
+        # print(
+        #     f"[INFO] Semi-centralized QP solving time per group: {t_avg*1000:.2f} ms. "
+        #     f"Over all time steps: {np.mean(np.array(self.hist.qp_solving_t))*1000:.2f} ms"
+        # )
         self.hist.qp_solving_iter.append(qp_solving_iter_groups)
 
         # For visualization of nominal actions
-        if self.nom_controller_type == "rl":
+        if self.env.scenario_name.parameters.is_apply_cbf_action:
             self.env.base_env.scenario_name.world_state.nominal_action_vel[
                 self.env_idx, :
-            ] = rl_actions_all[:, 0]
+            ] = nominal_target_actions_all[:, 0]
             self.env.base_env.scenario_name.world_state.nominal_action_steer[
                 self.env_idx, :
-            ] = rl_actions_all[:, 1]
+            ] = nominal_target_actions_all[:, 1]
         else:
-            na = torch.from_numpy(U_nom_all).to(self.device)
             self.env.base_env.scenario_name.world_state.nominal_action_vel[
                 self.env_idx, :
-            ] = states[0][3].new_tensor(na[:, 0])
+            ] = compare_target_actions_all[:, 0]
             self.env.base_env.scenario_name.world_state.nominal_action_steer[
                 self.env_idx, :
-            ] = states[0][4].new_tensor(na[:, 1])
+            ] = compare_target_actions_all[:, 1]
 
     # =========================
     # Shared kinematics and TTCBF coefficient builders
@@ -2338,7 +3610,7 @@ class CBFQP:
         """
         Copy the original function
         """
-        if self.adaptive_lambda:
+        if lam is None:
             h = float(sm - self.safety_buffer)
             g = np.asarray(grad, dtype=np.float64).reshape(
                 2,
@@ -2403,7 +3675,7 @@ class CBFQP:
         """
         Copy the original function
         """
-        if self.adaptive_lambda:
+        if lam is None:
             dx = float(dx)
             dy = float(dy)
             vxi = float(kins_i["dx"][ci])
@@ -2489,7 +3761,7 @@ class CBFQP:
             )
 
     def ttcbf_pair_affine_coeffs_cross(
-        self, kins_i, kins_j, ci, cj, dx, dy, d_safe_sq, dt, lam, sigma_i: float = 0.5
+        self, kins_i, kins_j, ci, cj, dx, dy, d_safe_sq, dt, lam
     ):
         """
         Copy the original function
@@ -2521,12 +3793,17 @@ class CBFQP:
         const_ddh = 2.0 * (vrel_x * vrel_x + vrel_y * vrel_y) + 2.0 * (
             dx * (cix - cjx) + dy * (ciy - cjy)
         )
-        b0 = dh * dt + 0.5 * (dt * dt) * const_ddh
-        return (
-            A_i.reshape(1, 2),
-            np.array([b0], dtype=np.float64),
-            np.array([h], dtype=np.float64),
-        )
+        drift = dh * dt + 0.5 * (dt * dt) * const_ddh
+        if lam is None:
+            b0 = drift
+            return (
+                A_i.reshape(1, 2),
+                np.array([b0], dtype=np.float64),
+                np.array([h], dtype=np.float64),
+            )
+
+        b = self._cross_cbf_drift_scale() * (drift + h * lam)
+        return A_i.reshape(1, 2), np.array([b], dtype=np.float64)
 
     # =========================
     # Public entry point per step
@@ -2536,34 +3813,98 @@ class CBFQP:
         Dispatch grouped or centralized update per time step.
         """
         self.time_pseudo_dis = 0
-        if self.parameters.is_grouping_agents:
+
+        if not self.parameters.is_solve_qp:
+            if self.parameters.is_learn_cbf_lambda and (
+                self.parameters.is_using_centralized_cbf or self.agent_idx == 0
+            ):
+                cbf_lambda_abrupt_change_penalty = (
+                    self.compute_cbf_lambda_smoothness_penalty(tensordict)
+                )
+                self.env.base_env.scenario_name.reward_info.rew_cbf_lambda[
+                    self.env_idx, :
+                ] = torch.tensor(
+                    cbf_lambda_abrupt_change_penalty,
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+
+            if self.parameters.is_using_centralized_cbf or self.agent_idx == 0:
+                self._update_nominal_cbf_margin_rewards(tensordict)
+            return
+
+        if not self.parameters.is_using_centralized_cbf:
+            if self.parameters.is_learn_cbf_lambda and self.agent_idx == 0:
+                cbf_lambda_abrupt_change_penalty = (
+                    self.compute_cbf_lambda_smoothness_penalty(tensordict)
+                )
+                self.env.base_env.scenario_name.reward_info.rew_cbf_lambda[
+                    self.env_idx, :
+                ] = torch.tensor(
+                    cbf_lambda_abrupt_change_penalty,
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+
+            self.update_fully_decentralized_cbf_qps(tensordict)
+        elif self.parameters.is_grouping_agents:
             self.update_grouped_cbf_qps(tensordict)
         else:
-            if self.parameters.is_solve_qp:
-                self.update_centralized_cbf_qp(tensordict)
-            else:
-                cbf_margins = self.compute_nominal_cbf_constraint_margins(tensordict)
-                (
-                    r_left,
-                    r_right,
-                    r_pair,
-                ) = self.compute_cbf_violation_rewards_from_margins(cbf_margins)
+            if self.parameters.is_learn_cbf_lambda:
+                cbf_lambda_abrupt_change_penalty = (
+                    self.compute_cbf_lambda_smoothness_penalty(tensordict)
+                )
+                self.env.base_env.scenario_name.reward_info.rew_cbf_lambda[
+                    self.env_idx, :
+                ] = torch.tensor(
+                    cbf_lambda_abrupt_change_penalty,
+                    device=self.device,
+                    dtype=torch.float32,
+                )
 
-                self.env.base_env.scenario_name.reward_info.rew_near_left_lane[
-                    self.env_idx, :
-                ] = torch.tensor(r_left, device=self.device, dtype=torch.float32)
-                self.env.base_env.scenario_name.reward_info.rew_near_right_lane[
-                    self.env_idx, :
-                ] = torch.tensor(r_right, device=self.device, dtype=torch.float32)
-                self.env.base_env.scenario_name.reward_info.rew_near_other_agents[
-                    self.env_idx, :
-                ] = torch.tensor(r_pair, device=self.device, dtype=torch.float32)
+            self.update_centralized_cbf_qp(tensordict)
+
+    def _update_nominal_cbf_margin_rewards(self, tensordict):
+        """Compute nominal CBF margins and write their reward channels."""
+        cbf_margins = self.compute_nominal_cbf_constraint_margins(tensordict)
+        (
+            r_left,
+            r_right,
+            r_pair,
+        ) = self.compute_cbf_violation_rewards_from_margins(cbf_margins)
+
+        reward_info = self.env.base_env.scenario_name.reward_info
+        reward_info.rew_near_left_lane[self.env_idx, :] = torch.tensor(
+            r_left, device=self.device, dtype=torch.float32
+        )
+        reward_info.rew_near_right_lane[self.env_idx, :] = torch.tensor(
+            r_right, device=self.device, dtype=torch.float32
+        )
+        reward_info.rew_near_other_agents[self.env_idx, :] = torch.tensor(
+            r_pair, device=self.device, dtype=torch.float32
+        )
 
     def compute_nominal_cbf_constraint_margins(
         self, tensordict, agg_pair_keys: bool = False
     ):
-        """
-        Compute nominal CBF constraint *margins* without CVXPY.
+        """Compute nominal-action CBF margins without solving a QP.
+
+        The lane-boundary margins use the same per-agent formulation in both
+        centralized and fully decentralized CBF modes because each lane
+        constraint depends only on the ego control ``u_i``.
+
+        Vehicle-vehicle margins are selected by
+        ``self.parameters.is_using_centralized_cbf``. In centralized mode, each
+        pair margin evaluates the joint nominal action as
+        ``A_i u_i + A_j u_j + b`` so the neighbor vehicle action is included. In
+        fully decentralized mode, each directed cross margin evaluates only the
+        ego action and uses the half-split drift formulation implemented by
+        ``ttcbf_pair_affine_coeffs_cross``.
+
+        The returned ``pair_mode`` tells
+        ``compute_cbf_violation_rewards_from_margins`` whether a violated pair
+        constraint should penalize both vehicles (centralized) or only the
+        directed ego vehicle (fully decentralized).
 
         Margin convention:
         - Each CBF inequality is written as g(u) >= 0 (with slack assumed 0 here).
@@ -2578,6 +3919,7 @@ class CBFQP:
         """
         n = int(self.parameters.n_agents)
         n_circles = int(self.parameters.n_circles_approximate_vehicle)
+        cbf_coupling_range = float(self.parameters.cbf_coupling_range)
 
         agents: list[Vehicle] = self.env.base_env.scenario_name.world.agents
         path_ids_t = tensordict["agents", "info", "path_id"][self.env_idx]
@@ -2586,6 +3928,7 @@ class CBFQP:
         # --------- Build states and circle centers (same as your update function) ---------
         states = []
         circles_all = []
+        centers_flat = []
         for i in range(n):
             s = torch.cat(
                 [
@@ -2598,34 +3941,19 @@ class CBFQP:
             )
             states.append(s)
             circles_all.append(self.get_circle_centers(s))
+            centers_flat.append(
+                np.array([float(s[0].item()), float(s[1].item())], dtype=np.float64)
+            )
 
-        # --------- Nominal action u_nom (accel, steer_rate) per agent ---------
-        u_nom = np.zeros((n, 2), dtype=np.float64)
+        # --------- Applied action u_applied (accel, steer_rate) per agent ---------
+        u_applied = np.zeros((n, 2), dtype=np.float64)
+        learned_lambdas = self._get_env_cbf_lambdas(tensordict)
 
-        if self.nom_controller_type == "rl":
-            for i in range(n):
-                rl_i = tensordict[("agents", "action")][self.env_idx, i].clone()
-                if self.is_obs_noise:
-                    rl_i = rl_i + torch.rand_like(rl_i) * self.obs_noise_level
-
-                # Your function returns (rl_actions, u_nom)
-                _, u_nom_i = self.rl_action_to_u(
-                    rl_actions=rl_i, v=states[i][3], steering=states[i][4]
-                )
-                u_nom[i, :] = u_nom_i.detach().cpu().numpy()
-        else:
-            # "clf" nominal controller
-            for i in range(n):
-                ref_xy = tensordict["agents", "info", "ref"][self.env_idx, i, 4:6]
-                e_h, e_v = self._clf_errors_for_agent(states[i], ref_xy)
-                u1_nom = np.clip(self.k_clf_speed * e_v, self.a_min, self.a_max)
-                u2_nom = np.clip(
-                    self.k_clf_heading * e_h,
-                    self.steering_rate_min,
-                    self.steering_rate_max,
-                )
-                u_nom[i, 0] = float(u1_nom)
-                u_nom[i, 1] = float(u2_nom)
+        for i in range(n):
+            u_applied_i, _ = self._compute_applied_control_for_agent(
+                tensordict, states[i], i
+            )
+            u_applied[i, :] = u_applied_i
 
         # --------- Lane CBF margins g_L >= 0 and g_R >= 0 ---------
         lane_L_margin = np.zeros((n, n_circles), dtype=np.float64)
@@ -2633,15 +3961,14 @@ class CBFQP:
 
         for i in range(n):
             kins_i = self.linearized_center_kinematics_coeffs(states[i])
-            ui = u_nom[i, :]  # shape (2,)
+            ui = u_applied[i, :]  # shape (2,)
             for ci in range(n_circles):
                 circle_pos_i = circles_all[i][ci][0:2]
                 smL, gL, HL, smR, gR, HR = self.estimate_agent_2_lane_safety_margin(
                     circle_pos_i, path_ids[i]
                 )
 
-                if self.adaptive_lambda:
-                    # returns (A, b0, h); inequality: A u + b0 + h*lambda >= 0
+                if self.parameters.adaptive_lambda:
                     A_L_ic, b0_L_ic, h_L_ic = self.ttcbf_lane_affine_coeffs(
                         kins_i, ci, smL, gL, HL, self.dt_taylor, None
                     )
@@ -2649,29 +3976,34 @@ class CBFQP:
                         kins_i, ci, smR, gR, HR, self.dt_taylor, None
                     )
 
-                    # If you do not optimize lambda, you must pick a value.
-                    # Here we use your default lambda_ttcbf.
-                    lam_L = float(self.lambda_ttcbf)
-                    lam_R = float(self.lambda_ttcbf)
+                    lam_i = (
+                        self._get_agent_cbf_lambda(learned_lambdas, i)
+                        if self.parameters.is_learn_cbf_lambda
+                        else float(self.lambda_ttcbf_predefined)
+                    )
 
                     g_left = (
                         float(np.asarray(A_L_ic).reshape(1, 2) @ ui.reshape(2, 1))
                         + float(np.asarray(b0_L_ic).squeeze())
-                        + float(np.asarray(h_L_ic).squeeze()) * lam_L
+                        + float(np.asarray(h_L_ic).squeeze()) * lam_i
                     )
 
                     g_right = (
                         float(np.asarray(A_R_ic).reshape(1, 2) @ ui.reshape(2, 1))
                         + float(np.asarray(b0_R_ic).squeeze())
-                        + float(np.asarray(h_R_ic).squeeze()) * lam_R
+                        + float(np.asarray(h_R_ic).squeeze()) * lam_i
                     )
                 else:
-                    # returns (A, b); inequality: A u + b >= 0
+                    lam_i = (
+                        self._get_agent_cbf_lambda(learned_lambdas, i)
+                        if self.parameters.is_learn_cbf_lambda
+                        else float(self.lambda_ttcbf_predefined)
+                    )
                     A_L_ic, b_L_ic = self.ttcbf_lane_affine_coeffs(
-                        kins_i, ci, smL, gL, HL, self.dt_taylor, self.lambda_ttcbf
+                        kins_i, ci, smL, gL, HL, self.dt_taylor, lam_i
                     )
                     A_R_ic, b_R_ic = self.ttcbf_lane_affine_coeffs(
-                        kins_i, ci, smR, gR, HR, self.dt_taylor, self.lambda_ttcbf
+                        kins_i, ci, smR, gR, HR, self.dt_taylor, lam_i
                     )
 
                     g_left = float(
@@ -2690,86 +4022,193 @@ class CBFQP:
         d_safe_sq = d_safe * d_safe
 
         pair_margin = {}  # (i, j, ci, cj) -> margin float
+        pair_mode = (
+            "centralized"
+            if self.parameters.is_using_centralized_cbf
+            else "fully_decentralized"
+        )
 
-        for i in range(n - 1):
-            kins_i = self.linearized_center_kinematics_coeffs(states[i])
-            ui = u_nom[i, :]
+        if self.parameters.is_using_centralized_cbf:
+            for i in range(n - 1):
+                kins_i = self.linearized_center_kinematics_coeffs(states[i])
+                ui = u_applied[i, :]
 
-            for j in range(i + 1, n):
-                kins_j = self.linearized_center_kinematics_coeffs(states[j])
-                uj = u_nom[j, :]
+                for j in range(i + 1, n):
+                    lam_i = self._get_agent_cbf_lambda(learned_lambdas, i)
+                    lam_j = self._get_agent_cbf_lambda(learned_lambdas, j)
+                    lambda_ttcbf = (
+                        float((lam_i + lam_j) / 2.0)
+                        if self.parameters.is_learn_cbf_lambda
+                        else float(self.lambda_ttcbf_predefined)
+                    )
 
-                for ci in range(n_circles):
-                    pi = circles_all[i][ci][0:2]
-                    for cj in range(n_circles):
-                        pj = circles_all[j][cj][0:2]
-                        delta = pi - pj
-                        dx = float(delta[0].item())
-                        dy = float(delta[1].item())
+                    kins_j = self.linearized_center_kinematics_coeffs(states[j])
+                    uj = u_applied[j, :]
 
-                        if self.adaptive_lambda:
-                            # returns (A_i, A_j, b0, h); inequality: A_i u_i + A_j u_j + b0 + h*lambda >= 0
-                            A_i, A_j, b0, h = self.ttcbf_pair_affine_coeffs(
-                                kins_i,
-                                kins_j,
-                                ci,
-                                cj,
-                                dx,
-                                dy,
-                                d_safe_sq,
-                                self.dt_taylor,
-                                None,
-                            )
-                            lam = float(self.lambda_ttcbf)
+                    for ci in range(n_circles):
+                        pi = circles_all[i][ci][0:2]
+                        for cj in range(n_circles):
+                            pj = circles_all[j][cj][0:2]
+                            delta = pi - pj
+                            dx = float(delta[0].item())
+                            dy = float(delta[1].item())
 
-                            g_pair = (
-                                float(np.asarray(A_i).reshape(1, 2) @ ui.reshape(2, 1))
-                                + float(
-                                    np.asarray(A_j).reshape(1, 2) @ uj.reshape(2, 1)
+                            if self.parameters.adaptive_lambda:
+                                A_i, A_j, b0, h = self.ttcbf_pair_affine_coeffs(
+                                    kins_i,
+                                    kins_j,
+                                    ci,
+                                    cj,
+                                    dx,
+                                    dy,
+                                    d_safe_sq,
+                                    self.dt_taylor,
+                                    None,
                                 )
-                                + float(np.asarray(b0).squeeze())
-                                + float(np.asarray(h).squeeze()) * lam
-                            )
-                        else:
-                            # returns (A_i, A_j, b, h) but your non-adaptive branch uses b in the constraint
-                            A_i, A_j, b, _ = self.ttcbf_pair_affine_coeffs(
-                                kins_i,
-                                kins_j,
-                                ci,
-                                cj,
-                                dx,
-                                dy,
-                                d_safe_sq,
-                                self.dt_taylor,
-                                self.lambda_ttcbf,
-                            )
-                            g_pair = (
-                                float(np.asarray(A_i).reshape(1, 2) @ ui.reshape(2, 1))
-                                + float(
-                                    np.asarray(A_j).reshape(1, 2) @ uj.reshape(2, 1)
+                                g_pair = (
+                                    float(
+                                        np.asarray(A_i).reshape(1, 2) @ ui.reshape(2, 1)
+                                    )
+                                    + float(
+                                        np.asarray(A_j).reshape(1, 2) @ uj.reshape(2, 1)
+                                    )
+                                    + float(np.asarray(b0).squeeze())
+                                    + float(np.asarray(h).squeeze()) * lambda_ttcbf
                                 )
-                                + float(np.asarray(b).squeeze())
-                            )
+                            else:
+                                A_i, A_j, b, _ = self.ttcbf_pair_affine_coeffs(
+                                    kins_i,
+                                    kins_j,
+                                    ci,
+                                    cj,
+                                    dx,
+                                    dy,
+                                    d_safe_sq,
+                                    self.dt_taylor,
+                                    lambda_ttcbf,
+                                )
+                                g_pair = (
+                                    float(
+                                        np.asarray(A_i).reshape(1, 2) @ ui.reshape(2, 1)
+                                    )
+                                    + float(
+                                        np.asarray(A_j).reshape(1, 2) @ uj.reshape(2, 1)
+                                    )
+                                    + float(np.asarray(b).squeeze())
+                                )
 
-                        pair_margin[(i, j, ci, cj)] = float(g_pair)
+                            pair_margin[(i, j, ci, cj)] = float(g_pair)
+        else:
+            e_cap_user = getattr(self.parameters, "max_cross_neighbors", None)
+            if e_cap_user is None:
+                e_cap = max(0, n - 1)
+            else:
+                e_cap = min(max(0, n - 1), max(0, int(e_cap_user)))
 
+            for i in range(n):
+                kins_i = self.linearized_center_kinematics_coeffs(states[i])
+                ui = u_applied[i, :]
+                nbrs = []
+                for j in range(n):
+                    if j == i:
+                        continue
+                    if (
+                        _euclid(centers_flat[i], centers_flat[j])
+                        <= cbf_coupling_range + 1e-9
+                    ):
+                        nbrs.append(j)
+                nbrs = nbrs[:e_cap]
+
+                lam_i = (
+                    self._get_agent_cbf_lambda(learned_lambdas, i)
+                    if self.parameters.is_learn_cbf_lambda
+                    else float(self.lambda_ttcbf_predefined)
+                )
+
+                for j in nbrs:
+                    kins_j = self.linearized_center_kinematics_coeffs(states[j])
+                    for ci in range(n_circles):
+                        pi = circles_all[i][ci][0:2]
+                        for cj in range(n_circles):
+                            pj = circles_all[j][cj][0:2]
+                            delta = pi - pj
+                            dx = float(delta[0].item())
+                            dy = float(delta[1].item())
+
+                            if self.parameters.adaptive_lambda:
+                                A_i, b0, h = self.ttcbf_pair_affine_coeffs_cross(
+                                    kins_i,
+                                    kins_j,
+                                    ci,
+                                    cj,
+                                    dx,
+                                    dy,
+                                    d_safe_sq,
+                                    self.dt_taylor,
+                                    None,
+                                )
+                                g_pair = float(
+                                    np.asarray(A_i).reshape(1, 2) @ ui.reshape(2, 1)
+                                ) + self._cross_cbf_drift_scale() * (
+                                    float(np.asarray(b0).squeeze())
+                                    + float(np.asarray(h).squeeze()) * lam_i
+                                )
+                            else:
+                                A_i, b = self.ttcbf_pair_affine_coeffs_cross(
+                                    kins_i,
+                                    kins_j,
+                                    ci,
+                                    cj,
+                                    dx,
+                                    dy,
+                                    d_safe_sq,
+                                    self.dt_taylor,
+                                    lam_i,
+                                )
+                                g_pair = float(
+                                    np.asarray(A_i).reshape(1, 2) @ ui.reshape(2, 1)
+                                ) + float(np.asarray(b).squeeze())
+
+                            pair_margin[(i, j, ci, cj)] = float(g_pair)
         return {
             "lane_L_margin": lane_L_margin,
             "lane_R_margin": lane_R_margin,
             "pair_margin": pair_margin,
+            "pair_mode": pair_mode,
         }
 
     def compute_cbf_violation_rewards_from_margins(self, cbf_margins: dict):
-        """
-        Compute three per-agent reward signals from CBF margins.
+        """Convert CBF constraint margins into bounded per-agent rewards.
 
-        For each constraint margin g:
-        - violation magnitude = max(0, -g)
-        - reward is 0 if no violation, else negative
-        - normalized per channel so the worst violation in the step maps near -1
+        ``compute_nominal_cbf_constraint_margins`` returns raw margins for
+        inequalities written as ``g(u) >= 0``. A nonnegative margin means the
+        nominal action satisfies that CBF constraint and receives zero penalty.
+        A negative margin is a violation and is kept as a negative reward
+        candidate.
+
+        Lane rewards are per-agent worst-case reductions over the footprint
+        circles:
+
+            v_left[i] = min_c lane_L_margin[i, c]
+            v_right[i] = min_c lane_R_margin[i, c]
+
+        Pair rewards are also worst-case reductions, but the owner of each pair
+        violation depends on ``pair_mode``. In centralized mode, a stored pair
+        margin ``(i, j, ci, cj)`` was computed from both actions
+        ``A_i u_i + A_j u_j + b``; therefore a violation is assigned to both
+        agents ``i`` and ``j``. In fully decentralized mode, a stored pair
+        margin ``(i, j, ci, cj)`` is a directed ego constraint for agent ``i``;
+        therefore only agent ``i`` receives that violation.
+
+        Finally, each channel is scaled by ``h_nom`` and clipped to ``[-1, 0]``.
+        Thus safe constraints give ``0``, a margin of ``-0.5 * h_nom`` gives
+        ``-0.5``, and any margin less than or equal to ``-h_nom`` saturates at
+        ``-1``. Multiple violations do not accumulate; the most negative margin
+        for each channel determines the reward.
 
         Returns:
-        r_left, r_right, r_pair: lists of length n_agents, values in [-1, 0]
+            ``r_left, r_right, r_pair`` as lists of length ``n_agents`` with
+            values in ``[-1, 0]``.
         """
 
         lane_L = np.asarray(
@@ -2779,6 +4218,7 @@ class CBFQP:
             cbf_margins["lane_R_margin"], dtype=np.float64
         )  # (n, n_circles)
         pair_margin = cbf_margins["pair_margin"]  # dict (i, j, ci, cj) -> float
+        pair_mode = cbf_margins.get("pair_mode", "centralized")
 
         n = lane_L.shape[0]
 
@@ -2789,16 +4229,60 @@ class CBFQP:
         vP_agent = np.zeros((n,), dtype=np.float64)
         for (i, j, ci, cj), g in pair_margin.items():
             v = min(float(g), 0.0)
-            # Replace if v is more negative
             vP_agent[i] = min(vP_agent[i], v)
-            vP_agent[j] = min(vP_agent[j], v)
+            if pair_mode == "centralized":
+                vP_agent[j] = min(vP_agent[j], v)
 
         def to_reward(v_agent, scale):
             v_norm = np.clip(v_agent / scale, -1.0, 0.0)
             return v_norm.tolist()
 
-        r_left = to_reward(vL_agent, self.parameters.h_nom)
-        r_right = to_reward(vR_agent, self.parameters.h_nom)
-        r_pair = to_reward(vP_agent, self.parameters.h_nom)
+        h_nom = (
+            float(self.parameters.h_nom) if self.parameters.h_nom is not None else 0.1
+        )
+        r_left = to_reward(vL_agent, h_nom)
+        r_right = to_reward(vR_agent, h_nom)
+        r_pair = to_reward(vP_agent, h_nom)
 
         return r_left, r_right, r_pair
+
+    def compute_cbf_lambda_smoothness_penalty(self, tensordict):
+        """
+        Compute an additional penalty reward if the CBF lambda changes abruptly from the last step.
+
+        This is to encourage smoother lambda values if you are learning lambda.
+
+        Returns:
+        None, but writes to tensordict[("agents", "reward", "cbf_lambda_smoothness_penalty")]
+        """
+        cur_lam = (
+            tensordict.get(("agents", "cbf", "lambda"))[self.env_idx]
+            .squeeze(-1)
+            .detach()
+            .cpu()
+            .numpy()
+        )  # shape (n_agents, 1)
+
+        # A full env reset starts a new lambda trajectory for this controller.
+        if int(self.scenario.timer.step[self.env_idx].item()) == 0:
+            self.hist.lambda_history.clear()
+
+        if len(self.hist.lambda_history) == 0:
+            cbf_lambda_abrupt_change_penalty = np.zeros(
+                cur_lam.shape[0], dtype=np.float64
+            )
+        else:
+            his_lam = self.hist.lambda_history[-1]  # list of (n_agents, 1) arrays
+            cbf_lambda_abrupt_change_penalty = (
+                -self.parameters.cbf_lambda_rew_scale * abs(his_lam - cur_lam) / 1.0
+            )
+
+        # Penalize the magnitude of lambda itself to prevent it from growing too large
+        cbf_lambda_abrupt_change_penalty -= (
+            self.parameters.cbf_lambda_rew_scale_abs * cur_lam**2
+        )
+
+        # Append the current lambda to this env-specific history
+        self.hist.lambda_history.append(cur_lam.copy())
+
+        return cbf_lambda_abrupt_change_penalty

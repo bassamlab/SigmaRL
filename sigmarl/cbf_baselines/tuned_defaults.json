@@ -1,0 +1,177 @@
+{
+  "_description": "Tuned CBF decay rate lambda and own parameters (environment variables) per shield block, method, and QP mode (cen: centralized, dec: max_group_size 1), from sigmarl/evaluation_tits26/before_stages_filter_tuning.py on round_location0 and ind_location4 (full scale, 14 vehicles, CLF nominal, seeds 101-103). Ours (BH-TTCBF, tail rows only) was tuned without the shield in outputs/20261013-ours-tuning. ours_onestep (shield off) was retuned in outputs/20261013-onestep-tuning. The backup-horizon variants b1_bh, b3_bh, bh_half_split and B6 were tuned with the same protocol (shield off) in outputs/20261016-bh-variants-tuning; bh_half_split/cen is ours/cen (the two coincide without cross pairs). The geometry ablation bh_capsule was tuned with the same protocol (shield off) in outputs/tits26/before_stages_filter_tuning_bh_capsule.",
+  "shield_off/ours_onestep/cen": {
+    "cbf_lambda": 0.1
+  },
+  "shield_off/ours_onestep/dec": {
+    "cbf_lambda": 0.1
+  },
+  "shield_off/b1_lse_sat/cen": {
+    "cbf_lambda": 0.1,
+    "env": {
+      "SIGMARL_B1_LSE_KAPPA": "400"
+    }
+  },
+  "shield_off/b1_lse_sat/dec": {
+    "cbf_lambda": 0.1,
+    "env": {
+      "SIGMARL_B1_LSE_KAPPA": "100"
+    }
+  },
+  "shield_off/b2_frenet_point/cen": {
+    "cbf_lambda": 0.2
+  },
+  "shield_off/b2_frenet_point/dec": {
+    "cbf_lambda": 0.2
+  },
+  "shield_off/b2_frenet_heading/cen": {
+    "cbf_lambda": 0.1
+  },
+  "shield_off/b2_frenet_heading/dec": {
+    "cbf_lambda": 0.2
+  },
+  "shield_off/b3_wang/cen": {
+    "cbf_lambda": 0.1
+  },
+  "shield_off/b3_wang/dec": {
+    "cbf_lambda": 0.1
+  },
+  "shield_off/b3_disk/cen": {
+    "cbf_lambda": 0.1
+  },
+  "shield_off/b3_disk/dec": {
+    "cbf_lambda": 0.3
+  },
+  "shield_off/b4_collision_cone/cen": {
+    "cbf_lambda": 0.2,
+    "env": {
+      "SIGMARL_B4_RADIUS": "length"
+    }
+  },
+  "shield_off/b4_collision_cone/dec": {
+    "cbf_lambda": 0.1,
+    "env": {
+      "SIGMARL_B4_RADIUS": "length"
+    }
+  },
+  "shield_off/b5_convex_containment/cen": {
+    "cbf_lambda": 0.1
+  },
+  "shield_off/b5_convex_containment/dec": {
+    "cbf_lambda": 0.1
+  },
+  "shield_off/t2_dual_distance/cen": {
+    "cbf_lambda": 0.1
+  },
+  "shield_off/t2_dual_distance/dec": {
+    "cbf_lambda": 0.1
+  },
+  "shield_on/ours_onestep/cen": {
+    "cbf_lambda": 0.2
+  },
+  "shield_on/ours_onestep/dec": {
+    "cbf_lambda": 0.7
+  },
+  "shield_on/b1_lse_sat/cen": {
+    "cbf_lambda": 0.5,
+    "env": {
+      "SIGMARL_B1_LSE_KAPPA": "1000"
+    }
+  },
+  "shield_on/b1_lse_sat/dec": {
+    "cbf_lambda": 0.7,
+    "env": {
+      "SIGMARL_B1_LSE_KAPPA": "100"
+    }
+  },
+  "shield_on/b2_frenet_point/cen": {
+    "cbf_lambda": 0.3
+  },
+  "shield_on/b2_frenet_point/dec": {
+    "cbf_lambda": 0.5
+  },
+  "shield_on/b2_frenet_heading/cen": {
+    "cbf_lambda": 0.2
+  },
+  "shield_on/b2_frenet_heading/dec": {
+    "cbf_lambda": 0.5
+  },
+  "shield_on/b3_wang/cen": {
+    "cbf_lambda": 0.7
+  },
+  "shield_on/b3_wang/dec": {
+    "cbf_lambda": 0.3
+  },
+  "shield_on/b3_disk/cen": {
+    "cbf_lambda": 0.2
+  },
+  "shield_on/b3_disk/dec": {
+    "cbf_lambda": 0.5
+  },
+  "shield_on/b4_collision_cone/cen": {
+    "cbf_lambda": 0.1,
+    "env": {
+      "SIGMARL_B4_RADIUS": "width"
+    }
+  },
+  "shield_on/b4_collision_cone/dec": {
+    "cbf_lambda": 0.5,
+    "env": {
+      "SIGMARL_B4_RADIUS": "width"
+    }
+  },
+  "shield_on/b5_convex_containment/cen": {
+    "cbf_lambda": 0.7
+  },
+  "shield_on/b5_convex_containment/dec": {
+    "cbf_lambda": 0.7
+  },
+  "shield_on/t2_dual_distance/cen": {
+    "cbf_lambda": 0.2
+  },
+  "shield_on/t2_dual_distance/dec": {
+    "cbf_lambda": 0.3
+  },
+  "shield_off/ours/cen": {
+    "cbf_lambda": 0.2
+  },
+  "shield_off/ours/dec": {
+    "cbf_lambda": 0.5
+  },
+  "shield_off/b1_bh/cen": {
+    "cbf_lambda": 0.5,
+    "env": {
+      "SIGMARL_B1_LSE_KAPPA": "200"
+    }
+  },
+  "shield_off/b1_bh/dec": {
+    "cbf_lambda": 0.5,
+    "env": {
+      "SIGMARL_B1_LSE_KAPPA": "100"
+    }
+  },
+  "shield_off/b3_bh/cen": {
+    "cbf_lambda": 0.3
+  },
+  "shield_off/b3_bh/dec": {
+    "cbf_lambda": 0.3
+  },
+  "shield_off/bh_half_split/cen": {
+    "cbf_lambda": 0.2
+  },
+  "shield_off/bh_half_split/dec": {
+    "cbf_lambda": 0.3
+  },
+  "shield_off/b6_backup_cbf/cen": {
+    "cbf_lambda": 0.3
+  },
+  "shield_off/b6_backup_cbf/dec": {
+    "cbf_lambda": 0.7
+  },
+  "shield_off/bh_capsule/cen": {
+    "cbf_lambda": 0.2
+  },
+  "shield_off/bh_capsule/dec": {
+    "cbf_lambda": 0.5
+  }
+}

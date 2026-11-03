@@ -7,6 +7,8 @@ import torch
 from torchdiffeq import odeint
 from vmas.simulator.dynamics.common import Dynamics
 
+from sigmarl.constants import POSITION_SPEED_LOOKAHEAD_DIST
+
 
 class KinematicBicycleModel(Dynamics):
     """
@@ -26,6 +28,8 @@ class KinematicBicycleModel(Dynamics):
         max_steering_rate=2 * torch.pi,
         min_steering_rate=-2 * torch.pi,
         device="cpu",
+        rl_action_type: str = "speed_steer",
+        lookahead_dist: float = POSITION_SPEED_LOOKAHEAD_DIST,
     ):
         """
         Initialize the KinematicBicycleModel.
@@ -54,9 +58,13 @@ class KinematicBicycleModel(Dynamics):
         self.min_steering_rate = min_steering_rate
 
         self.device = device  # Where to store torch variable
+        self.rl_action_type = rl_action_type
+        self.lookahead_dist = lookahead_dist
 
     @property
     def needed_action_size(self) -> int:
+        if self.rl_action_type == "speed":
+            return 1
         return 2
 
     def ode(self, _, x, u):
@@ -119,7 +127,9 @@ class KinematicBicycleModel(Dynamics):
 
     def step(self, x0, u, dt, tick_per_step=1, is_return_end_state=True):
         """
-        Perform a discrete integration step using the ODE solver for batch processing across different environments.
+        Perform a discrete integration step for batched environments. The
+        normal one-tick end-state path uses direct explicit Euler; other modes
+        retain the ODE solver implementation.
 
         Parameters:
             x0 (torch.Tensor): Initial state tensor of shape [batch_size, 5] where batch_size is the number of environments.
@@ -144,6 +154,30 @@ class KinematicBicycleModel(Dynamics):
             is_batch_size_none = True
         else:
             is_batch_size_none = False
+
+        if tick_per_step == 1 and is_return_end_state:
+            # The normal VMAS path requests one explicit Euler tick and only
+            # needs the end state. Avoid the generic solver's time-grid and
+            # trajectory allocation while preserving its update arithmetic.
+            dt_tensor = torch.as_tensor(
+                dt, dtype=torch.get_default_dtype(), device=x0.device
+            ).to(dtype=x0.dtype)
+            x = x0 + dt_tensor * self.ode(x0.new_zeros(()), x0, u)
+            x[..., 4] = (x[..., 4] + torch.pi) % (2 * torch.pi) - torch.pi
+
+            beta = torch.atan(self.l_r / self.l_wb * torch.tan(x[..., 4]))
+            course_angle = x[..., 2] + beta
+            velocity = torch.stack(
+                (
+                    x[..., 3] * torch.cos(course_angle),
+                    x[..., 3] * torch.sin(course_angle),
+                ),
+                dim=-1,
+            )
+
+            if is_batch_size_none:
+                return x.squeeze(0), beta.squeeze(0), velocity.squeeze(0)
+            return x, beta, velocity
 
         # Create a time tensor from 0 to dt with (tick_per_step + 1) points
         t = torch.linspace(0, dt, steps=tick_per_step + 1, device=self.device)

@@ -13,18 +13,13 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import matplotlib
 import time
+from sigmarl.constants import AGENTS
 
 matplotlib.rcParams.update({"font.size": 14})  # Set global font size
 
 from sigmarl.helper_scenario import get_distances_between_agents
 
 import random
-
-
-# Set seeds for reproducibility
-random.seed(0)
-np.random.seed(0)
-torch.manual_seed(0)
 
 
 class DistancePredictor(nn.Module):
@@ -336,7 +331,6 @@ class SafetyMarginEstimatorModule:
             factor=factor,
             patience=patience,
             min_lr=min_lr,
-            verbose=True,
         )
         criterion = nn.MSELoss()
 
@@ -672,7 +666,9 @@ def main(load_model_flag, is_run_testing, path_nn):
     Returns:
         DistancePredictor: Trained or loaded model.
     """
-    SME = SafetyMarginEstimatorModule(path_nn=path_nn)
+    SME = SafetyMarginEstimatorModule(
+        length=AGENTS["length"], width=AGENTS["width"], path_nn=path_nn
+    )
     if os.path.exists(path_nn):
         if load_model_flag:
             SME.net = SME.load_model()
@@ -696,6 +692,12 @@ def main(load_model_flag, is_run_testing, path_nn):
 
 
 if __name__ == "__main__":
+    # Seed here, not at import: importing this module must not reset the
+    # global RNGs that the importing run has already seeded
+    random.seed(0)
+    np.random.seed(0)
+    torch.manual_seed(0)
+
     # Execute the main function and test the model
     net = main(
         load_model_flag=False,

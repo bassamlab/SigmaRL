@@ -35,10 +35,17 @@ class WorldStateRTReal(WorldStateRT):
         self.update_mutual_distances(agent_states)
 
     def _reset_scenario_related_ref_paths(self) -> tuple:
-        # currently we only support the full map for real world applications
-
-        ref_paths_scenario = self.ref_paths_map_related.long_term_all
-        extended_points = self.ref_paths_map_related.point_extended_all
+        if getattr(self.params, "scenario_type", None) == "cpm_intersection_extended":
+            ref_paths_scenario = (
+                self.ref_paths_map_related.long_term_intersection_extended
+            )
+            extended_points = (
+                self.ref_paths_map_related.point_extended_intersection_extended
+            )
+        else:
+            # Currently the real-world case uses the full map for other scenarios.
+            ref_paths_scenario = self.ref_paths_map_related.long_term_all
+            extended_points = self.ref_paths_map_related.point_extended_all
 
         self.ref_paths_agent_related.scenario_id[:, :] = 0
 

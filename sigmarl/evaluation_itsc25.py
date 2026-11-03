@@ -93,6 +93,8 @@ class CBF_MARL_Evaluation:
             # Parameter settings for CBF-constrained MARL
             parameters.is_using_cbf_testing = is_using_cbf_testing
             parameters.is_using_cbf_training = is_using_cbf_training
+            # Reproduce the ITSC 2025 results: two-step condition only
+            parameters.is_backup_horizon_cbf = False
             parameters.is_using_prioritized_marl = (
                 True  # Use priority-based solving strategy
             )

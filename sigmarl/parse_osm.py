@@ -4,6 +4,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import xml.etree.ElementTree as ET
+import math
 from importlib import resources
 
 import torch
@@ -35,6 +36,7 @@ class ParseOSM(ParseMapBase):
     """
 
     def __init__(self, scenario_type, device, **kwargs):
+        self._scale_map = kwargs.pop("scale_map", 1.0)
         super().__init__(scenario_type, device, **kwargs)  # Initialize base class
 
         try:
@@ -80,7 +82,12 @@ class ParseOSM(ParseMapBase):
             lon = float(node.get("lon"))
             node_data[node_id] = (lat, lon)
 
-            # Update bounds
+        if self._scale_map != 1.0:
+            print(f"[INFO] Scaling OSM map by factor {self._scale_map:g}.")
+            node_data = scale_map_coordinates(node_data, self._scale_map)
+
+        # Update bounds using the (possibly scaled) map coordinates.
+        for lat, lon in node_data.values():
             if lat < self.bounds["min_x"]:
                 self.bounds["min_x"] = lat
             if lon < self.bounds["min_y"]:
@@ -125,6 +132,7 @@ class ParseOSM(ParseMapBase):
                 center_line = torch.tensor(
                     center_line_points, device=self._device, dtype=torch.float32
                 )
+                center_line = self._smooth_center_line_if_enabled(center_line)
                 (
                     center_line_yaw,
                     center_line_vec_normalized,
@@ -281,7 +289,14 @@ class ParseOSM(ParseMapBase):
         return center_line_yaw, center_line_vec_normalized, center_line_vec_mean_length
 
     def _compute_boundaries(self, center_line):
-        """Compute left and right boundaries of the given center line."""
+        """Compute visually smoothed left and right boundaries.
+
+        The boundaries are first offset from the center line by half the lane
+        width, then smoothed with the same number of points as the input. This
+        improves visual continuity at center-line bends, but can introduce
+        small local variations in the distance between a boundary and the
+        center line.
+        """
 
         def normalize(v):
             norm = torch.norm(v)
@@ -294,7 +309,7 @@ class ParseOSM(ParseMapBase):
             p1 = center_line[i]
             p2 = center_line[i + 1]
             direction = p2 - p1
-            perp_direction = torch.tensor([-direction[1], direction[0]])
+            perp_direction = torch.stack((-direction[1], direction[0]))
             perp_direction = normalize(perp_direction)
 
             left_boundary.append(p1 + perp_direction * self._width / 2)
@@ -303,7 +318,39 @@ class ParseOSM(ParseMapBase):
         left_boundary.append(center_line[-1] + perp_direction * self._width / 2)
         right_boundary.append(center_line[-1] - perp_direction * self._width / 2)
 
-        return torch.stack(left_boundary), torch.stack(right_boundary)
+        return self._smooth_polyline(torch.stack(left_boundary)), self._smooth_polyline(
+            torch.stack(right_boundary)
+        )
+
+    @staticmethod
+    def _smooth_polyline(polyline: torch.Tensor) -> torch.Tensor:
+        """Smooth an open polyline without changing its point count.
+
+        Two passes of the weighted filter ``[1, 2, 1] / 4`` are applied to
+        interior points. The endpoints remain fixed, and the input tensor is
+        not modified.
+        """
+        smoothed = polyline.clone()
+
+        for _ in range(2):
+            if smoothed.shape[0] < 3:
+                break
+
+            updated = smoothed.clone()
+            updated[1:-1] = (smoothed[:-2] + 2 * smoothed[1:-1] + smoothed[2:]) / 4
+            smoothed = updated
+
+        return smoothed
+
+    def _smooth_center_line_if_enabled(self, center_line: torch.Tensor) -> torch.Tensor:
+        """Optionally smooth source center lines before deriving their metadata."""
+        # Keep this as an internal experiment toggle. Boundary smoothing is
+        # always enabled, while center-line smoothing remains opt-in so the
+        # default route geometry is unchanged.
+        is_smooth_center_line = False
+        if is_smooth_center_line:
+            return self._smooth_polyline(center_line)
+        return center_line
 
     def _get_map_dimension(self):
         # Collect all x and y coordinates to determine limits
@@ -350,11 +397,10 @@ class ParseOSM(ParseMapBase):
         )
         ax.set_aspect("equal")
 
-        for path in self.reference_paths:
-            center_line = path["center_line"]
-            left_boundary = path["left_boundary"]
-            right_boundary = path["right_boundary"]
-            center_line_vec_normalized = path["center_line_vec_normalized"]
+        for lanelet_idx, lanelet in enumerate(self.lanelets_all):
+            center_line = lanelet["center_line"]
+            left_boundary = lanelet["left_boundary"]
+            right_boundary = lanelet["right_boundary"]
 
             ax.plot(
                 center_line[:, 0],
@@ -388,10 +434,27 @@ class ParseOSM(ParseMapBase):
             curve_close = torch.vstack([left_boundary, right_boundary.flip(0)])
             # ax.fill(curve_close[:,0], curve_close[:,1], color="lightgrey", alpha=0.4)
 
-            # Add arrows to indicate direction
-            if self._is_visualize_entry_direction:
-                p_start = center_line[0]
-                direction_start = center_line_vec_normalized[0]
+            if self._is_visu_lane_ids:
+                ax.text(
+                    center_line[int(len(center_line) / 2), 0],
+                    center_line[int(len(center_line) / 2), 1],
+                    str(lanelet_idx + 1),
+                    fontsize=self._fontsize,
+                    zorder=2,
+                )
+
+        # Add arrows to indicate entry and exit directions
+        if self._is_visu_arrows:
+            seen_entries = set()
+            for path in self.reference_paths:
+                if path.get("is_loop", False):
+                    continue
+                p_start = path["center_line"][0]
+                direction_start = path["center_line_vec_normalized"][0]
+                start_key = (round(float(p_start[0]), 3), round(float(p_start[1]), 3))
+                if start_key in seen_entries:
+                    continue
+                seen_entries.add(start_key)
                 ax.quiver(
                     p_start[0],
                     p_start[1],
@@ -399,18 +462,33 @@ class ParseOSM(ParseMapBase):
                     direction_start[1],
                     angles="xy",
                     scale_units="xy",
-                    scale=3,
-                    color="black",
+                    scale=4.0,
+                    color=Color.black50,
                     zorder=2,
+                    pivot="tail",
                 )
 
-            if self._is_visu_lane_ids:
-                ax.text(
-                    center_line[int(len(center_line) / 2), 0],
-                    center_line[int(len(center_line) / 2), 1],
-                    str(path["lanelet_IDs"]),
-                    fontsize=self._fontsize,
+            seen_exits = set()
+            for path in self.reference_paths:
+                if path.get("is_loop", False):
+                    continue
+                p_end = path["center_line"][-1]
+                direction_end = path["center_line_vec_normalized"][-1]
+                end_key = (round(float(p_end[0]), 3), round(float(p_end[1]), 3))
+                if end_key in seen_exits:
+                    continue
+                seen_exits.add(end_key)
+                ax.quiver(
+                    p_end[0],
+                    p_end[1],
+                    direction_end[0],
+                    direction_end[1],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=4.0,
+                    color=Color.black50,
                     zorder=2,
+                    pivot="tip",
                 )
 
         if self._is_visualize_random_agents:
@@ -463,22 +541,68 @@ class ParseOSM(ParseMapBase):
         return fig, ax
 
 
+def scale_map_coordinates(
+    node_data: dict[int, tuple[float, float]], scale_map: float
+) -> dict[int, tuple[float, float]]:
+    """Scale OSM latitude/longitude coordinates around their bounding-box center.
+
+    Args:
+        node_data: Mapping from OSM node IDs to ``(latitude, longitude)`` pairs.
+        scale_map: Map-size factor, where ``1.0`` leaves coordinates unchanged.
+
+    Returns:
+        A new mapping with every coordinate scaled around the global map center.
+
+    Raises:
+        ValueError: If ``scale_map`` is not finite and positive.
+    """
+
+    if not math.isfinite(scale_map) or scale_map <= 0.0:
+        raise ValueError("`scale_map` must be a finite number greater than 0.")
+    if not node_data or scale_map == 1.0:
+        return dict(node_data)
+
+    latitudes = [latitude for latitude, _ in node_data.values()]
+    longitudes = [longitude for _, longitude in node_data.values()]
+    center_latitude = (min(latitudes) + max(latitudes)) / 2.0
+    center_longitude = (min(longitudes) + max(longitudes)) / 2.0
+
+    return {
+        node_id: (
+            center_latitude + (latitude - center_latitude) * scale_map,
+            center_longitude + (longitude - center_longitude) * scale_map,
+        )
+        for node_id, (latitude, longitude) in node_data.items()
+    }
+
+
 if __name__ == "__main__":
+    import argparse
+
+    cli_parser = argparse.ArgumentParser(description="Parse and visualize OSM maps.")
+    cli_parser.add_argument(
+        "--is_visu_arrows",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Whether to visualize entry and exit direction arrows (default: True).",
+    )
+    cli_args, _ = cli_parser.parse_known_args()
+
     scenario_types = [
-        "interchange_1",
-        "interchange_2",
-        "interchange_3",
-        "intersection_1",
-        "intersection_2",
-        "intersection_3",
+        # "interchange_1",
+        # "interchange_2",
+        # "interchange_3",
+        # "intersection_1",
+        # "intersection_2",
+        # "intersection_3",
         "intersection_4",
-        "intersection_5",
-        "intersection_6",
-        "intersection_7",
-        "intersection_8",
-        "on_ramp_1",
-        "on_ramp_2_multilane",
-        "roundabout_1",
+        # "intersection_5",
+        # "intersection_6",
+        # "intersection_7",
+        # "intersection_8",
+        # "on_ramp_1",
+        # "on_ramp_2_multilane",
+        # "roundabout_1",
         "roundabout_2",
         # "pseudo_distance_example",
     ]  # See sigmarl/constants.py for all available maps
@@ -490,13 +614,16 @@ if __name__ == "__main__":
         print("---------------------------------------------------")
         parser = ParseOSM(
             scenario_type=scenario_type,
-            lane_width=0.2 if scenario_types == "intersection_3" else 0.3,
+            lane_width=0.3,
             device="cpu" if not torch.cuda.is_available() else "cuda:0",
             is_share_lanelets=False,
             is_visualize_map=True,
             is_visualize_random_agents=True,
-            n_agents_visu=1,
+            is_visu_arrows=cli_args.is_visu_arrows,
+            n_agents_visu=16,
             is_save_fig=True,
             is_plt_show=False,
             is_visu_lane_ids=False,
+            scale_map=1.2,
+            seed=0,
         )
