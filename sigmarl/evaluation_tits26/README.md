@@ -2,7 +2,7 @@
 
 Code of the evaluation of the paper "Safeguarding Multi-Agent Reinforcement
 Learning for Connected and Automated Vehicles with Recursively Feasible Control
-Barrier Functions". The paper's evaluation has four stages. The script names
+Barrier Functions" ([arXiv:2611.04957](https://arxiv.org/abs/2611.04957)). The paper's evaluation has four stages. The script names
 follow an earlier numbering with three stages, in which zero-shot deployment was
 part of Stage 1. The script names are kept so that output folders of earlier
 runs stay valid. The tables below map the paper to the code.

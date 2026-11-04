@@ -9,6 +9,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2505.02395-b31b1b.svg)](https://arxiv.org/abs/2505.02395)
 [![arXiv](https://img.shields.io/badge/arXiv-2601.16578-b31b1b.svg)](https://arxiv.org/abs/2601.16578)
 [![arXiv](https://img.shields.io/badge/arXiv-2605.16894-b31b1b.svg)](https://arxiv.org/abs/2605.16894)
+[![arXiv](https://img.shields.io/badge/arXiv-2611.04957-b31b1b.svg)](https://arxiv.org/abs/2611.04957)
 
 - [SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning](#sigmarl-a-sample-efficient-and-generalizable-multi-agent-reinforcement-learning-framework-for-motion-planning)
   - [Welcome to SigmaRL!](#welcome-to-sigmarl)
@@ -503,8 +504,20 @@ Jianye Xu and Bassam Alrifaee, "Beyond Safety Filtering: Control Barrier Functio
 
 ### 8. BH-CBF Safeguard for MARL
 <div>
-Jianye Xu, Yousef Sayed, and Bassam Alrifaee, "Safeguarding Multi-Agent Reinforcement Learning for Connected and Automated Vehicles with Recursively Feasible Control Barrier Functions," <i>submitted to IEEE Transactions on Intelligent Transportation Systems</i>.
+Jianye Xu, Yousef Sayed, and Bassam Alrifaee, "Safeguarding Multi-Agent Reinforcement Learning for Connected and Automated Vehicles with Recursively Feasible Control Barrier Functions," <i>arXiv preprint arXiv:2611.04957</i>, 2026 (submitted to IEEE Transactions on Intelligent Transportation Systems).
+
+<a href="https://arxiv.org/abs/2611.04957" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://bassamlab.github.io/BH-CBF" target="_blank"><img src="https://img.shields.io/badge/-Project%20Page-00549F"></a> <a href="https://github.com/bassamlab/SigmaRL/tree/1.7.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
+
+- **BibTeX**
+  ```bibtex
+  @article{xu2026safeguarding,
+    title={Safeguarding Multi-Agent Reinforcement Learning for Connected and Automated Vehicles with Recursively Feasible Control Barrier Functions},
+    author={Xu, Jianye and Sayed, Yousef and Alrifaee, Bassam},
+    journal={arXiv preprint arXiv:2611.04957},
+    year={2026},
+  }
+  ```
 
 - **Reproduce Experimental Results in the Paper:**
 
@@ -516,12 +529,12 @@ Jianye Xu, Yousef Sayed, and Bassam Alrifaee, "Safeguarding Multi-Agent Reinforc
 
 ## TODOs
 - Improve safety
-  - [ ] Integrating Control Barrier Functions (CBFs)
+  - [x] Integrating Control Barrier Functions (CBFs)
     - [x] Proof of concept with two agents (see the MTV-Based CBF paper [here](#3-mtv-based-cbf))
     - [x] High-Order CBFs (see the TTCBF paper [here](#4-truncated-taylor-cbf-ttcbf))
     - [x] CBF-certified safe RL for collision avoidance with road boundaries (see the CBF-Based Safety Filter paper [here](#5-cbf-based-safety-filter))
     - [x] CBF-informed reward design for safe MARL at an intersection (see the CBF-Informed MARL paper [here](#7-cbf-informed-marl))
-  - [ ] Integrating Model Predictive Control (MPC)
+    - [x] Recursively feasible CBF for safe MARL (see the BH-CBF Safeguard for MARL paper [here](#8-bh-cbf-safeguard-for-marl))
 - Address non-stationarity
   - [ ] Integrating prioritization (see the XP-MARL paper [here](#2-xp-marl))
 - Misc
@@ -530,7 +543,9 @@ Jianye Xu, Yousef Sayed, and Bassam Alrifaee, "Safeguarding Multi-Agent Reinforc
   - [x] Update to the latest versions of Torch, TorchRL, and VMAS
   - [x] Support Python 3.11+
   - [x] Deploy in the real world (see the CPM Lab Benchmark paper [here](#6-cpm-lab-benchmark))
-  - [ ] Consider heterogeneous agents
+  - [x] Consider heterogeneous agents in CBF (see the BH-CBF Safeguard for MARL paper [here](#8-bh-cbf-safeguard-for-marl))
+  - [ ] Consider heterogeneous agents in MARL
+  - [ ] Consider mixed traffic
 
 ## Acknowledgments
 This research was supported by the Bundesministerium für Digitales und Verkehr (German Federal Ministry for Digital and Transport) within the project "Harmonizing Mobility" (grant number 19FS2035A).
