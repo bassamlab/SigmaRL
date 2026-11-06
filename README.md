@@ -11,6 +11,12 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2605.16894-b31b1b.svg)](https://arxiv.org/abs/2605.16894)
 [![arXiv](https://img.shields.io/badge/arXiv-2611.04957-b31b1b.svg)](https://arxiv.org/abs/2611.04957)
 
+<p align="center">
+  <a href="https://github.com/bassamlab/assets/blob/main/sigmarl/media/lab-7-veh.mp4" target="_blank"><img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/lab-7-veh.gif?raw=true" width="800" alt="Zero-shot deployment from simulation in our CPM Lab" /></a>
+  <br>
+  <em>Zero-shot deployment from simulation in our <a href="https://cpm.lrt.unibw.de/" target="_blank">Cyber-Physical Mobility Lab (CPM Lab)</a>.</em>
+</p>
+
 - [SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning](#sigmarl-a-sample-efficient-and-generalizable-multi-agent-reinforcement-learning-framework-for-motion-planning)
   - [Welcome to SigmaRL!](#welcome-to-sigmarl)
   - [Install](#install)
@@ -34,16 +40,14 @@
   - [Acknowledgments](#acknowledgments)
 
 > [!NOTE]
-> - Check out our recent work [CBF-Informed MARL](#7-cbf-informed-marl), which has been accepted for publication at IEEE ITSC 2026! We propose a Control Barrier Function (CBF)-informed reward design for Multi-Agent RL (MARL) that converts CBF constraint values under joint MARL actions into a reward signal that explicitly guides safe learning (see also [Fig. 6](#fig-cbf-informed-marl)).
-> - Check out our recent work [CBF-Based Safety Filter](#5-cbf-based-safety-filter), which has been nominated for best paper award at IEEE ITSC 2025! It proposes a real-time CBF-based safety filter for safety verification of learning-based motion planning with road boundary constraints (see also [Fig. 5](#fig-safety-filter)).
-<!-- > - Check out our recent work [Truncated Taylor CBF](#4-truncated-taylor-cbf-ttcbf)! It proposes a new notion of high-order CBFs termed Truncated Taylor CBF (TTCBF). TTCBF can handle constraints with arbitrary relative degrees while using only one design parameter to facilitate control design (see also [Fig. 4](#fig-ttcbf)). -->
-<!-- > - Check out our recent work [MTV-Based CBF](#3-mtv-based-cbf)! It uses a learning-based, *less conservative* distance metric to categorize safety margins between agents and integrates it into Control Barrier Functions (CBFs) to guarantee *safety* in MARL. -->
-<!-- > - Check out our recent work [XP-MARL](#2-xp-marl)! It augments MARL with learning-based au<ins>x</ins>iliary <ins>p</ins>rioritization to address *non-stationarity*. -->
+> **News**
+> - 2026-11: [BH-CBF Safeguard for MARL](#8-bh-cbf-safeguard-for-marl) submitted to IEEE T-ITS: recursively feasible CBFs that safeguard MARL for CAVs ([Fig. 7](#fig-bh-cbf), [project page](https://bassamlab.github.io/BH-CBF)).
+> - 2026-05: [CBF-Informed MARL](#7-cbf-informed-marl) accepted at IEEE ITSC 2026: a CBF-informed reward that guides safe learning ([Fig. 6](#fig-cbf-informed-marl)).
 
 ## Welcome to SigmaRL!
 This repository provides the full code of **SigmaRL**, a <ins>S</ins>ample-eff<ins>i</ins>cient and <ins>g</ins>eneralizable <ins>m</ins>ulti-<ins>a</ins>gent <ins>R</ins>einforcement <ins>L</ins>earning (MARL) framework for motion planning of Connected and Automated Vehicles (CAVs).
 
-SigmaRL is a decentralized MARL framework designed for motion planning of CAVs. We use <a href="https://github.com/proroklab/VectorizedMultiAgentSimulator" target="_blank">VMAS</a>, a vectorized differentiable simulator designed for efficient MARL benchmarking, as our simulator and customize it for our RL environment. The first scenario in [Fig. 1](#fig-generalization) mirrors the real-world conditions of our Cyber-Physical Mobility Lab (<a href="https://cpm.embedded.rwth-aachen.de/" target="_blank">CPM Lab</a>). We also support maps handcrafted in <a href="https://josm.openstreetmap.de/" target="_blank">JOSM</a>, an open-source editor for OpenStreetMap. [Below](#customize-your-own-maps) you will find detailed guidance for creating your **OWN** maps.
+SigmaRL is a decentralized MARL framework designed for motion planning of CAVs. We use <a href="https://github.com/proroklab/VectorizedMultiAgentSimulator" target="_blank">VMAS</a>, a vectorized differentiable simulator designed for efficient MARL benchmarking, as our simulator and customize it for our RL environment. The first scenario in [Fig. 1](#fig-generalization) mirrors the real-world conditions of our Cyber-Physical Mobility Lab (<a href="https://cpm.lrt.unibw.de/" target="_blank">CPM Lab</a>). We also support maps handcrafted in <a href="https://josm.openstreetmap.de/" target="_blank">JOSM</a>, an open-source editor for OpenStreetMap. [Below](#customize-your-own-maps) you will find detailed guidance for creating your **OWN** maps.
 
 <a id="fig-generalization"></a>
 <figure>
@@ -241,6 +245,32 @@ Figure 5: Demonstration of our safety filter for safety verification of an under
 </figure>
 
 Figure 6: Demonstrating some representative interaction scenarios using the policy learned with our proposed CBF-informed method. See our [CBF-Informed MARL](#7-cbf-informed-marl) for more details.
+
+<a id="fig-bh-cbf"></a>
+<figure>
+  <table>
+    <tr>
+      <td>
+        <a id="fig-bh-cbf-roundabout"></a>
+        <figure>
+          <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/bh_cbf_roundabout.gif?raw=true" width="400" />
+          <br>
+          <figcaption>(a) Roundabout (rounD).</figcaption>
+        </figure>
+      </td>
+      <td>
+        <a id="fig-bh-cbf-intersection"></a>
+        <figure>
+          <img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/bh_cbf_intersection.gif?raw=true" width="400"/>
+          <br>
+          <figcaption>(b) Intersection (inD).</figcaption>
+        </figure>
+      </td>
+    </tr>
+  </table>
+</figure>
+
+Figure 7: An unsafe MARL policy safeguarded by our BH-CBF filter on real-world maps of a roundabout and an intersection. Light trails: predictions of braking to a standstill along the route. Real time. See our [BH-CBF paper](#8-bh-cbf-safeguard-for-marl) and the [project page](https://bassamlab.github.io/BH-CBF) for more details.
 
 
 ## Install
@@ -506,7 +536,7 @@ Jianye Xu and Bassam Alrifaee, "Beyond Safety Filtering: Control Barrier Functio
 <div>
 Jianye Xu, Yousef Sayed, and Bassam Alrifaee, "Safeguarding Multi-Agent Reinforcement Learning for Connected and Automated Vehicles with Recursively Feasible Control Barrier Functions," <i>arXiv preprint arXiv:2611.04957</i>, 2026 (submitted to IEEE Transactions on Intelligent Transportation Systems).
 
-<a href="https://arxiv.org/abs/2611.04957" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://bassamlab.github.io/BH-CBF" target="_blank"><img src="https://img.shields.io/badge/-Project%20Page-00549F"></a> <a href="https://github.com/bassamlab/SigmaRL/tree/1.7.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
+<a href="https://arxiv.org/abs/2611.04957" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://bassamlab.github.io/BH-CBF" target="_blank"><img src="https://img.shields.io/badge/-Project%20Page-00549F"></a> [![Jump to Fig. 7](https://img.shields.io/badge/Jump%20to-Fig.%207-blue)](#fig-bh-cbf) <a href="https://github.com/bassamlab/SigmaRL/tree/1.7.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
 
 - **BibTeX**

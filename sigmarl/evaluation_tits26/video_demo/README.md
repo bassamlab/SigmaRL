@@ -6,7 +6,7 @@ Functions* (paper sources: `2026_T-ITS_CBF-Safeguard-MARL/`). The video also hel
 the evaluation to readers who don't know the code. The scripts are tracked by git; everything they
 produce or cache lives in **`outputs/tits26/video_demo/`** (OUT below; git-ignored):
 
-- **Final video:** `OUT/bh_cbf_video_demo.mp4` (1920 × 1080, 30 fps, H.264, about 2:53).
+- **Final video:** `OUT/bh_cbf_video_demo.mp4` (1920 × 1080, 30 fps, H.264).
 - **Raw scene videos for slides:** `OUT/raw/` (map panels only, without titles, captions, or fades).
 
 The video follows the paper's **four evaluation stages**: (1) pre-training with safety rewards,
@@ -30,6 +30,7 @@ commands in "Recipes" (and the docstring of `video.py`) rebuild it.
 | `rollouts.py` | Saves Stage 3 (fine-tuning) rollouts (checkpoints deployed without a filter) → `OUT/stage2/`. It works on a copy of the run, so the paper's run folders stay untouched. |
 | `repair.py` | Reruns a BH-CBF deployment and records the repair rounds of the certified filter (QP constraints of the first QP, candidates, violated (e, t), added QP constraints, fallback) of every filter problem → `OUT/repair/`. `list` prints the filter problems with repairs. |
 | `select_windows.py` | Lists candidate time windows (collision criteria; see "How the scenes were chosen"). |
+| `hero.py` | Renders the background loop of the project page's header (bassamlab.github.io/BH-CBF): the `backup_round` scene, full-bleed (1920 × 800), no text, the last second crossfaded into the first → `OUT/hero/hero_round.{mp4,jpg}`. |
 
 Paths in the scripts are relative to the repository root, so run everything from
 the repository root and set
@@ -63,6 +64,7 @@ After changing a scene, re-render only its clip and run `assemble`. `assemble` c
 | `clips/NN_<name>.mp4` | One clip per scene (with fades); `list.txt` is the concat list of `assemble`. |
 | `raw/<scene>.mp4` | Map panels of each scene, cropped to the panels and their titles, no fades, for PowerPoint. Written during `render` (`Clip.start_raw`/`stop_raw`). |
 | `previews/` | PNGs of `render --preview`. |
+| `hero/` | Background loop of the project page's header and its poster (`hero.py`). |
 | `assets/` | Cover-page images: `logo_i11_rwth.png`, `logo_unibw.png` (composited on white and cropped to the logo; also used by the closing card), and `photo_xu.jpg`, `photo_sayed.jpg`, `photo_alrifaee.jpg`. |
 | `tails/*.npz` | Braking tails of Stage 2 runs and counterfactual masters: `steps` [S] and `tails` [S, H, n, 3] (pose per tail step and vehicle; padded with the standstill pose). Step indices are those of the source rollout. |
 | `tails/s3_*.pkl` | Braking tails of Stage 4 episodes (used only by the extra side-by-side clip): `captured` = list of (recording time [s], {track id: tail [H, 3]}) for the active vehicles, plus `deviation` (rerun vs. paper episode; it was 0.0 m for all four). |
@@ -89,7 +91,7 @@ Paths in the source column: `assets/`, `tails/`, and `stage2/` are in OUT; Stage
 | 09 | `stage3_card` | Section card. | – | `CLIPS` |
 | 10 | `stage3_finetuning` | Roundabout policy (TTC seed 1, iteration 100) before and after fine-tuning on the intersection with BH-CBF in the loop. Both panels without a filter, so no trails. First 30 s at 2× speed. Collisions: 3 / 0. | `stage2/…/out_td_iter{0,100}_nofilter_seed205.td` | `FINETUNE_*` |
 | 11 | `stage4_card` | Section card (112 windows, 1264 vehicles, over 115 km). | – | `CLIPS` |
-| 12 | `stage4` | Four scenes (paper fig. human-footprints; the paper keeps only (c) and (d), the video all four), 8.5 s each at real time plus a 2 s hold of the last frame. One panel: recorded humans (outlined, on top) and fine-tuned policy + BH-CBF (filled, no trails); a thin line joins the two versions of each vehicle, near-black where the policy is ahead or level, red where the human is ahead by more than 0.5 m along the recorded path (`progress`). No legend (explained orally). | `outputs/tits26/stage3_human_ft_recorded_maxlen6.5/natural/` (episode pickles, `matched_tracks.pkl`) | `HUMAN_SCENES`, `HUMAN_SEED` |
+| 12 | `stage4` | Four scenes (paper fig. human-footprints; the paper keeps only (c) and (d), the video all four), 10.5 s each at real time plus a 2 s hold of the last frame. One panel: recorded humans (outlined, on top) and fine-tuned policy + BH-CBF (filled, no trails); a thin line joins the two versions of each vehicle, near-black where the policy is ahead or level, red where the human is ahead by more than 0.5 m along the recorded path (`progress`). The footer states which vehicles are ours (filled) and which are human (outlined); the links have no legend (explained orally). | `outputs/tits26/stage3_human_ft_recorded_maxlen6.5/natural/` (episode pickles, `matched_tracks.pkl`) | `HUMAN_SCENES`, `HUMAN_SEED` |
 | 13 | `logos` | Closing card, 3 s: the logos of both universities, one above the other. | `assets/logo_*.png` | `scene_logos` |
 
 Extra clips, not part of the video (`EXTRAS` in `video.py`; `render --only <name>` writes
@@ -97,7 +99,7 @@ Extra clips, not part of the video (`EXTRAS` in `video.py`; `render --only <name
 
 | Clip | Content | Source data | Key constants |
 |---|---|---|---|
-| `stage4_side_by_side` | The earlier Stage 4 layout: recorded humans left, policy with trails right (raw: `stage4_side_by_side_scene_{1..4}`). | as `stage4` + `tails/s3_{a..d}.pkl` | `scene_humans(overlay=False)` |
+| `stage4_side_by_side` | The earlier Stage 4 layout: recorded humans left, policy with trails right (raw: `stage4_side_by_side_scene_{1..4}`; the project page shows scene 1). Labels with arrows point at the blue vehicle: "Slow down", then "Stop" for the human (left), and "Decisively enter" for the policy (right) from the human's slow-down until 1 s after the policy reaches the ring. | as `stage4` + `tails/s3_{a..d}.pkl` | `scene_humans(overlay=False)`, `HUMAN_CUES` (label times and position) |
 | `repair` | Repair by lazy constraint generation, seen from vehicle i (heading up, roundabout). 3 s at real time, then one filter problem paused: the first QP's constraints near their bound (linearized at the nominal control), the candidate, the exact check with its violated (e, t), the added QP constraints, the second candidate, which passes; then 3 s at real time. Right: one cell per QP constraint (safety constraint e × prediction step t). | Stage 2 comparison run with BH-CBF (`COMPARISON_RUN/ours/dec/seed202`) + `repair/repair_round.pkl` | `REPAIR_EVENT` (step 147, vehicle 6), `REPAIR_LEAD`, `REPAIR_VIEW` |
 
 Raw videos: `backup_round`, `backup_ind`, `stage1_rewards`, `stage2_counterfactual_{1..4}`,
@@ -129,7 +131,7 @@ Raw videos: `backup_round`, `backup_ind`, `stage1_rewards`, `stage2_counterfactu
   The joining lines (1 px) are near-black by default and red only where the human is ahead, so red
   stands out; the vehicles keep the paper's colors. Each scene holds its last frame for 2 s.
 - **Font:** Carlito (Calibri-compatible) throughout.
-- **Length:** about 3 minutes is a soft limit; 2:53 now.
+- **Length:** about 3 minutes.
 
 ## How the scenes were chosen (and why)
 

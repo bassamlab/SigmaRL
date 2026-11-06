@@ -70,7 +70,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from matplotlib import font_manager
+from matplotlib import font_manager, patheffects
 from matplotlib.collections import LineCollection, PolyCollection
 from matplotlib.colors import to_rgba
 from matplotlib.lines import Line2D
@@ -155,17 +155,27 @@ FINETUNE_WINDOW = (70, 140, 36, 90)
 # Stage 4 scenes of the paper (fig. human-footprints; (a), (b) cut from the paper): episode, start time [s],
 # duration [s], key vehicles (track ids), lower left corner of the 64 m window, tails, caption
 HUMAN_SCENES = [
-    ("rec11_h0303.3", 311.2, 8.5, [166, 164], (33.0, 32.5), "s3_a",
+    ("rec11_h0303.3", 311.2, 10.5, [166, 164], (33.0, 32.5), "s3_a",
      "The policy enters at once, ahead of a circulating vehicle that is still far away; the human waits 3.5 s."),
-    ("rec19_h0037.9", 37.4, 8.5, [63, 66, 59], (40.0, 36.0), "s3_b",
+    ("rec19_h0037.9", 37.4, 10.5, [63, 66, 59], (40.0, 36.0), "s3_b",
      "Two queued vehicles enter as a platoon right behind a circulating vehicle; the humans wait about 6 s."),
-    ("rec05_h0700.5", 713.5, 8.5, [462, 463], (68.0, 27.0), "s3_c",
+    ("rec05_h0700.5", 713.5, 10.5, [462, 463], (68.0, 27.0), "s3_c",
      "The policy keeps its speed into the ring; the human brakes to a standstill and waits 3 s."),
-    ("rec11_h0067.9", 67.5, 8.5, [43, 37], (50.0, 13.0), "s3_d",
+    ("rec11_h0067.9", 67.5, 10.5, [43, 37], (50.0, 13.0), "s3_d",
      "The policy enters ahead of a close circulating vehicle, which brakes briefly; the human waits 5.4 s."),
 ]  # fmt: skip
 HUMAN_SEED = 1  # Source policy of the fine-tuned policy
 HUMAN_WINDOW = 64.0
+# Side-by-side Stage 4 scenes: labels with arrows to the blue vehicle in both panels, at a fixed
+# position [m]. Times [s from the scene start]: the human starts to slow down (left: "Slow down";
+# right, the policy: "Decisively enter"), the human's stop (speed below 1 m/s; left: "Stop"), and
+# the end of the policy's label, 1 s after it reaches the ring (within 20.5 m of its center)
+HUMAN_CUES = {  # slow down, (stop from, stop to), policy label until, label position
+    "s3_a": (1.6, (4.4, 7.9), 5.1, (43.0, 68.0)),
+    "s3_b": (1.6, (3.3, 8.8), 4.7, (69.5, 88.0)),
+    "s3_c": (0.5, (4.4, 7.5), 5.0, (116.0, 68.0)),
+    "s3_d": (0.7, (3.7, 9.0), 5.1, (88.0, 20.0)),
+}
 # Repair rounds of the certified filter (repair.py): the Stage 2 comparison run with BH-CBF,
 # one filter problem (step, vehicle i) with a repair round, steps shown before and after it
 REPAIR = f"{OUT}/repair"
@@ -972,7 +982,7 @@ def scene_humans(clip, speed: float = 1.0, overlay: bool = True):
             axes[0].add_collection(links)
             policy = Fleet(axes[0], half_c, colors)
             humans = Fleet(axes[0], half_h, colors, filled=False, zorder=4, face="none")
-            note = "Each vehicle enters at its recorded time and state."
+            note = "Filled: our controlled vehicles. Outlined: human drivers. Each vehicle enters at its recorded time and state."
         else:
             axes = panel_axes(fig, 2, window)
             for ax, title in zip(
@@ -981,6 +991,15 @@ def scene_humans(clip, speed: float = 1.0, overlay: bool = True):
                 road(ax, "round_location0")
                 panel_title(ax, title, BLUE if "BH-CBF" in title else TEXT)
             humans = Fleet(axes[0], half_h, colors, filled=False)
+            # Labels with arrows to the blue vehicle: the human slows down and stops, the policy enters
+            slow, (stop_from, stop_to), enter_to, label_xy = HUMAN_CUES[name]
+            cue_h, cue_c = (ax.annotate(
+                "", xy=label_xy, xytext=label_xy, fontsize=26, weight="bold", color=BLUE,
+                ha="center", va="center", zorder=8,
+                arrowprops=dict(arrowstyle="-|>,head_length=0.6,head_width=0.35", color=BLUE,
+                                lw=2.5, shrinkA=14, shrinkB=22),
+                path_effects=[patheffects.withStroke(linewidth=5, foreground="white")],
+            ) for ax in axes)  # fmt: skip
             trails = Tails(axes[1], half_c, colors)
             policy = Fleet(axes[1], half_c, colors)
             note = "Each vehicle enters at its recorded time and state; a color marks the same vehicle."
@@ -1010,6 +1029,14 @@ def scene_humans(clip, speed: float = 1.0, overlay: bool = True):
                 - 1,
             )
             if not overlay:
+                seconds, k = tau * DT, column[keys[0]]
+                text = "Slow down" if slow <= seconds < stop_from else "Stop" if stop_from <= seconds <= stop_to else ""
+                cue_h.set_text(text)
+                cue_h.set_visible(bool(text) and not np.isnan(poses_h[k, 0]))
+                cue_h.xy = poses_h[k, :2]
+                cue_c.set_text("Decisively enter")
+                cue_c.set_visible(slow <= seconds <= enter_to and not np.isnan(poses[k, 0]))
+                cue_c.xy = poses[k, :2]
                 trails.update({column[key]: tail for key, tail in captured[i][1].items() if key in column},
                               ~np.isnan(poses[:, 0]))  # fmt: skip
             policy.update(poses)
@@ -1039,7 +1066,6 @@ def scene_repair(clip):
     step, then the rounds of the certified filter, paused, then real time
     again. Right: one cell per QP constraint (safety constraint e, prediction
     step t)."""
-    from matplotlib import patheffects
     from matplotlib.patches import Rectangle
     from matplotlib.transforms import Affine2D
 
