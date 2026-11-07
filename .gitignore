@@ -358,20 +358,6 @@ poetry.toml
 
 # LSP config files
 pyrightconfig.json
-# Local paper folder (not tracked)
-# /20261031-paper-t-its/
-20261031-paper-t-its-v2/refs/*.pdf
-20261031-paper-t-its-v2/refs/markdown/
-20261031-paper-t-its-v2/refs/pdf/
-20261031-paper-t-its-v2/refs/*.zip
-20261031-paper-t-its-v2/refs/factsheets/
-/2026_T-ITS_CBF-Safeguard-MARL/
-20261031-paper-t-its*
-
-# Internal evaluation notes (plans, progress log, session handovers); local only
-sigmarl/evaluation_tits26/eva_*.md
-sigmarl/evaluation_tits26/handover_*.md
-
 # Lanelet2 maps of the drone datasets (rounD, inD, exiD, highD): they may not be
 # redistributed; generate them with scripts/lanelet2_maps/ (docs/lanelet2_maps.md)
 sigmarl/scenarios/assets/maps/round_location*.osm

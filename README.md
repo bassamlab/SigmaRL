@@ -12,9 +12,9 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2611.04957-b31b1b.svg)](https://arxiv.org/abs/2611.04957)
 
 <p align="center">
-  <a href="https://github.com/bassamlab/assets/blob/main/sigmarl/media/lab-7-veh.mp4" target="_blank"><img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/lab-7-veh.gif?raw=true" width="800" alt="Zero-shot deployment from simulation in our CPM Lab" /></a>
+  <a href="https://github.com/bassamlab/assets/blob/main/sigmarl/media/lab-7-veh.mp4" target="_blank"><img src="https://github.com/bassamlab/assets/blob/main/sigmarl/media/lab-7-veh.gif?raw=true" width="800" alt="Zero-shot deployment of a MARL policy from simulation in our CPM Lab" /></a>
   <br>
-  <em>Zero-shot deployment from simulation in our <a href="https://cpm.lrt.unibw.de/" target="_blank">Cyber-Physical Mobility Lab (CPM Lab)</a>.</em>
+  <em>Zero-shot deployment of a MARL policy from simulation in our <a href="https://cpm.lrt.unibw.de/" target="_blank">Cyber-Physical Mobility Lab (CPM Lab)</a>.</em>
 </p>
 
 - [SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning](#sigmarl-a-sample-efficient-and-generalizable-multi-agent-reinforcement-learning-framework-for-motion-planning)

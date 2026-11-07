@@ -610,7 +610,7 @@ def plot_vehicle_footprints_from_td(
 if __name__ == "__main__":
     from constants import AGENTS
 
-    td_path = "/Users/xu/Documents/my_repo/marl_for_cavs/checkpoints/itsc26_sensitivity_new_public/rew_method_cbf/reward_progress0.1/h0.1/seed1/out_td_cpm_mixed_nagents4_seed1.td"
+    td_path = "checkpoints/itsc26_sensitivity_new_public/rew_method_cbf/reward_progress0.1/h0.1/seed1/out_td_cpm_mixed_nagents4_seed1.td"
     # k0_list = [69, 130, 206, 332, 400, 539]
     k0_list = [69, 206, 332, 539]
 

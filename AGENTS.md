@@ -12,17 +12,14 @@ and `docs/cpm_lab_bridge_and_modes.md`.
 
 ## Environment
 
-The conda environment named `sigmarl-py312` is usually the preferred
-project environment when it exists. If it is not available, inspect the local
-Conda or virtualenv setup and choose another environment with a supported Python
-version (3.10 to 3.12) and the project dependencies installed. The environment
+Inspect the local Conda or virtualenv setup and choose an environment with a
+supported Python version (3.10 to 3.12) and the project dependencies installed, suhc as `sigmarl-py312`. The environment
 is already set up: do not install or upgrade packages unless the user asks.
 
 `sigmarl` is installed in editable mode (`pip install -e .`), so an environment
-imports `sigmarl` from exactly one checkout. A machine may also have a secondary
-git worktree for side features, named `<repo>-feat` (for example
-`marl_for_cavs-feat`), paired with an environment named `<main env>-feat` (for
-example `sigmarl-py312-feat`) whose editable install points at that worktree.
+imports `sigmarl` from exactly one checkout. A machine may also have secondary
+git worktrees, each paired with its own environment whose editable install
+points at that worktree, such as `sigmarl-py312-feat`.
 Before running code, pick the environment whose `sigmarl` resolves to the
 current checkout:
 
@@ -45,7 +42,7 @@ asks.
 ## Common Commands
 
 Run all commands from the repository root inside the environment selected above
-(for example, prefix them with `conda run -n sigmarl-py312`).
+(for example, prefix them with `conda run -n <env>`).
 
 ```bash
 # Interactive environment check (arrow keys drive agents, Tab switches agents)

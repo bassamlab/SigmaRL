@@ -6,8 +6,8 @@ Lab digital twin and physical vehicle fleet. It describes the communication
 mechanisms, frame transformations, supported control modes, and the virtual
 trajectory generation pipeline.
 
-The repository for the SigmaR framework is usually called marl_for_cavs (for example, /Users/xu/Documents/my_repo/marl_for_cavs).
-The repository for the CPM Lab digital twin is usually called ros2-workspace-lab (for example, /Users/xu/Documents/git_cpm/Lab/ros2-workspace-lab).
+The repository for the SigmaRL framework is usually called SigmaRL or marl_for_cavs.
+The repository for the CPM Lab digital twin is usually called ros2-workspace-lab.
 ---
 
 ## 1. System Architecture and Distributed Workflow

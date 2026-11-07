@@ -112,8 +112,7 @@ of the vehicles they replace (`stage3_human_comparison.py --vehicles recorded`,
 default), while Stages 1 to 3 use the nominal 4.6 m x 2.0 m car. Vans longer
 than 6.5 m count as heavy vehicles and end the windows
 (`--max_vehicle_length 6.5`, default). `settings.py` holds the maps and vehicle
-counts. Paths are date-free: `configs/tits26/stage1_pretrain`,
-`checkpoints/tits26/stage1_pretrain`, `outputs/tits26/<stage>`.
+counts.
 
 The filters are the methods of `before_stages_filter_benchmark.py` (`METHODS`);
 their decay rates and own parameters are the tuned values in

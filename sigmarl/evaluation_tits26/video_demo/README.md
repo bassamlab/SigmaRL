@@ -2,9 +2,9 @@
 
 This folder holds the scripts of the supplementary video of the paper *Safeguarding Multi-Agent
 Reinforcement Learning for Connected and Automated Vehicles with Recursively Feasible Control Barrier
-Functions* (paper sources: `2026_T-ITS_CBF-Safeguard-MARL/`). The video also helps explain the filters' behavior in
-the evaluation to readers who don't know the code. The scripts are tracked by git; everything they
-produce or cache lives in **`outputs/tits26/video_demo/`** (OUT below; git-ignored):
+Functions*. The video also helps explain the filters' behavior in
+the evaluation to readers who don't know the code. Everything the scripts
+produce or cache lives in **`outputs/tits26/video_demo/`** (OUT below):
 
 - **Final video:** `OUT/bh_cbf_video_demo.mp4` (1920 × 1080, 30 fps, H.264).
 - **Raw scene videos for slides:** `OUT/raw/` (map panels only, without titles, captions, or fades).
@@ -49,12 +49,11 @@ After changing a scene, re-render only its clip and run `assemble`. `assemble` c
 `OUT/clips/*.mp4`, so delete the clip files of renamed or removed clips first. To inspect a frame, use
 `ffmpeg -ss <seconds> -i OUT/clips/<clip>.mp4 -frames:v 1 frame.png`.
 
-**Requirements on this Mac:**
-- `ffmpeg` (Homebrew).
-- The font Carlito, which has the same letter widths as Calibri, the institute's template font. It
-  is loaded from LibreOffice (`CARLITO` in `video.py`:
-  `/Applications/LibreOffice.app/Contents/Resources/fonts/truetype`). Without it, matplotlib falls
-  back to another font.
+**Requirements:**
+- `ffmpeg`.
+- The font Carlito, which has the same letter widths as Calibri. Set `SIGMARL_CARLITO_DIR` to the
+  folder of its `.ttf` files (default: the fonts bundled with LibreOffice on macOS). Without it,
+  matplotlib falls back to another font.
 
 ## Output folder (`outputs/tits26/video_demo/`)
 
@@ -62,7 +61,7 @@ After changing a scene, re-render only its clip and run `assemble`. `assemble` c
 |---|---|
 | `bh_cbf_video_demo.mp4` | The final video. |
 | `clips/NN_<name>.mp4` | One clip per scene (with fades); `list.txt` is the concat list of `assemble`. |
-| `raw/<scene>.mp4` | Map panels of each scene, cropped to the panels and their titles, no fades, for PowerPoint. Written during `render` (`Clip.start_raw`/`stop_raw`). |
+| `raw/<scene>.mp4` | Map panels of each scene, cropped to the panels and their titles, no fades, for reuse in slides. Written during `render` (`Clip.start_raw`/`stop_raw`). |
 | `previews/` | PNGs of `render --preview`. |
 | `hero/` | Background loop of the project page's header and its poster (`hero.py`). |
 | `assets/` | Cover-page images: `logo_i11_rwth.png`, `logo_unibw.png` (composited on white and cropped to the logo; also used by the closing card), and `photo_xu.jpg`, `photo_sayed.jpg`, `photo_alrifaee.jpg`. |
@@ -79,7 +78,7 @@ Paths in the source column: `assets/`, `tails/`, and `stage2/` are in OUT; Stage
 
 | # | Clip | Content | Source data | Key constants |
 |---|---|---|---|---|
-| 00 | `title` | Cover: title, authors, logos, photos, affiliations as in the paper (Xu: RWTH; Sayed and Alrifaee: University of the Bundeswehr Munich); layout copied from the institute's cover slide. Keep it consistent with the title and author block of the paper. | `assets/` | `scene_title` |
+| 00 | `title` | Cover: title, authors, logos, photos, affiliations as in the paper (Xu: RWTH; Sayed and Alrifaee: University of the Bundeswehr Munich). | `assets/` | `scene_title` |
 | 01 | `contributions` | "Contributions": the lead line "We propose the Backup-Horizon Control Barrier Function (BH-CBF) with the following key properties:" and five numbered points (aligned with the paper's abstract). | – | `scene_contributions` |
 | 02 | `backup_round` | Key idea: the braking tails of all vehicles, roundabout, steps 250–350 at real time. | Stage 2 run `round…ttc_seed_1…/ours/dec/seed201` + `tails/backup_round.npz` | `BACKUP_ROUND`, window in `CLIPS` |
 | 03 | `backup_ind` | Same, intersection, steps 40–140. | `ind…ttc_seed_4…/ours/dec/seed202` + `tails/backup_ind.npz` | `BACKUP_IND` |
@@ -91,7 +90,7 @@ Paths in the source column: `assets/`, `tails/`, and `stage2/` are in OUT; Stage
 | 09 | `stage3_card` | Section card. | – | `CLIPS` |
 | 10 | `stage3_finetuning` | Roundabout policy (TTC seed 1, iteration 100) before and after fine-tuning on the intersection with BH-CBF in the loop. Both panels without a filter, so no trails. First 30 s at 2× speed. Collisions: 3 / 0. | `stage2/…/out_td_iter{0,100}_nofilter_seed205.td` | `FINETUNE_*` |
 | 11 | `stage4_card` | Section card (112 windows, 1264 vehicles, over 115 km). | – | `CLIPS` |
-| 12 | `stage4` | Four scenes (paper fig. human-footprints; the paper keeps only (c) and (d), the video all four), 10.5 s each at real time plus a 2 s hold of the last frame. One panel: recorded humans (outlined, on top) and fine-tuned policy + BH-CBF (filled, no trails); a thin line joins the two versions of each vehicle, near-black where the policy is ahead or level, red where the human is ahead by more than 0.5 m along the recorded path (`progress`). The footer states which vehicles are ours (filled) and which are human (outlined); the links have no legend (explained orally). | `outputs/tits26/stage3_human_ft_recorded_maxlen6.5/natural/` (episode pickles, `matched_tracks.pkl`) | `HUMAN_SCENES`, `HUMAN_SEED` |
+| 12 | `stage4` | Four scenes (paper fig. human-footprints; the paper keeps only (c) and (d), the video all four), 10.5 s each at real time plus a 2 s hold of the last frame. One panel: recorded humans (outlined, on top) and fine-tuned policy + BH-CBF (filled, no trails); a thin line joins the two versions of each vehicle, near-black where the policy is ahead or level, red where the human is ahead by more than 0.5 m along the recorded path (`progress`). The footer states which vehicles are ours (filled) and which are human (outlined). | `outputs/tits26/stage3_human_ft_recorded_maxlen6.5/natural/` (episode pickles, `matched_tracks.pkl`) | `HUMAN_SCENES`, `HUMAN_SEED` |
 | 13 | `logos` | Closing card, 3 s: the logos of both universities, one above the other. | `assets/logo_*.png` | `scene_logos` |
 
 Extra clips, not part of the video (`EXTRAS` in `video.py`; `render --only <name>` writes
@@ -105,33 +104,18 @@ Extra clips, not part of the video (`EXTRAS` in `video.py`; `render --only <name
 Raw videos: `backup_round`, `backup_ind`, `stage1_rewards`, `stage2_counterfactual_{1..4}`,
 `stage2_comparison`, `stage3_finetuning`, `stage4_scene_{1..4}`.
 
-## Style decisions
+## Visual conventions
 
-- **Frame:**
-  - White background.
-  - Title top-left in RWTH blue, with a gray subtitle below it saying what to look at.
-  - Footer: the clock on the left, a note on the right.
-  - No "Stage N" chips; the titles already say it.
-- **Contributions:** short numbered points, not sentences; no summary at the end. The title sits at the same position
-  as the scene titles.
-- **Acronyms:** the long form is capitalized where it introduces the acronym ("Backup-Horizon
-  Control Barrier Function (BH-CBF)", "Multi-Agent Reinforcement Learning (MARL)").
-- **Colors:** the RWTH palette.
-  - Vehicles in blue.
-  - In multi-vehicle scenes, the key vehicles in blue, green, purple, magenta and the others in gray.
-  - Collisions: a red outline plus a star.
+- **Colors:** the RWTH palette; key vehicles in blue, green, purple, and magenta, the others in gray.
+  Collisions are drawn as a red outline plus a star.
 - **Collision counter:** a collision of two vehicles counts once (lane collisions count once each).
-- **Braking trails:** drawn wherever BH-CBF acts, except in Stage 4 (they cluttered the overlay), as opaque light tints of the vehicle's color
-  (`Tails`, `tint`). Opaque, so that overlapping footprints keep one shade. The standstill footprint
-  is outlined.
-- **Human drivers (Stage 4):** outlined, including the background vehicles, as in the paper. The
-  outline lies inside the footprint (twice the width, clipped to the polygon), so outlined and
-  filled vehicles look the same size.
-- **Stage 4 overlay:** humans and policy in one panel, the outlines drawn on top (transparent fill).
-  The joining lines (1 px) are near-black by default and red only where the human is ahead, so red
-  stands out; the vehicles keep the paper's colors. Each scene holds its last frame for 2 s.
+- **Braking trails:** drawn wherever BH-CBF acts, except in Stage 4, as opaque light tints of the
+  vehicle's color (`Tails`, `tint`), so overlapping footprints keep one shade. The standstill
+  footprint is outlined.
+- **Human drivers (Stage 4):** outlined, as in the paper. The outline lies inside the footprint, so
+  outlined and filled vehicles look the same size. The joining lines are near-black by default and
+  red only where the human is ahead.
 - **Font:** Carlito (Calibri-compatible) throughout.
-- **Length:** about 3 minutes.
 
 ## How the scenes were chosen (and why)
 
@@ -201,3 +185,41 @@ Raw videos: `backup_round`, `backup_ind`, `stage1_rewards`, `stage2_counterfactu
   and `panel_axes`, then calls `clip.add(fig)` per frame. Call `clip.start_raw(name, fig, axes)`
   before the frames and `clip.stop_raw()` after them for a raw video. Add it to `CLIPS`; the clip
   number is its position in that list.
+
+## Explainer video (how the filter works)
+
+A second, separate video (about 3 minutes) zooms into single filter problems of the
+decentralized BH-CBF filter, in the order of the paper's method section:
+
+- **Final video:** `OUT/bh_cbf_explainer.mp4`; clips in `OUT/explainer/clips/` (each one usable as a loop on the project page).
+- **Scripts:** `explainer_capture.py` (data) and `explainer.py` (`render`, `assemble`).
+
+`explainer_capture.py` reruns the Stage 2 comparison run with BH-CBF (the run of the `repair` clip) and
+records, for the given steps and vehicles, every filter problem in full: the vehicle table and the
+backup predictions, the shares and corner-budget data, the lane facets, the exact values of all
+inequalities on a 61 × 61 grid over the admissible box of (a, ω), the predictions along the path from the
+policy's control to the filtered one, and the QP constraints as half-planes. It checks that its own
+evaluation reproduces the filter's values. Output: `OUT/explainer/<name>.pkl`.
+
+```bash
+RUN=outputs/tits26/stage1_filters_ttc_iter100/round_location0__stage1_ttc_seed_4__iter100/round_location0/ours/dec/seed202
+R explainer_capture --run $RUN --steps 94 120 --agents 9 --name explainer_lane
+R explainer_capture --run $RUN --steps 112 155 --agents 6 10 --name explainer_pair
+R explainer render [--only <clip> ...]
+R explainer assemble
+```
+
+| # | Clip | Content | Key constants |
+|---|---|---|---|
+| 00 | `intro` | Card. | `CLIPS` |
+| 01 | `one_step` | A vehicle at 11.7 m/s approaches a stopped vehicle on a straight road; the one-step CBF filter becomes infeasible and collides, BH-CBF stops 0.1 m behind. Simulated in `explainer.py` (`simulate_line`) with the paper's model, margin, and parameters; 0.5× speed. | `simulate_line` |
+| 02 | `backup` | Vehicle 9 at step 114 (exit lane, next to its left boundary): backup prediction, margin to the left boundary, backup value, the red line (1 − λ)B_e, the candidate of the policy's control (violates), and the sweep to the filtered control (steers less). | `LANE_*` |
+| 03 | `control_plane` | The same problem in the (a, ω) plane: exact feasible set, policy's control, backup control, QP rows and candidate, filtered control with its QP-cost circle (axes scaled by the QP weights); then steps k+1 and k+2. | `ControlPlane` |
+| 04 | `recursive` | The filtered candidate at k equals the backup prediction at k+1 (verified to 1e-5 m), so B_e(x_{k+1}) ≥ (1 − λ)B_e(x_k). | – |
+| 05 | `pair` | Vehicle 10 (i) approaches vehicle 6 (j) at step 130: pair backup value, the budget split into shares (0.80 / 0.20), the corner budgets at the step where the policy's control of i violates most (zoom, separating normal, strips), the two control planes, then real time. | `PAIR_*` |
+| 06 | `summary` | Four takeaways. | – |
+
+Why these events: lane events inside the drawn map are rare in this run (most are artifacts at map
+exits, where the route boundary extends beyond the drawn road); step 114 of vehicle 9 is the clearest
+one with only a lane constraint active. Step 130 is a car-following conflict in the ring in which the
+share rule (the approaching vehicle takes the larger share) is visible.

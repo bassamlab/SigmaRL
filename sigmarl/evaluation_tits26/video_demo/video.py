@@ -82,7 +82,11 @@ from sigmarl.evaluation_tits26.paper_fig_stage1_footprints import HALF, draw_roa
 OUT = "outputs/tits26/video_demo"
 TAILS = f"{OUT}/tails"
 ASSETS = f"{OUT}/assets"  # Logos and photos of the cover
-CARLITO = "/Applications/LibreOffice.app/Contents/Resources/fonts/truetype"
+# Folder of the Carlito .ttf files (default: the fonts bundled with LibreOffice on macOS)
+CARLITO = os.environ.get(
+    "SIGMARL_CARLITO_DIR",
+    "/Applications/LibreOffice.app/Contents/Resources/fonts/truetype",
+)
 # Output folders of the evaluation, named after the former three-stage numbering
 STAGE1 = "outputs/tits26/stage1_filters_ttc_iter100"
 REWARDS_ROOT = "outputs/tits26/stage1_zero_shot"
@@ -98,7 +102,7 @@ DT = 0.1  # Sampling period of the rollouts [s]
 FADE = 8  # Frames of the fade from and to white at the ends of a clip
 JUMP = 3.0  # Displacement per step that marks a respawn [m]
 
-# RWTH colors (2026_T-ITS_CBF-Safeguard-MARL/00_ps.sty)
+# RWTH colors
 BLUE, BLUE50 = "#00549F", "#8EBAE5"
 GREEN = "#56AB27"
 PURPLE = "#7B6FAC"
@@ -424,7 +428,9 @@ def hide_after_respawn(pose: np.ndarray) -> np.ndarray:
 def progress(points: np.ndarray, path: np.ndarray) -> np.ndarray:
     """Arc length [m] along a densely sampled path [M, 2] of its vertex nearest
     to each of points [T, 2] (NaN stays NaN)."""
-    arc = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(path, axis=0), axis=-1))])
+    arc = np.concatenate(
+        [[0.0], np.cumsum(np.linalg.norm(np.diff(path, axis=0), axis=-1))]
+    )
     nearest = np.linalg.norm(points[:, None] - path[None], axis=-1)
     out = np.full(len(points), np.nan)
     valid = ~np.isnan(points).any(-1)
@@ -680,7 +686,9 @@ def scene_contributions(clip):
         "14% shorter median travel time than recorded human drivers",
     ]):  # fmt: skip
         y = 0.68 - 0.1 * i - (0.025 if i == 4 else 0)
-        fig.text(0.07, y, f"{i + 1}.", fontsize=30, color=ORANGE, weight="bold", va="top")
+        fig.text(
+            0.07, y, f"{i + 1}.", fontsize=30, color=ORANGE, weight="bold", va="top"
+        )
         fig.text(0.1, y, text, fontsize=30, color=TEXT, va="top", linespacing=1.3)
     clip.add(fig, 10 * FPS)
     plt.close(fig)
@@ -803,7 +811,13 @@ def scene_counterfactuals(clip):
 
 
 def scene_panels(
-    clip, title: str, subtitle: str, runs: list, steps: tuple, raw: str, speed: float = 2.0
+    clip,
+    title: str,
+    subtitle: str,
+    runs: list,
+    steps: tuple,
+    raw: str,
+    speed: float = 2.0,
 ):
     """Roundabout deployments side by side from the same start, with
     collision counters; runs: (panel title, run, tails name or None, ours)."""
@@ -888,7 +902,9 @@ def scene_finetuning(clip, speed: float = 2.0):
         axes, (("Before fine-tuning", 0), ("After fine-tuning (100 iterations)", 100))
     ):
         data = load_td(
-            os.path.join(FINETUNE_RUN, f"out_td_iter{it}_nofilter_seed{FINETUNE_SEED}.td")
+            os.path.join(
+                FINETUNE_RUN, f"out_td_iter{it}_nofilter_seed{FINETUNE_SEED}.td"
+            )
         )
         road(ax, "ind_location4")
         panel_title(ax, title, BLUE if it else TEXT)
@@ -1014,8 +1030,15 @@ def scene_humans(clip, speed: float = 1.0, overlay: bool = True):
             poses = interpolate(pose_c, tau)
             if overlay:
                 both = ~np.isnan(poses[:, 0]) & ~np.isnan(poses_h[:, 0])
-                links.set_segments([[poses_h[k, :2], poses[k, :2]] for k in np.nonzero(both)[0]])
-                ahead = np.array([np.interp(tau, np.arange(len(gap)), gap[:, k]) for k in range(gap.shape[1])])
+                links.set_segments(
+                    [[poses_h[k, :2], poses[k, :2]] for k in np.nonzero(both)[0]]
+                )
+                ahead = np.array(
+                    [
+                        np.interp(tau, np.arange(len(gap)), gap[:, k])
+                        for k in range(gap.shape[1])
+                    ]
+                )
                 links.set_colors([HUMAN_AHEAD if ahead[k] < -LEAD else LINK
                                   for k in np.nonzero(both)[0]])  # fmt: skip
                 links.set_linewidths(1.0)
@@ -1030,12 +1053,20 @@ def scene_humans(clip, speed: float = 1.0, overlay: bool = True):
             )
             if not overlay:
                 seconds, k = tau * DT, column[keys[0]]
-                text = "Slow down" if slow <= seconds < stop_from else "Stop" if stop_from <= seconds <= stop_to else ""
+                text = (
+                    "Slow down"
+                    if slow <= seconds < stop_from
+                    else "Stop"
+                    if stop_from <= seconds <= stop_to
+                    else ""
+                )
                 cue_h.set_text(text)
                 cue_h.set_visible(bool(text) and not np.isnan(poses_h[k, 0]))
                 cue_h.xy = poses_h[k, :2]
                 cue_c.set_text("Decisively enter")
-                cue_c.set_visible(slow <= seconds <= enter_to and not np.isnan(poses[k, 0]))
+                cue_c.set_visible(
+                    slow <= seconds <= enter_to and not np.isnan(poses[k, 0])
+                )
                 cue_c.xy = poses[k, :2]
                 trails.update({column[key]: tail for key, tail in captured[i][1].items() if key in column},
                               ~np.isnan(poses[:, 0]))  # fmt: skip
@@ -1050,7 +1081,10 @@ def scene_humans(clip, speed: float = 1.0, overlay: bool = True):
 def scene_logos(clip):
     """The closing card: the logos of both universities."""
     fig = new_figure()
-    for name, y, width in (("logo_i11_rwth.png", 0.67, 0.7), ("logo_unibw.png", 0.33, 0.7)):
+    for name, y, width in (
+        ("logo_i11_rwth.png", 0.67, 0.7),
+        ("logo_unibw.png", 0.33, 0.7),
+    ):
         picture = plt.imread(os.path.join(ASSETS, name))
         height = width * WIDTH / HEIGHT * picture.shape[0] / picture.shape[1]
         ax = fig.add_axes([0.5 - width / 2, y - height / 2, width, height])
@@ -1088,7 +1122,9 @@ def scene_repair(clip):
     # Safety constraints e: lane sides first, then the neighbors j in N^i; the
     # neighbors with QP constraints or violations get key colors
     labels = problem["labels"]
-    rows = sorted(range(len(labels)), key=lambda e: (labels[e][0] != "lane", labels[e][1]))
+    rows = sorted(
+        range(len(labels)), key=lambda e: (labels[e][0] != "lane", labels[e][1])
+    )
     involved = {e for e, _ in problem["initial"]}
     for r in problem["rounds"]:
         involved |= {e for e, _ in r["violated"]}
@@ -1117,11 +1153,24 @@ def scene_repair(clip):
     view = Affine2D()
     braking = PolyCollection([], edgecolors="none", zorder=2)
     own = PolyCollection([], linewidths=1.0, zorder=2.2)
-    marks = PolyCollection([], facecolors="none", edgecolors=RED, linewidths=3.0, zorder=5)
+    marks = PolyCollection(
+        [], facecolors="none", edgecolors=RED, linewidths=3.0, zorder=5
+    )
     for collection in (braking, own, marks):
         ax.add_collection(collection)
     fleet = Fleet(ax, HALF, colors)
-    tags = {ego: ax.text(0, 0, "$i$", fontsize=26, color=BLUE, weight="bold", ha="center", va="center")}
+    tags = {
+        ego: ax.text(
+            0,
+            0,
+            "$i$",
+            fontsize=26,
+            color=BLUE,
+            weight="bold",
+            ha="center",
+            va="center",
+        )
+    }
     for e, (name, color) in names.items():
         if labels[e][0] == "pair":
             tags[labels[e][1]] = ax.text(0, 0, name, fontsize=26, color=color, weight="bold",
@@ -1143,7 +1192,9 @@ def scene_repair(clip):
                                                                  np.sin(poses[k, 2] + np.pi / 2)]))  # fmt: skip
 
     def look_from(p):
-        view.clear().translate(-p[0], -p[1]).rotate(np.pi / 2 - p[2]).translate(0, -REPAIR_VIEW * 0.2)
+        view.clear().translate(-p[0], -p[1]).rotate(np.pi / 2 - p[2]).translate(
+            0, -REPAIR_VIEW * 0.2
+        )
 
     def draw_predictions(record, prediction, color, violated=()):
         """Braking predictions of the colored neighbors, the vehicle's own
@@ -1170,26 +1221,51 @@ def scene_repair(clip):
     def applied(record):
         if record["fallback"]:
             return record["prediction_fallback"]
-        return record["rounds"][-1]["prediction"] if record["rounds"] else record["prediction_nom"]
+        return (
+            record["rounds"][-1]["prediction"]
+            if record["rounds"]
+            else record["prediction_nom"]
+        )
 
     # Grid: one cell per QP constraint (e, t), t = 2, ..., N
     n_t = problem["rhs"].shape[1]
     columns = n_t - 1
-    gax = fig.add_axes([0.5, 0.80 - 0.032 * (len(rows) + 1.2), 0.465, 0.032 * (len(rows) + 1.2)])
+    gax = fig.add_axes(
+        [0.5, 0.80 - 0.032 * (len(rows) + 1.2), 0.465, 0.032 * (len(rows) + 1.2)]
+    )
     gax.set_xlim(-1.6, columns)
     gax.set_ylim(len(rows), -1.2)
     gax.axis("off")
     gax.text(-0.8, -0.6, "$t$", fontsize=20, color=MUTED, ha="center", va="center")
     for col in range(columns):
         if col % 3 == 0 or col == columns - 1:
-            gax.text(col + 0.5, -0.6, str(col + 2), fontsize=16, color=MUTED, ha="center", va="center")
+            gax.text(
+                col + 0.5,
+                -0.6,
+                str(col + 2),
+                fontsize=16,
+                color=MUTED,
+                ha="center",
+                va="center",
+            )
     cells, inner, crosses = {}, {}, {}
     for r, e in enumerate(rows):
         name, color = names[e]
-        gax.text(-0.8, r + 0.5, name, fontsize=20, color=color, ha="center", va="center", weight="bold")
+        gax.text(
+            -0.8,
+            r + 0.5,
+            name,
+            fontsize=20,
+            color=color,
+            ha="center",
+            va="center",
+            weight="bold",
+        )
         for col in range(columns):
             c = col + 1  # code index of t = col + 2
-            cells[e, c] = gax.add_patch(Rectangle((col, r), 1, 1, fc=CELL_GRAY, ec="white", lw=1.5))
+            cells[e, c] = gax.add_patch(
+                Rectangle((col, r), 1, 1, fc=CELL_GRAY, ec="white", lw=1.5)
+            )
             inner[e, c] = gax.add_patch(Rectangle((col + 0.22, r + 0.22), 0.56, 0.56, fc=PURPLE,
                                                   ec="white", lw=1.0, visible=False))  # fmt: skip
             crosses[e, c] = gax.text(col + 0.5, r + 0.52, "×", fontsize=26, color=RED, weight="bold",
@@ -1205,12 +1281,28 @@ def scene_repair(clip):
         x = 0.5 + 0.235 * (k % 2)
         y = y0 - 0.045 * (k // 2)
         if swatch is None:
-            fig.text(x + 0.008, y, "×", fontsize=26, color=RED, weight="bold", ha="center", va="center")
+            fig.text(
+                x + 0.008,
+                y,
+                "×",
+                fontsize=26,
+                color=RED,
+                weight="bold",
+                ha="center",
+                va="center",
+            )
         else:
-            fig.patches.append(Rectangle((x, y - 0.013), 0.016, 0.026, fc=swatch, transform=fig.transFigure))
+            fig.patches.append(
+                Rectangle(
+                    (x, y - 0.013), 0.016, 0.026, fc=swatch, transform=fig.transFigure
+                )
+            )
         fig.text(x + 0.024, y, text, fontsize=19, color=TEXT, va="center")
     status = []  # Text pieces of the status lines
-    clock = footer(fig, right="Each cell is one QP constraint: safety constraint $e$ (row) at prediction step $t$ (column).")
+    clock = footer(
+        fig,
+        right="Each cell is one QP constraint: safety constraint $e$ (row) at prediction step $t$ (column).",
+    )
 
     def show_status(lines):
         """Status lines, each a list of (text, color) pieces set one after another."""
@@ -1221,7 +1313,14 @@ def scene_repair(clip):
         for k, pieces in enumerate(lines):
             x = 0.5
             for piece, color in pieces:
-                text = fig.text(x, y0 - 0.14 - 0.052 * k, piece, fontsize=22, color=color, va="center")
+                text = fig.text(
+                    x,
+                    y0 - 0.14 - 0.052 * k,
+                    piece,
+                    fontsize=22,
+                    color=color,
+                    va="center",
+                )
                 x += text.get_window_extent(renderer).width / WIDTH
                 status.append(text)
 
@@ -1246,7 +1345,9 @@ def scene_repair(clip):
     update_vehicles(poses)
     for cell in initial:
         cells[cell].set_facecolor(BLUE)
-    clock.set_text(f"Time {step * DT:4.1f} s   (paused: one filter problem of vehicle $i$)")
+    clock.set_text(
+        f"Time {step * DT:4.1f} s   (paused: one filter problem of vehicle $i$)"
+    )
     rounds = problem["rounds"]
     first = rounds[0]
     omitted = sum(v not in initial for v in first["violated"])
@@ -1270,8 +1371,16 @@ def scene_repair(clip):
             show_status(lines)
             clip.add(fig, int(3.0 * FPS))
         a, w = rnd["u"]
-        lines = lines + [[("Candidate $\\hat{\\boldsymbol{u}}^i$: " + f"$a = {a:.1f}\\,\\mathrm{{m/s^2}}$, ".replace("-", "{-}")
-                          + f"$\\omega = {w:.2f}\\,\\mathrm{{rad/s}}$".replace("-", "{-}"), TEXT)]]
+        lines = lines + [
+            [
+                (
+                    "Candidate $\\hat{\\boldsymbol{u}}^i$: "
+                    + f"$a = {a:.1f}\\,\\mathrm{{m/s^2}}$, ".replace("-", "{-}")
+                    + f"$\\omega = {w:.2f}\\,\\mathrm{{rad/s}}$".replace("-", "{-}"),
+                    TEXT,
+                )
+            ]
+        ]
         draw_predictions(problem, rnd["prediction"], PURPLE)
         show_status(lines)
         clip.add(fig, int(2.5 * FPS))
@@ -1279,8 +1388,10 @@ def scene_repair(clip):
             for cell in rnd["violated"]:
                 crosses[cell].set_visible(True)
             # Leading spaces: matplotlib drops the trailing ones from a text's extent
-            pieces = [("Exact check (every $e$ and $t$, no slack):", TEXT),
-                      (f" {len(rnd['violated'])} violated", RED)]
+            pieces = [
+                ("Exact check (every $e$ and $t$, no slack):", TEXT),
+                (f" {len(rnd['violated'])} violated", RED),
+            ]
             if r == 0:
                 pieces.append((f", {omitted} of them not in the QP", TEXT))
             lines = lines + [pieces]
@@ -1288,8 +1399,13 @@ def scene_repair(clip):
             show_status(lines)
             clip.add(fig, int(3.5 * FPS))
         else:
-            lines = lines + [[("Exact check", TEXT), (" passes", BLUE),
-                              (" → apply $\\hat{\\boldsymbol{u}}^i$", TEXT)]]
+            lines = lines + [
+                [
+                    ("Exact check", TEXT),
+                    (" passes", BLUE),
+                    (" → apply $\\hat{\\boldsymbol{u}}^i$", TEXT),
+                ]
+            ]
             show_status(lines)
             clip.add(fig, int(3.5 * FPS))
         rnd_prev = rnd

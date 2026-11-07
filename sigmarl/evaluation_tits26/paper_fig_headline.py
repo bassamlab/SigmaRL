@@ -41,12 +41,12 @@ The paper's figure (two subfigures; outputs in --out = OUT/<map>):
     ... plot --map ind_location4 --step 546 --min_heading_diff 45 --xlim 68 140 \\
         --ylim 45.5 75 --figsize 3.5 1.43 --inset 131.5 53.5 12 --zoom 10 \\
         --label_offset 2.4 0.3
-copied from fig_headline_step<k>_focus_blue.pdf to
-2026_T-ITS_CBF-Safeguard-MARL/fig/fig_headline_{round,ind}.pdf.
+copied from fig_headline_step<k>_focus_blue.pdf to the paper's
+fig_headline_{round,ind}.pdf.
 
 Full views of the maps (whole road only, without vehicles; the height follows
 the map's aspect ratio), copied from fig_headline_step<k>_focus_blue_full.pdf to
-2026_T-ITS_CBF-Safeguard-MARL/fig/fig_headline_{round,ind}_full.pdf:
+the paper's fig_headline_{round,ind}_full.pdf:
     ... plot --map round_location0 --step 298 --full
     ... plot --map ind_location4 --step 546 --min_heading_diff 45 --full
 """
@@ -109,7 +109,7 @@ def filter_args(scenario: str) -> list:
     ]  # fmt: skip
 
 
-# RWTH colors (see 2026_T-ITS_CBF-Safeguard-MARL/00_ps.sty)
+# RWTH colors
 RWTH_BLUE = "#00549F"
 RWTH_BLUE_25 = "#C7DDF2"
 RWTH_RED = "#CC061F"
